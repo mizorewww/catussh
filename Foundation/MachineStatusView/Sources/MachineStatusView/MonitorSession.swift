@@ -187,7 +187,7 @@ public final class MonitorSession: ObservableObject, Identifiable, Equatable {
                 }
             } else {
                 failures += 1
-                let message = shell.hostKeyRefusal ?? shell.getLastError() ?? "Unable to connect or authenticate"
+                let message = shell.connectFailureReason ?? shell.getLastError() ?? "Unable to connect or authenticate"
                 onMainThread { self.phase = .failed(message) }
             }
             let wait = failures > 0 ? min(30, 5 * failures) : refreshInterval

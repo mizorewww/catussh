@@ -14,7 +14,7 @@ public extension NSRemoteShell {
     /// to connect and surfaces through the usual error path.
     @discardableResult
     static func configured(for machine: RDMachine, timeout: NSNumber) -> NSRemoteShell {
-        configured(host: machine.remoteAddress, port: machine.remotePort, timeout: timeout)
+        NSRemoteShell().applyConnection(for: machine, timeout: timeout)
     }
 
     /// Returns a shell preconfigured with the given address and port string.
@@ -23,19 +23,28 @@ public extension NSRemoteShell {
         NSRemoteShell().applyConnection(host: host, port: port, timeout: timeout)
     }
 
-    /// Applies connection parameters to an existing shell, returning self for chaining.
+    /// Applies connection parameters to an existing shell, returning self for
+    /// chaining. The shell connects over TCP.
     @discardableResult
     func applyConnection(host: String, port: String, timeout: NSNumber) -> NSRemoteShell {
+        applyConnection(for: RDMachine(remoteAddress: host, remotePort: port), timeout: timeout)
+    }
+
+    /// Applies the machine's connection parameters to an existing shell,
+    /// including how it is reached (TCP or a Cloudflare tunnel).
+    @discardableResult
+    func applyConnection(for machine: RDMachine, timeout: NSNumber) -> NSRemoteShell {
         KnownHosts.install()
-        return setupConnectionHost(host)
-            .setupConnectionPort(NSNumber(value: Int(port) ?? 0))
+        applyTransport(for: machine)
+        return setupConnectionHost(machine.remoteAddress)
+            .setupConnectionPort(NSNumber(value: Int(machine.remotePort) ?? 0))
             .setupConnectionTimeout(timeout)
     }
 
-    /// Applies the machine's connection parameters to an existing shell.
-    @discardableResult
-    func applyConnection(for machine: RDMachine, timeout: NSNumber) -> NSRemoteShell {
-        applyConnection(host: machine.remoteAddress, port: machine.remotePort, timeout: timeout)
+    /// Why the last connection failed, for the person: the host key refused,
+    /// the Cloudflare tunnel not opened, or nil when it was just unreachable.
+    var connectFailureReason: String? {
+        hostKeyRefusal ?? tunnelFailure
     }
 
     /// Tries each identity in order, reconnecting when the username changes

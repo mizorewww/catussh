@@ -154,4 +154,61 @@ final class SSHCommandReaderTests: XCTestCase {
         // Too short to mean anything.
         XCTAssertNil(SSHCommandReader.suggestion(for: "ro", in: recent))
     }
+
+    // MARK: Cloudflare Access
+
+    func testCloudflareProxyCommandAsDocumented() throws {
+        let reader = try XCTUnwrap(SSHCommandReader(command: "ssh -o 'ProxyCommand=cloudflared access ssh --hostname %h' user@kosame-ssh.kfcv50.today"))
+        XCTAssertEqual(reader.username, "user")
+        XCTAssertEqual(reader.remoteAddress, "kosame-ssh.kfcv50.today")
+        XCTAssertEqual(reader.remotePort, "22")
+        XCTAssertTrue(reader.usesCloudflareAccess)
+        XCTAssertEqual(reader.machine.transport, .cloudflareAccess)
+    }
+
+    func testCloudflareProxyCommandSpellings() {
+        let commands = [
+            "ssh -o ProxyCommand='cloudflared access ssh --hostname %h' user@host.example.com",
+            "ssh -o \"ProxyCommand cloudflared access ssh --hostname %h\" user@host.example.com",
+            "ssh -oProxyCommand=\"/opt/homebrew/bin/cloudflared access ssh --hostname=%h\" user@host.example.com",
+            "ssh user@host.example.com -o 'proxycommand=cloudflared access tcp -T %h'",
+            "ssh -o 'ProxyCommand=cloudflared access ssh' user@host.example.com",
+        ]
+        for command in commands {
+            let reader = SSHCommandReader(command: command)
+            XCTAssertEqual(reader?.remoteAddress, "host.example.com", command)
+            XCTAssertEqual(reader?.usesCloudflareAccess, true, command)
+        }
+    }
+
+    func testCloudflareLiteralHostnameIsWhereItGoes() {
+        let reader = SSHCommandReader(command: "ssh -o 'ProxyCommand=cloudflared access ssh --hostname ssh.example.com' root@alias -p 2222")
+        XCTAssertEqual(reader?.remoteAddress, "ssh.example.com")
+        XCTAssertEqual(reader?.remotePort, "2222")
+    }
+
+    func testCloudflareCommandRoundTrips() throws {
+        let reader = try XCTUnwrap(SSHCommandReader(command: "ssh -o 'ProxyCommand=cloudflared access ssh --hostname %h' user@host.example.com"))
+        XCTAssertEqual(SSHCommandReader(command: reader.command), reader)
+        XCTAssertEqual(SSHCommandReader(quickConnect: "-o 'ProxyCommand=cloudflared access ssh --hostname %h' user@host.example.com"), reader)
+    }
+
+    func testOtherOptionsAreStillRefused() {
+        XCTAssertNil(SSHCommandReader(command: "ssh -o StrictHostKeyChecking=no root@example.com"))
+        XCTAssertNil(SSHCommandReader(command: "ssh -o 'ProxyCommand=nc -X 5 -x proxy:1080 %h %p' root@example.com"))
+        XCTAssertNil(SSHCommandReader(command: "ssh -o 'ProxyCommand=cloudflared access ssh root@example.com"))
+    }
+
+    func testPlainCommandsStayDirect() throws {
+        let reader = try XCTUnwrap(SSHCommandReader(command: "ssh root@example.com"))
+        XCTAssertFalse(reader.usesCloudflareAccess)
+        XCTAssertEqual(reader.command, "ssh root@example.com -p 22")
+        XCTAssertEqual(reader.machine.transport, .direct)
+    }
+
+    func testRecentsSavedBeforeDecode() throws {
+        let json = #"{"remoteAddress":"example.com","remotePort":"22","username":"root"}"#
+        let reader = try JSONDecoder().decode(SSHCommandReader.self, from: Data(json.utf8))
+        XCTAssertFalse(reader.usesCloudflareAccess)
+    }
 }

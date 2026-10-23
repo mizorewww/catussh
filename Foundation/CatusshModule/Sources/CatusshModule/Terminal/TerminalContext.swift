@@ -152,13 +152,7 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
     }
 
     public init(command: SSHCommandReader, surface: TerminalSessionSurface) {
-        machine = RDMachine(
-            remoteAddress: command.remoteAddress,
-            remotePort: command.remotePort,
-            name: command.remoteAddress,
-            group: "SSHCommandReader",
-            associatedIdentity: nil
-        )
+        machine = command.machine
         self.command = command
         title = command.command
         remoteType = .command
@@ -233,7 +227,7 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
         case .success:
             break
         case .connectFailed:
-            if let refusal = shell.hostKeyRefusal {
+            if let refusal = shell.connectFailureReason {
                 putInformation(refusal.replacingOccurrences(of: "\n", with: "\r\n"))
             } else {
                 putInformation("Unable to connect for \(machine.remoteAddress):\(machine.remotePort)")

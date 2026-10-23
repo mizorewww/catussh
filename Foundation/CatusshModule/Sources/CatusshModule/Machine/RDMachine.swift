@@ -111,6 +111,9 @@ public struct RDMachine: Codable, Identifiable, Equatable, Sendable {
         if remotePort != "22" {
             build += " -p " + remotePort
         }
+        if transport == .cloudflareAccess, insertLeadingSSH {
+            build = "ssh " + SSHCommandReader.cloudflareProxyOption + build.dropFirst(3)
+        }
         return build
     }
 }

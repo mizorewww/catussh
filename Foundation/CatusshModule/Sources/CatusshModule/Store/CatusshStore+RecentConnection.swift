@@ -39,7 +39,8 @@ public extension CatusshStore {
                 }).first?.username else {
                     return ""
                 }
-                return "ssh \(username)@\(machine.remoteAddress) -p \(machine.remotePort)"
+                let proxy = machine.transport == .cloudflareAccess ? SSHCommandReader.cloudflareProxyOption + " " : ""
+                return "ssh \(proxy)\(username)@\(machine.remoteAddress) -p \(machine.remotePort)"
             }
         }
     }
