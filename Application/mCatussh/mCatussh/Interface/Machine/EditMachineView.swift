@@ -25,6 +25,9 @@ struct EditMachineView: View {
     @State var group = ""
     @State var comment = ""
     @State var associatedIdentity: UUID? = nil
+    @State var transport: RDMachine.Transport = .direct
+    @State var serviceTokenID = ""
+    @State var serviceTokenSecret = ""
 
     // Extra
     @State var fileTransferLoginPath: String = "/"
@@ -39,7 +42,11 @@ struct EditMachineView: View {
             }
 
             Section {
-                TextField("Host Address", text: $remoteAddress)
+                Picker("Connect through", selection: $transport) {
+                    Text("Direct (TCP)").tag(RDMachine.Transport.direct)
+                    Text("Cloudflare Access").tag(RDMachine.Transport.cloudflareAccess)
+                }
+                TextField(transport == .cloudflareAccess ? "Access Hostname" : "Host Address", text: $remoteAddress)
                     .disableAutocorrection(true)
                     .textInputAutocapitalization(.never)
                     .onChange(of: remoteAddress) { newValue in
@@ -52,6 +59,19 @@ struct EditMachineView: View {
                     .keyboardType(.numberPad)
             } header: {
                 RXSectionHeader("Address")
+            }
+
+            if transport == .cloudflareAccess {
+                Section {
+                    TextField("Client ID (optional)", text: $serviceTokenID)
+                        .disableAutocorrection(true)
+                        .textInputAutocapitalization(.never)
+                    SecureField("Client Secret (optional)", text: $serviceTokenSecret)
+                } header: {
+                    RXSectionHeader("Cloudflare Access Service Token")
+                } footer: {
+                    Text("Connects like ssh -o ProxyCommand='cloudflared access ssh --hostname %h'. Leave the service token empty when the application has no Access policy. The port only names the server's host key.")
+                }
             }
 
             Section {
@@ -126,6 +146,9 @@ struct EditMachineView: View {
                     group = read.group
                     comment = read.comment
                     fileTransferLoginPath = read.fileTransferLoginPath
+                    transport = read.transport
+                    serviceTokenID = read.cloudflareServiceTokenID
+                    serviceTokenSecret = read.cloudflareServiceTokenSecret
                     if let aid = read.associatedIdentity {
                         associatedIdentity = UUID(uuidString: aid)
                     }
@@ -181,6 +204,10 @@ struct EditMachineView: View {
             associatedIdentity: associatedIdentity?.uuidString
         )
         newMachine.fileTransferLoginPath = fileTransferLoginPath
+        newMachine.transport = transport
+        let cloudflare = transport == .cloudflareAccess
+        newMachine.cloudflareServiceTokenID = cloudflare ? serviceTokenID.trimmingCharacters(in: .whitespaces) : ""
+        newMachine.cloudflareServiceTokenSecret = cloudflare ? serviceTokenSecret.trimmingCharacters(in: .whitespaces) : ""
         CatusshStore.shared.machineGroup.insert(newMachine)
 
         dismiss()
