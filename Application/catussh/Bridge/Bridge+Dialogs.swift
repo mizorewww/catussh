@@ -41,7 +41,16 @@ extension Bridge {
         if let parent = sheetParent {
             alert.beginSheetModal(for: parent, completionHandler: finish)
         } else {
-            finish(alert.runModal())
+            // With no window to hang a sheet on (catussh in the menu bar only),
+            // the alert still must not block its caller: the quit confirmation
+            // is asked from applicationShouldTerminate, which has to answer
+            // before the alert does, or the terminate that follows a "Quit"
+            // re-enters AppKit while it is still deciding.
+            DispatchQueue.main.async {
+                // An accessory app's alert would open behind the front app.
+                NSApp.activate(ignoringOtherApps: true)
+                finish(alert.runModal())
+            }
         }
     }
 
