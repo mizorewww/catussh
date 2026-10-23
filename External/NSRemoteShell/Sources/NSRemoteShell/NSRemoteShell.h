@@ -17,6 +17,13 @@ NS_ASSUME_NONNULL_BEGIN
 /// `key` the public key as the server sent it. Called on the connecting thread.
 typedef BOOL (^NSRemoteShellHostKeyVerifier)(NSString *host, NSNumber *port, NSString *keyType, NSData *key);
 
+/// Hands the shell a connected stream socket in place of the TCP connection it
+/// would open to `host`:`port`, for transports such as a WebSocket tunnel. The
+/// shell owns the descriptor and closes it on disconnect; closing it is how the
+/// transport learns the session is over. Return 0 or less when no connection
+/// could be made. Called on the connecting thread, and may block up to `timeout`.
+typedef int (^NSRemoteShellSocketProvider)(NSString *host, NSNumber *port, NSNumber *timeout);
+
 @interface NSRemoteShell : NSObject
 
 /// Asked on every connection, after the handshake and before anything is sent
@@ -42,6 +49,8 @@ typedef BOOL (^NSRemoteShellHostKeyVerifier)(NSString *host, NSNumber *port, NSS
 - (instancetype)setupConnectionHost:(NSString *)targetHost;
 - (instancetype)setupConnectionPort:(NSNumber *)targetPort;
 - (instancetype)setupConnectionTimeout:(NSNumber *)timeout;
+/// With a provider, each connection takes its socket from it; nil connects over TCP.
+- (instancetype)setupConnectionSocketProvider:(nullable NSRemoteShellSocketProvider)provider;
 
 #pragma mark event loop
 

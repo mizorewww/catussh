@@ -27,6 +27,7 @@
 @property (nonatomic, readwrite, nonnull, strong) NSString *remoteHost;
 @property (nonatomic, readwrite, nonnull, strong) NSNumber *remotePort;
 @property (nonatomic, readwrite, nonnull, strong) NSNumber *operationTimeout;
+@property (nonatomic, readwrite, nullable, copy) NSRemoteShellSocketProvider socketProvider;
 
 @property (nonatomic, readwrite, nullable, strong) NSString *resolvedRemoteIpAddress;
 @property (nonatomic, readwrite, nullable, strong) NSString *remoteBanner;
@@ -170,6 +171,13 @@ static NSString *NSRemoteShellHostKeyTypeName(int type) {
     }
     @synchronized(self) {
         [self setOperationTimeout:timeout];
+    }
+    return self;
+}
+
+- (instancetype)setupConnectionSocketProvider:(NSRemoteShellSocketProvider)provider {
+    @synchronized(self) {
+        [self setSocketProvider:provider];
     }
     return self;
 }
@@ -593,17 +601,31 @@ continue; \
 - (void)unsafeConnect {
     [self unsafeDisconnect];
     
-    int sock = [GenericNetworking createSocketWithTargetHost:self.remoteHost
+    NSRemoteShellSocketProvider provider;
+    @synchronized(self) {
+        provider = self.socketProvider;
+    }
+    int sock;
+    if (provider) {
+        sock = provider(self.remoteHost, self.remotePort, self.operationTimeout);
+        if (sock <= 0) {
+            NSRLog(@"socket provider gave no connection to %@", self.remoteHost);
+            return;
+        }
+    } else {
+        sock = [GenericNetworking createSocketWithTargetHost:self.remoteHost
                                               withTargetPort:self.remotePort
                                         requireNonblockingIO:NO
                                           withConnectTimeout:self.operationTimeout];
-    if (!sock) {
-        NSRLog(@"failed to create socket to host");
-        return;
+        if (!sock) {
+            NSRLog(@"failed to create socket to host");
+            return;
+        }
     }
     self.associatedSocket = sock;
     
-    self.resolvedRemoteIpAddress = [GenericNetworking getResolvedIpAddressWith:sock];
+    // A provided socket has no peer address worth showing.
+    self.resolvedRemoteIpAddress = provider ? nil : [GenericNetworking getResolvedIpAddressWith:sock];
     
     LIBSSH2_SESSION *constructorSession = libssh2_session_init_ex(0, 0, 0, (__bridge void*)(self));
     if (!constructorSession) {
