@@ -2,8 +2,9 @@
 //  ServerEditorSheet.swift
 //  catussh (macOS)
 //
-//  New / Edit Server: Name; Address + Port; Identity + Group; SFTP start folder;
-//  Comment; Last banner (read-only, captured on connect).
+//  New / Edit Server: Name; Connect through; Address + Port; the Cloudflare
+//  Access service token when connecting through it; Identity + Group; SFTP
+//  start folder; Comment; Last banner (read-only, captured on connect).
 //
 
 import NSRemoteShell
@@ -21,6 +22,9 @@ struct ServerEditorSheet: View {
     @State private var name = ""
     @State private var address = ""
     @State private var port = "22"
+    @State private var transport: RDMachine.Transport = .direct
+    @State private var serviceTokenID = ""
+    @State private var serviceTokenSecret = ""
     @State private var identity: RDIdentity.ID?
     @State private var group = ""
     @State private var startFolder = "/"
@@ -45,9 +49,18 @@ struct ServerEditorSheet: View {
                     TextField(address.isEmpty ? "prod-web-01" : address, text: $name)
                         .textFieldStyle(.rx)
                 }
+                RXField("Connect through") {
+                    RXPicker(
+                        selection: $transport,
+                        options: [
+                            .init(.direct, "Direct (TCP)"),
+                            .init(.cloudflareAccess, "Cloudflare Access"),
+                        ]
+                    )
+                }
                 HStack(alignment: .top, spacing: RX.Space.s4) {
-                    RXField("Address") {
-                        TextField("Host name or IP address", text: $address)
+                    RXField(transport == .cloudflareAccess ? "Access hostname" : "Address") {
+                        TextField(transport == .cloudflareAccess ? "ssh.example.com" : "Host name or IP address", text: $address)
                             .textFieldStyle(.rxMono)
                             .disableAutocorrection(true)
                     }
@@ -56,6 +69,9 @@ struct ServerEditorSheet: View {
                             .textFieldStyle(.rxMono)
                     }
                     .frame(width: 96)
+                }
+                if transport == .cloudflareAccess {
+                    cloudflareFields
                 }
                 HStack(alignment: .top, spacing: RX.Space.s4) {
                     RXField("Identity") {
@@ -138,6 +154,37 @@ struct ServerEditorSheet: View {
         .onAppear(perform: load)
     }
 
+    /// What `cloudflared access ssh` would send: nothing for an application
+    /// without an Access policy, a service token for one that asks for it.
+    @ViewBuilder var cloudflareFields: some View {
+        HStack(alignment: .top, spacing: RX.Space.s4) {
+            RXField("Service token Client ID") {
+                TextField("Optional", text: $serviceTokenID)
+                    .textFieldStyle(.rxMono)
+                    .disableAutocorrection(true)
+            }
+            RXField("Client Secret") {
+                SecureField("Optional", text: $serviceTokenSecret)
+                    .textFieldStyle(.rxMono)
+            }
+        }
+        HelpText("Connects like ssh -o ProxyCommand='cloudflared access ssh --hostname %h', without cloudflared. Leave the service token empty when the application has no Access policy. The port only names the server's host key.")
+    }
+
+    /// The server as the form describes it, for checking the connection.
+    var draft: RDMachine {
+        var draft = RDMachine(remoteAddress: address.trimmingCharacters(in: .whitespaces), remotePort: port)
+        apply(to: &draft)
+        return draft
+    }
+
+    func apply(to target: inout RDMachine) {
+        target.transport = transport
+        let cloudflare = transport == .cloudflareAccess
+        target.cloudflareServiceTokenID = cloudflare ? serviceTokenID.trimmingCharacters(in: .whitespaces) : ""
+        target.cloudflareServiceTokenSecret = cloudflare ? serviceTokenSecret.trimmingCharacters(in: .whitespaces) : ""
+    }
+
     func load() {
         guard let machine else { return }
         let read = store.machineGroup[machine]
@@ -148,6 +195,9 @@ struct ServerEditorSheet: View {
         comment = read.comment
         startFolder = read.fileTransferLoginPath
         banner = read.lastBanner
+        transport = read.transport
+        serviceTokenID = read.cloudflareServiceTokenID
+        serviceTokenSecret = read.cloudflareServiceTokenSecret
         if let aid = read.associatedIdentity, let uid = UUID(uuidString: aid) {
             identity = uid
         }
@@ -169,6 +219,7 @@ struct ServerEditorSheet: View {
         target.comment = comment
         target.fileTransferLoginPath = startFolder.isEmpty ? "/" : startFolder
         target.associatedIdentity = (resolvedIdentity ?? identity)?.uuidString
+        apply(to: &target)
         if let capturedBanner {
             target.lastBanner = capturedBanner
             target.lastConnection = Date()
@@ -188,13 +239,14 @@ struct ServerEditorSheet: View {
         connecting = true
         let host = address.trimmingCharacters(in: .whitespaces)
         let port = port
+        let draft = draft
         let chosen = identity.map { store.identityGroup[$0] }
         let candidates = store.identityGroupForAutoAuth
         DispatchQueue.global().async {
-            let shell = NSRemoteShell.configured(host: host, port: port, timeout: CatusshStore.shared.timeoutNumber)
+            let shell = NSRemoteShell.configured(for: draft, timeout: CatusshStore.shared.timeoutNumber)
             shell.requestConnectAndWait()
             guard shell.isConnected else {
-                let refusal = shell.hostKeyRefusal
+                let refusal = shell.connectFailureReason
                 onMainThread {
                     connecting = false
                     error = refusal ?? "Could not reach \(host) on port \(port)."
