@@ -29,6 +29,8 @@ brew install --cask mizorewww/tap/catussh
 - **原生 Ghostty 終端機**：GPU 繪製，600 多套主題，半透明背景。
 - **視覺化終端機設定**：直接挑選已安裝的字型與真實字重，以按鍵錄製快速鍵，配色即時預覽。
 - **快速連線**：輸入 `user@host:port` 後按 Return。
+- **Cloudflare Access**：連線 Cloudflare Tunnel 後面的伺服器，效果等同於
+  `ssh -o ProxyCommand='cloudflared access ssh --hostname %h'`，不需安裝 cloudflared，支援服務權杖。
 - **Linux 和 macOS 伺服器監控**：CPU、記憶體、磁碟、網路和 NVIDIA GPU，使用系統內建工具，不必安裝任何 agent。
 - **身分**（密碼或金鑰）多台伺服器共用，**程式碼片段**可在多台伺服器上同時執行，
   還有**連接埠轉送**和**選單列**監控。

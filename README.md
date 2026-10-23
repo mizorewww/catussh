@@ -32,6 +32,9 @@ download the disk image from [Releases](https://github.com/mizorewww/catussh/rel
 - **Visual terminal settings**: installed fonts with their real styles, recorded
   keyboard shortcuts, a live color preview.
 - **Quick Connect**: type `user@host:port` and press Return.
+- **Cloudflare Access**: reach servers behind a Cloudflare Tunnel, as
+  `ssh -o ProxyCommand='cloudflared access ssh --hostname %h'` does, without
+  installing cloudflared. Service tokens are supported.
 - **Server monitor** for Linux and macOS: CPU, memory, disks, network and NVIDIA GPUs,
   using native system tools with no agent to install.
 - **Identities** (passwords or keys) shared across servers, **snippets** run on many

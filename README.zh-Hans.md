@@ -29,6 +29,8 @@ brew install --cask mizorewww/tap/catussh
 - **原生 Ghostty 终端**：GPU 渲染，600 多套主题，半透明背景。
 - **可视化终端设置**：直接挑选已安装的字体和真实字重，按键录制快捷键，配色实时预览。
 - **快速连接**：输入 `user@host:port` 后回车。
+- **Cloudflare Access**：连接 Cloudflare Tunnel 后面的服务器，效果等同于
+  `ssh -o ProxyCommand='cloudflared access ssh --hostname %h'`，无需安装 cloudflared，支持服务令牌。
 - **Linux 和 macOS 服务器监控**：CPU、内存、磁盘、网络和 NVIDIA GPU，使用系统自带工具，无需安装任何 agent。
 - **身份**（密码或密钥）多台服务器共用，**代码片段**可在多台服务器上同时执行，
   还有**端口转发**和**菜单栏**监控。
