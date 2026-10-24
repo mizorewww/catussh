@@ -137,7 +137,7 @@ private struct PortForwardRow: View {
         HStack(spacing: 0) {
             RXTag(forward.forwardOrientation == .listenLocal ? "Listen local" : "Listen remote")
                 .frame(width: ForwardColumns.orientation, alignment: .leading)
-            Text(":\(forward.bindPort)")
+            Text(verbatim: ":\(forward.bindPort)")
                 .font(.rxCode)
                 .foregroundStyle(.rxInk)
                 .frame(width: ForwardColumns.bind, alignment: .leading)
@@ -146,7 +146,7 @@ private struct PortForwardRow: View {
                 .foregroundStyle(forward.usingMachine == nil ? Color.rxInkSecondary : Color.rxInk)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text(forward.targetHost.isEmpty ? "—" : "\(forward.targetHost):\(forward.targetPort)")
+            Text(verbatim: forward.targetHost.isEmpty ? "—" : "\(forward.targetHost):\(forward.targetPort)")
                 .font(.rxCode)
                 .foregroundStyle(.rxInk)
                 .lineLimit(1)

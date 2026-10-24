@@ -72,11 +72,11 @@ private struct PortForwardRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     RXTag(forward.forwardOrientation == .listenLocal ? "Listen local" : "Listen remote")
-                    Text(":\(forward.bindPort)")
+                    Text(verbatim: ":\(forward.bindPort)")
                         .font(.rxCode)
                         .foregroundStyle(.rxInk)
                 }
-                Text("\(forward.getMachineName() ?? "No server") → \(forward.targetHost):\(forward.targetPort)")
+                Text(verbatim: "\(forward.getMachineName() ?? "No server") → \(forward.targetHost):\(forward.targetPort)")
                     .font(.rxCode)
                     .foregroundStyle(.rxInkSecondary)
                     .lineLimit(1)
