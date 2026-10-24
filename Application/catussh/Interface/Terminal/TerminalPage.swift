@@ -37,22 +37,6 @@ struct TerminalPage: View {
                 .padding(.horizontal, RX.Space.s6)
         }
         .padding(.top, RX.Space.s3)
-        .background {
-            // ⌘W closes the tab in front, not the window; ⌘1–⌘8 pick a tab
-            // and ⌘9 the last, as in Safari. Only on the page in front.
-            if isActive {
-                Group {
-                    Button("Close Tab") { TerminalSessionActions.close(context) }
-                        .keyboardShortcut("w", modifiers: .command)
-                    ForEach(1 ... 9, id: \.self) { number in
-                        Button("Show Tab \(number)") { showTab(number) }
-                            .keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: .command)
-                    }
-                }
-                .opacity(0)
-                .accessibilityHidden(true)
-            }
-        }
         .pageChrome()
         // Closing is the tab's close button; no second one here.
         .pageToolbar(
@@ -92,12 +76,6 @@ struct TerminalPage: View {
         .onChange(of: isActive) { active in
             context.termInterface.setActive(active)
         }
-    }
-
-    private func showTab(_ number: Int) {
-        let tabs = context.tabSiblings
-        guard let tab = number == 9 ? tabs.last : tabs.dropFirst(number - 1).first else { return }
-        AppRouter.shared.route = .terminal(tab.id)
     }
 
     @ViewBuilder var surface: some View {

@@ -50,7 +50,15 @@ struct CatusshApp: App {
 }
 
 /// Menu commands: New Server, Settings (Settings is a sidebar destination), navigation.
+/// On a terminal, ⌘W closes the tab in front instead of the window, and ⌘1–⌘9
+/// pick a tab (⌘9 the last, as in Safari) instead of a sidebar place.
 struct CatusshCommands: Commands {
+    @ObservedObject private var router = AppRouter.shared
+    /// For the tabs: terminals open and close without the route changing.
+    @ObservedObject private var terminals = TerminalManager.shared
+
+    private var terminal: TerminalManager.Context? { router.terminalInFront }
+
     var body: some Commands {
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") { AppRouter.shared.openSettings() }
@@ -62,6 +70,13 @@ struct CatusshCommands: Commands {
             Button("Open Terminals…") { AppRouter.shared.openTerminals() }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
         }
+        // Takes the place of the window's Close and Close All while a terminal is in front.
+        if let terminal {
+            CommandGroup(replacing: .saveItem) {
+                Button("Close Tab") { TerminalSessionActions.close(terminal) }
+                    .keyboardShortcut("w", modifiers: .command)
+            }
+        }
         #if targetEnvironment(macCatalyst)
             CommandGroup(after: .textEditing) {
                 Button("Find") { NotificationCenter.default.post(name: .rxFocusToolbarSearch, object: nil) }
@@ -69,18 +84,31 @@ struct CatusshCommands: Commands {
             }
         #endif
         CommandGroup(after: .sidebar) {
-            Button("Home") { AppRouter.shared.route = .home }
-                .keyboardShortcut("1", modifiers: .command)
-            Button("Servers") { AppRouter.shared.route = .servers }
-                .keyboardShortcut("2", modifiers: .command)
-            Button("Identities") { AppRouter.shared.route = .identities }
-                .keyboardShortcut("3", modifiers: .command)
-            Button("Snippets") { AppRouter.shared.route = .snippets }
-                .keyboardShortcut("4", modifiers: .command)
-            Button("Port Forward") { AppRouter.shared.route = .portForward }
-                .keyboardShortcut("5", modifiers: .command)
+            place("Home", .home, key: "1")
+            place("Servers", .servers, key: "2")
+            place("Identities", .identities, key: "3")
+            place("Snippets", .snippets, key: "4")
+            place("Port Forward", .portForward, key: "5")
+            if let terminal {
+                Divider()
+                let tabs = terminal.tabSiblings
+                ForEach(Array(tabs.prefix(8).enumerated()), id: \.element.id) { index, tab in
+                    Button("Tab \(index + 1)") { AppRouter.shared.route = .terminal(tab.id) }
+                        .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                }
+                if let last = tabs.last {
+                    Button("Last Tab") { AppRouter.shared.route = .terminal(last.id) }
+                        .keyboardShortcut("9", modifiers: .command)
+                }
+            }
             Divider()
         }
+    }
+
+    /// A sidebar place; its ⌘ number goes to the terminal's tabs while one is in front.
+    private func place(_ title: String, _ route: Route, key: KeyEquivalent) -> some View {
+        Button(title) { AppRouter.shared.route = route }
+            .keyboardShortcut(terminal == nil ? KeyboardShortcut(key, modifiers: .command) : nil)
     }
 }
 

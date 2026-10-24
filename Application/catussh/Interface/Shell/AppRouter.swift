@@ -179,6 +179,12 @@ final class AppRouter: ObservableObject {
 
     // MARK: - Sessions by server
 
+    /// The terminal whose page is showing, if one is.
+    var terminalInFront: TerminalManager.Context? {
+        guard case let .terminal(id) = route else { return nil }
+        return TerminalManager.shared.sessionContexts.first { $0.id == id }
+    }
+
     /// Who a session page belongs to.
     func owner(of route: Route) -> SessionOwner? {
         switch route {
