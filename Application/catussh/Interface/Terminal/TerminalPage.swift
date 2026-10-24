@@ -37,6 +37,22 @@ struct TerminalPage: View {
                 .padding(.horizontal, RX.Space.s6)
         }
         .padding(.top, RX.Space.s3)
+        .background {
+            // ⌘W closes the tab in front, not the window; ⌘1–⌘8 pick a tab
+            // and ⌘9 the last, as in Safari. Only on the page in front.
+            if isActive {
+                Group {
+                    Button("Close Tab") { TerminalSessionActions.close(context) }
+                        .keyboardShortcut("w", modifiers: .command)
+                    ForEach(1 ... 9, id: \.self) { number in
+                        Button("Show Tab \(number)") { showTab(number) }
+                            .keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: .command)
+                    }
+                }
+                .opacity(0)
+                .accessibilityHidden(true)
+            }
+        }
         .pageChrome()
         // Closing is the tab's close button; no second one here.
         .pageToolbar(
@@ -76,6 +92,12 @@ struct TerminalPage: View {
         .onChange(of: isActive) { active in
             context.termInterface.setActive(active)
         }
+    }
+
+    private func showTab(_ number: Int) {
+        let tabs = context.tabSiblings
+        guard let tab = number == 9 ? tabs.last : tabs.dropFirst(number - 1).first else { return }
+        AppRouter.shared.route = .terminal(tab.id)
     }
 
     @ViewBuilder var surface: some View {
@@ -119,10 +141,7 @@ struct SessionTabs: View {
     @ObservedObject var current: TerminalManager.Context
     @ObservedObject var terminals = TerminalManager.shared
 
-    private var siblings: [TerminalManager.Context] {
-        guard current.remoteType == .machine else { return [current] }
-        return terminals.sessionContexts.filter { $0.remoteType == .machine && $0.machine.id == current.machine.id }
-    }
+    private var siblings: [TerminalManager.Context] { current.tabSiblings }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -275,6 +294,13 @@ enum TerminalSessionActions {
 }
 
 extension TerminalManager.Context {
+    /// The terminals shown as tabs beside this one: the server's terminals, or
+    /// only this one for Quick Connect.
+    @MainActor var tabSiblings: [TerminalManager.Context] {
+        guard remoteType == .machine else { return [self] }
+        return TerminalManager.shared.sessionContexts.filter { $0.remoteType == .machine && $0.machine.id == machine.id }
+    }
+
     /// The server's name, or `user@host` for a Quick Connect session.
     var displayName: String {
         if remoteType == .machine { return machine.name }
