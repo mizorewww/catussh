@@ -290,6 +290,19 @@ public final class UURemoteAccountStore: ObservableObject {
         return machine
     }
 
+    /// The saved server bound to a device, if one is.
+    public func savedMachine(for device: UUDeviceInfo, store: CatusshStore = .shared) -> RDMachine? {
+        store.machineGroup.machines.first { $0.uuDeviceID == device.deviceID }
+    }
+
+    /// The saved server bound to a device, adding one when there is none.
+    public func upsertMachine(for device: UUDeviceInfo, store: CatusshStore = .shared) -> RDMachine {
+        if let existing = savedMachine(for: device, store: store) { return existing }
+        let machine = makeMachine(for: device, store: store)
+        store.machineGroup.insert(machine)
+        return machine
+    }
+
     /// Registers the local machine as a UU device (for device-init flow).
     public func registerLocalDevice(name: String) async throws -> String {
         let clientID = credentials.clientID.isEmpty ? UUID().uuidString : credentials.clientID

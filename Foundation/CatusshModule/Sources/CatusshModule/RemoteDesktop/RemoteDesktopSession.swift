@@ -40,11 +40,35 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
     /// render pressed-state affordances without asking the driver.
     @Published public private(set) var pressedButtons: Set<MouseButton> = []
 
+    /// Watch without touching: pointer, wheel and keys stay local. Turning
+    /// it on lets go of any button or key still held on the host.
+    @Published public var viewOnly = false {
+        didSet {
+            guard viewOnly, !oldValue, phase == .connected else { return }
+            let held = pressedButtons
+            pressedButtons = []
+            for button in held {
+                driver?.sendPointerButton(button, isDown: false, normalizedX: lastPointer.x, normalizedY: lastPointer.y)
+            }
+            let keys = heldKeys
+            heldKeys = [:]
+            for (keyCode, key) in keys {
+                driver?.sendKey(keyCode: keyCode, keySym: key.keySym, characters: key.characters, isDown: false)
+            }
+        }
+    }
+
+    /// Keys sent down and not yet up, so view only can release them.
+    private var heldKeys: [UInt16: (keySym: UInt32?, characters: String)] = [:]
+
     private var driver: RemoteDesktopDriver?
     private var frameCounter = 0
     private var fpsWindowStart = Date()
-    /// Input is dropped while the session is not fully up.
-    public var acceptsInput: Bool { phase == .connected }
+    /// Where the pointer was last sent, normalized.
+    private var lastPointer = (x: 0.5, y: 0.5)
+    /// Input is dropped while the session is not fully up, or while it is
+    /// view only. The clipboard is an explicit action and still goes.
+    public var acceptsInput: Bool { phase == .connected && !viewOnly }
 
     public init(machine: RDMachine, protocolType: RDMachine.RemoteDesktopProtocolType) {
         self.machine = machine
@@ -83,11 +107,13 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
 
     public func pointerMoved(normalizedX: Double, normalizedY: Double) {
         guard acceptsInput else { return }
+        lastPointer = (normalizedX, normalizedY)
         driver?.sendPointerMove(normalizedX: normalizedX, normalizedY: normalizedY)
     }
 
     public func pointerButton(_ button: MouseButton, isDown: Bool, normalizedX: Double, normalizedY: Double) {
         guard acceptsInput else { return }
+        lastPointer = (normalizedX, normalizedY)
         if isDown { pressedButtons.insert(button) } else { pressedButtons.remove(button) }
         driver?.sendPointerButton(button, isDown: isDown, normalizedX: normalizedX, normalizedY: normalizedY)
     }
@@ -99,6 +125,7 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
 
     public func keyPressed(keyCode: UInt16, keySym: UInt32?, characters: String, isDown: Bool) {
         guard acceptsInput else { return }
+        if isDown { heldKeys[keyCode] = (keySym, characters) } else { heldKeys[keyCode] = nil }
         driver?.sendKey(keyCode: keyCode, keySym: keySym, characters: characters, isDown: isDown)
     }
 
@@ -107,8 +134,15 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
         driver?.sendText(text)
     }
 
+    /// Replays a key sequence (a Special Keys entry, Ctrl+Alt+Del…).
+    public func sendKeys(_ strokes: [RemoteDesktopKeyStroke]) {
+        for stroke in strokes {
+            keyPressed(keyCode: stroke.keyCode, keySym: stroke.keySym, characters: stroke.characters, isDown: stroke.isDown)
+        }
+    }
+
     public func pushClipboard(_ text: String) {
-        guard acceptsInput else { return }
+        guard phase == .connected else { return }
         driver?.sendClipboard(text)
     }
 

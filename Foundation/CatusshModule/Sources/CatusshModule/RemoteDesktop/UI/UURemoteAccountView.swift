@@ -345,8 +345,7 @@ public struct UURemoteAccountView: View {
     }
 
     private func connect(to device: UUDeviceInfo) {
-        let machine = upsertMachine(account.makeMachine(for: device))
-        openDesktop(on: machine)
+        openDesktop(on: account.upsertMachine(for: device))
     }
 
     private func connectAssist() {

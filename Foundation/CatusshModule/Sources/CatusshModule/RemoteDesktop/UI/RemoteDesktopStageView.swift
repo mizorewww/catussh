@@ -65,6 +65,11 @@ public enum RemoteDesktopSpecialKeys {
         return RemoteDesktopKeyStroke(keyCode: codes[n - 1], keySym: 0xFFBE + UInt32(n - 1), isDown: true)
     }
 
+    /// Ctrl+Alt+Del: the Windows secure attention sequence.
+    public static var ctrlAltDelete: [RemoteDesktopKeyStroke] {
+        combo([control, alt], deleteForward)
+    }
+
     /// Expands a key into a down+up pair.
     public static func click(_ key: RemoteDesktopKeyStroke) -> [RemoteDesktopKeyStroke] {
         [
@@ -217,6 +222,7 @@ public struct RemoteDesktopStageView: View {
             Divider().frame(height: 16)
             if session.displays.count > 1 { displayMenu }
             if session.protocolType == .uuRemote { qualityMenu }
+            viewOnlyButton
             specialKeysMenu
             Button { showsTextInput = true } label: {
                 Image(systemName: "textformat")
@@ -370,12 +376,7 @@ public struct RemoteDesktopStageView: View {
             Button("Return") { send(RemoteDesktopSpecialKeys.click(RemoteDesktopSpecialKeys.return)) }
             Button("Delete ⌦") { send(RemoteDesktopSpecialKeys.click(RemoteDesktopSpecialKeys.deleteForward)) }
             Divider()
-            Button("Ctrl+Alt+Del") {
-                send(RemoteDesktopSpecialKeys.combo(
-                    [RemoteDesktopSpecialKeys.control, RemoteDesktopSpecialKeys.alt],
-                    RemoteDesktopSpecialKeys.deleteForward
-                ))
-            }
+            Button("Ctrl+Alt+Del") { send(RemoteDesktopSpecialKeys.ctrlAltDelete) }
             Button("Alt+Tab") {
                 send(RemoteDesktopSpecialKeys.combo(
                     [RemoteDesktopSpecialKeys.alt],
@@ -406,14 +407,15 @@ public struct RemoteDesktopStageView: View {
     }
 
     private func send(_ strokes: [RemoteDesktopKeyStroke]) {
-        for stroke in strokes {
-            session.keyPressed(
-                keyCode: stroke.keyCode,
-                keySym: stroke.keySym,
-                characters: stroke.characters,
-                isDown: stroke.isDown
-            )
+        session.sendKeys(strokes)
+    }
+
+    private var viewOnlyButton: some View {
+        Button { session.viewOnly.toggle() } label: {
+            Image(systemName: session.viewOnly ? "eye" : "cursorarrow.motionlines")
+                .foregroundStyle(session.viewOnly ? Color.rxAccent : Color.rxInk)
         }
+        .help(session.viewOnly ? "View only: input stays local. Click to take control" : "Watch without sending mouse or keys")
     }
 
     private var clipboardMenu: some View {
