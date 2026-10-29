@@ -33,8 +33,10 @@ enum VNCWire {
         case invalid = 0
         case none = 1
         case vncAuth = 2
+        /// Diffie-Hellman + AES user name and password; macOS Screen Sharing.
+        case appleRemoteDesktop = 30
         // RA2(5), RA2ne(6), Tight(16), Ultra(19), TLS(18), VeNCrypt(19),
-        // SASL(20), ARD(30), MS Logon(113) — known but unsupported here.
+        // SASL(20), MS Logon(113) — known but unsupported here.
     }
 
     // MARK: Client → server messages

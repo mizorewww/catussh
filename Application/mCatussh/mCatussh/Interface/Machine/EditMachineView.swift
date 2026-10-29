@@ -33,6 +33,7 @@ struct EditMachineView: View {
     @State var remoteDesktopProtocol: RDMachine.RemoteDesktopProtocolType = .none
     @State var vncPort = "5900"
     @State var vncPassword = ""
+    @State var vncUsername = ""
     @State var vncOverSSH = false
     @State var vncShared = true
     @State var uuDeviceID = ""
@@ -113,6 +114,9 @@ struct EditMachineView: View {
                         .textInputAutocapitalization(.never)
                         .keyboardType(.numberPad)
                     SecureField("VNC Password (empty = identity password)", text: $vncPassword)
+                    TextField("Mac User Name (empty = identity user)", text: $vncUsername)
+                        .disableAutocorrection(true)
+                        .textInputAutocapitalization(.never)
                     Toggle("Tunnel over SSH", isOn: $vncOverSSH)
                     Toggle("Shared session", isOn: $vncShared)
                 } header: {
@@ -226,6 +230,7 @@ struct EditMachineView: View {
                     remoteDesktopProtocol = read.remoteDesktopProtocol
                     vncPort = read.vncPort
                     vncPassword = read.vncPassword
+                    vncUsername = read.vncUsername
                     vncOverSSH = read.vncOverSSH
                     vncShared = read.vncShared
                     uuDeviceID = read.uuDeviceID
@@ -307,6 +312,7 @@ struct EditMachineView: View {
         newMachine.remoteDesktopProtocol = remoteDesktopProtocol
         newMachine.vncPort = vncPort
         newMachine.vncPassword = vncPassword
+        newMachine.vncUsername = vncUsername.trimmingCharacters(in: .whitespaces)
         newMachine.vncOverSSH = vncOverSSH
         newMachine.vncShared = vncShared
         newMachine.uuDeviceID = uuDeviceID.trimmingCharacters(in: .whitespaces)

@@ -87,6 +87,7 @@ final class VNCRFBDriver: RemoteDesktopDriver, @unchecked Sendable {
                 host: machine.remoteAddress,
                 port: UInt16(machine.vncPort) ?? 5900,
                 password: machine.resolvedVNCPassword(identity: identity),
+                username: machine.resolvedVNCUsername(identity: identity),
                 shared: machine.vncShared,
                 timeout: max(TimeInterval(CatusshStore.shared.workerTimeoutNumber.intValue), 10),
                 channel: channel

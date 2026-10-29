@@ -9,6 +9,7 @@
 
 @testable import CatusshModule
 import CoreGraphics
+import CryptoKit
 import XCTest
 import zlib
 
@@ -615,5 +616,124 @@ final class VNCRFBTests: XCTestCase {
             if case .failed = phase { return true }
             return false
         })
+    }
+
+    // MARK: Apple Remote Desktop authentication (type 30)
+
+    func testBigNumModularPowerSmall() {
+        let result = VNCBigNum(4).power(VNCBigNum(13), modulo: VNCBigNum(497))
+        XCTAssertEqual(result, VNCBigNum(445))
+    }
+
+    func testBigNumModularPowerMatchesUInt64() {
+        // The largest 64-bit prime: two limbs, checked against full-width math.
+        let modulus: UInt64 = 0xFFFF_FFFF_FFFF_FFC5
+        func mulmod(_ a: UInt64, _ b: UInt64) -> UInt64 {
+            let product = a.multipliedFullWidth(by: b)
+            return modulus.dividingFullWidth((product.high, product.low)).remainder
+        }
+        var expected: UInt64 = 1
+        var base: UInt64 = 0x1234_5678_9ABC_DEF0 % modulus
+        var exponent: UInt64 = 1_000_003
+        while exponent > 0 {
+            if exponent & 1 == 1 { expected = mulmod(expected, base) }
+            base = mulmod(base, base)
+            exponent >>= 1
+        }
+        let result = VNCBigNum(0x1234_5678_9ABC_DEF0).power(VNCBigNum(1_000_003), modulo: VNCBigNum(modulus))
+        XCTAssertEqual(result, VNCBigNum(expected))
+    }
+
+    func testBigNumBytesRoundTrip() {
+        let bytes: [UInt8] = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06]
+        XCTAssertEqual(VNCBigNum(bigEndian: bytes).bigEndianBytes(length: 7), bytes)
+        XCTAssertEqual(VNCBigNum(bigEndian: [0x01, 0x00]).bigEndianBytes(length: 4), [0, 0, 1, 0])
+    }
+
+    /// RFC 2409's 1024-bit MODP group, the size macOS uses.
+    private static let oakleyPrime: [UInt8] = {
+        let hex = "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE65381FFFFFFFFFFFFFFFF"
+        var bytes: [UInt8] = []
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            bytes.append(UInt8(hex[index ..< next], radix: 16)!)
+            index = next
+        }
+        return bytes
+    }()
+
+    func testDiffieHellmanAgrees() {
+        let prime = VNCBigNum(bigEndian: Self.oakleyPrime)
+        let a = VNCBigNum(bigEndian: VNCAppleAuth.randomBytes(32))
+        let b = VNCBigNum(bigEndian: VNCAppleAuth.randomBytes(32))
+        let g = VNCBigNum(2)
+        let left = g.power(a, modulo: prime).power(b, modulo: prime)
+        let right = g.power(b, modulo: prime).power(a, modulo: prime)
+        XCTAssertEqual(left, right)
+        XCTAssertFalse(left.isZero)
+    }
+
+    func testHandshake38WithAppleRemoteDesktopAuth() throws {
+        let prime = VNCBigNum(bigEndian: Self.oakleyPrime)
+        let serverSecret = VNCBigNum(bigEndian: VNCAppleAuth.randomBytes(128))
+        let serverPublic = VNCBigNum(2).power(serverSecret, modulo: prime)
+
+        var server = Data()
+        server.append(VNCWire.banner(major: 3, minor: 889)) // macOS's banner
+        server.append(2)
+        server.append(contentsOf: [VNCWire.SecurityType.vncAuth.rawValue, VNCWire.SecurityType.appleRemoteDesktop.rawValue])
+        server.appendU16BE(2) // generator
+        server.appendU16BE(128) // key length
+        server.append(contentsOf: Self.oakleyPrime)
+        server.append(contentsOf: serverPublic.bigEndianBytes(length: 128))
+        server.appendU32BE(0) // security result OK
+        server.append(serverInitData(width: 2, height: 2, name: "mac"))
+
+        let channel = MemoryChannel(Array(server))
+        let delegate = RecordingDelegate()
+        let client = VNCRFBClient(
+            configuration: .init(host: "ignored", port: 0, password: "secret", username: "alice", shared: true, channel: channel),
+            delegate: delegate
+        )
+        client.run()
+        XCTAssertTrue(delegate.phases.contains(.connected))
+        XCTAssertEqual(delegate.desktopName, "mac")
+
+        // banner(12), selection(1) = type 30, credentials(128), public key(128).
+        let written = channel.written
+        XCTAssertEqual(written[12], VNCWire.SecurityType.appleRemoteDesktop.rawValue)
+        let cipher = Array(written[13 ..< 141])
+        let clientPublic = VNCBigNum(bigEndian: Array(written[141 ..< 269]))
+        let shared = clientPublic.power(serverSecret, modulo: prime)
+        let key = Array(Insecure.MD5.hash(data: Data(shared.bigEndianBytes(length: 128))))
+        let plain = try XCTUnwrap(VNCAppleAuth.aes128ECB(cipher, key: key, decrypt: true))
+        XCTAssertEqual(Array(plain[0 ..< 6]), Array("alice".utf8) + [0])
+        XCTAssertEqual(Array(plain[64 ..< 71]), Array("secret".utf8) + [0])
+    }
+
+    func testAppleAuthPrefersVNCPasswordWithoutUser() throws {
+        var server = Data()
+        server.append(VNCWire.banner(major: 3, minor: 8))
+        server.append(2)
+        server.append(contentsOf: [VNCWire.SecurityType.appleRemoteDesktop.rawValue, VNCWire.SecurityType.vncAuth.rawValue])
+        let channel = MemoryChannel(Array(server))
+        let client = VNCRFBClient(
+            configuration: .init(host: "ignored", port: 0, password: "pw", shared: true, channel: channel),
+            delegate: RecordingDelegate()
+        )
+        client.run()
+        XCTAssertEqual(channel.written[12], VNCWire.SecurityType.vncAuth.rawValue)
+    }
+
+    func testVNCUsernameFallsBackOnlyWithIdentityPassword() {
+        let identity = RDIdentity(username: "alice", password: "login")
+        var machine = RDMachine()
+        XCTAssertEqual(machine.resolvedVNCUsername(identity: identity), "alice")
+        // A stored VNC password is not the identity's: VNC auth, no user.
+        machine.vncPassword = "vnc-only"
+        XCTAssertEqual(machine.resolvedVNCUsername(identity: identity), "")
+        machine.vncUsername = "bob"
+        XCTAssertEqual(machine.resolvedVNCUsername(identity: identity), "bob")
     }
 }

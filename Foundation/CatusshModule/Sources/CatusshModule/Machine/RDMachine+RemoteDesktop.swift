@@ -46,7 +46,9 @@ public extension RDMachine {
         set { attachment["remoteDesktop.vnc.password"] = newValue.isEmpty ? nil : newValue }
     }
 
-    /// Reserved for servers that ask for a username in addition to a password.
+    /// The account for Apple Remote Desktop authentication (macOS Screen
+    /// Sharing). Empty falls back to the associated identity's user name,
+    /// but only when the password comes from the identity too.
     var vncUsername: String {
         get { attachment["remoteDesktop.vnc.username", default: ""] }
         set { attachment["remoteDesktop.vnc.username"] = newValue.isEmpty ? nil : newValue }
@@ -78,6 +80,18 @@ public extension RDMachine {
     func resolvedVNCPassword(identity: RDIdentity?) -> String {
         if !vncPassword.isEmpty { return vncPassword }
         return identity?.password ?? ""
+    }
+
+    /// The effective Apple Remote Desktop user name: the stored one, else the
+    /// associated identity's when its password is the one used. A stored VNC
+    /// password is a VNC password ("VNC viewers may control screen with
+    /// password" on a Mac), so it is not paired with the identity's name and
+    /// the Mac is reached with VNC authentication. Only used when the server
+    /// offers Apple authentication.
+    func resolvedVNCUsername(identity: RDIdentity?) -> String {
+        if !vncUsername.isEmpty { return vncUsername }
+        guard vncPassword.isEmpty else { return "" }
+        return identity?.username ?? ""
     }
 
     // MARK: - NetEase UU Remote

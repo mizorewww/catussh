@@ -33,6 +33,7 @@ struct ServerEditorSheet: View {
     @State private var remoteDesktopProtocol: RDMachine.RemoteDesktopProtocolType = .none
     @State private var vncPort = "5900"
     @State private var vncPassword = ""
+    @State private var vncUsername = ""
     @State private var vncOverSSH = false
     @State private var vncShared = true
     @State private var uuDeviceID = ""
@@ -195,6 +196,12 @@ struct ServerEditorSheet: View {
                     .textFieldStyle(.rx)
             }
         }
+        RXField("Mac user name") {
+            TextField("Use identity user name", text: $vncUsername)
+                .textFieldStyle(.rx)
+                .disableAutocorrection(true)
+        }
+        HelpText("macOS Screen Sharing signs in with a Mac user name and password. Leave the VNC password empty to use the identity's; a VNC password alone uses VNC authentication.")
         HStack(spacing: RX.Space.s5) {
             Toggle("Tunnel over SSH", isOn: $vncOverSSH)
             Toggle("Shared session", isOn: $vncShared)
@@ -289,6 +296,7 @@ struct ServerEditorSheet: View {
         target.remoteDesktopProtocol = remoteDesktopProtocol
         target.vncPort = vncPort
         target.vncPassword = vncPassword
+        target.vncUsername = vncUsername.trimmingCharacters(in: .whitespaces)
         target.vncOverSSH = vncOverSSH
         target.vncShared = vncShared
         target.uuDeviceID = uuDeviceID.trimmingCharacters(in: .whitespaces)
@@ -312,6 +320,7 @@ struct ServerEditorSheet: View {
         remoteDesktopProtocol = read.remoteDesktopProtocol
         vncPort = read.vncPort
         vncPassword = read.vncPassword
+        vncUsername = read.vncUsername
         vncOverSSH = read.vncOverSSH
         vncShared = read.vncShared
         uuDeviceID = read.uuDeviceID

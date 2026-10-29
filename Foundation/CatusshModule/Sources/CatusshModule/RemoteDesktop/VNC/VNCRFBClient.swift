@@ -26,6 +26,9 @@ final class VNCRFBClient: @unchecked Sendable {
         var host: String
         var port: UInt16
         var password: String
+        /// The account name for Apple Remote Desktop authentication (macOS
+        /// Screen Sharing); VNC authentication has none.
+        var username: String = ""
         var shared: Bool
         var timeout: TimeInterval = 15
         /// Overrides the socket the client talks on — the SSH-tunnel path
@@ -175,28 +178,29 @@ final class VNCRFBClient: @unchecked Sendable {
             offered = Array(try channel.read(exactly: count))
         }
 
-        let selected: UInt8
-        if offered.contains(VNCWire.SecurityType.none.rawValue) {
-            selected = VNCWire.SecurityType.none.rawValue
-        } else if offered.contains(VNCWire.SecurityType.vncAuth.rawValue) {
-            guard !configuration.password.isEmpty else {
-                throw RemoteDesktopFailure("The VNC server asks for a password. Set one on the server, or on the identity it falls back to.")
-            }
-            selected = VNCWire.SecurityType.vncAuth.rawValue
-        } else {
-            throw RemoteDesktopFailure("The server offers no supported security type (\(offered.map(String.init).joined(separator: ", "))).")
-        }
+        let selected = try chooseSecurityType(from: offered)
 
         if version.minor != 3 {
             try send(Data([selected]), over: channel)
         }
 
-        if selected == VNCWire.SecurityType.vncAuth.rawValue {
+        switch selected {
+        case VNCWire.SecurityType.vncAuth.rawValue:
             let challenge = Array(try channel.read(exactly: 16))
             guard let response = VNCDES.encryptChallenge(challenge, password: configuration.password) else {
                 throw RemoteDesktopFailure("Could not answer the VNC authentication challenge.")
             }
             try send(Data(response), over: channel)
+        case VNCWire.SecurityType.appleRemoteDesktop.rawValue:
+            let parameters = try VNCAppleAuth.readParameters(over: channel)
+            let response = try VNCAppleAuth.response(
+                to: parameters,
+                username: configuration.username,
+                password: configuration.password
+            )
+            try send(response, over: channel)
+        default:
+            break
         }
 
         // SecurityResult: u32, 0 on success. For 3.8 a failure carries a
@@ -232,6 +236,33 @@ final class VNCRFBClient: @unchecked Sendable {
         try send(VNCWire.setEncodings(VNCWire.clientEncodings), over: channel)
         requestUpdate(incremental: false)
         delegate?.client(self, didUpdateFrame: nil, size: framebuffer.size, desktopName: desktopName)
+    }
+
+    /// None if the server allows it; Apple authentication when there is a
+    /// user name to give (macOS offers it beside a VNC password); else the
+    /// VNC password.
+    private func chooseSecurityType(from offered: [UInt8]) throws -> UInt8 {
+        let none = VNCWire.SecurityType.none.rawValue
+        let vncAuth = VNCWire.SecurityType.vncAuth.rawValue
+        let apple = VNCWire.SecurityType.appleRemoteDesktop.rawValue
+        if offered.contains(none) { return none }
+        let hasUser = !configuration.username.isEmpty
+        if offered.contains(apple), hasUser {
+            guard !configuration.password.isEmpty else {
+                throw RemoteDesktopFailure("The Mac asks for the password of \(configuration.username). Set one on the server, or on its identity.")
+            }
+            return apple
+        }
+        if offered.contains(vncAuth) {
+            guard !configuration.password.isEmpty else {
+                throw RemoteDesktopFailure("The VNC server asks for a password. Set one on the server, or on the identity it falls back to.")
+            }
+            return vncAuth
+        }
+        if offered.contains(apple) {
+            throw RemoteDesktopFailure("The Mac asks for a user name and password. Set the VNC user name on the server, or give it an identity.")
+        }
+        throw RemoteDesktopFailure("The server offers no supported security type (\(offered.map(String.init).joined(separator: ", "))).")
     }
 
     /// A 3.8 reason string: u32 length + UTF-8 text; 3.3/3.7 send nothing.
