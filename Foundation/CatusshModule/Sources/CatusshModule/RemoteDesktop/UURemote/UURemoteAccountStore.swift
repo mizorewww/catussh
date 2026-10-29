@@ -89,6 +89,7 @@ public final class UURemoteAccountStore: ObservableObject {
         qrLoginState = .generating
         qrStatusHint = "Generating QR code…"
         do {
+            try await ensureRegisteredDevice()
             let (jumpURL, token, ticket) = try await client.qrcodeGenLogin()
             qrSession = (token, jumpURL)
             qrImageData = Self.makeQRCode(content: jumpURL)
@@ -148,6 +149,7 @@ public final class UURemoteAccountStore: ObservableObject {
 
     /// Sends an SMS verification code to a phone number.
     public func sendSMSCode(countryCode: String, mobile: String) async throws {
+        try await ensureRegisteredDevice()
         try await client.mobileCode(countryCode: countryCode, mobile: mobile)
     }
 
@@ -224,6 +226,15 @@ public final class UURemoteAccountStore: ObservableObject {
         }
     }
 
+    /// Login requests are signed as a registered device: without a device id
+    /// the service refuses to make a QR code or send an SMS code. The device
+    /// is registered once, before the first login, and kept.
+    private func ensureRegisteredDevice() async throws {
+        await ensureLocalDeviceIdentity()
+        guard credentials.deviceID.isEmpty else { return }
+        _ = try await registerLocalDevice(name: Self.localDeviceName)
+    }
+
     /// A stable 16-character lowercase-alphanumeric device id derived from
     /// the persisted client/system ids — deterministic across launches, so
     /// the server sees the same pseudo-device every time.
@@ -241,11 +252,16 @@ public final class UURemoteAccountStore: ObservableObject {
         } ?? "catussh"
     }
 
-    /// Signs out and clears persisted credentials.
+    /// Signs out and clears the account. The device catussh registered as is
+    /// kept, so signing in again does not add another one to the service.
     public func logout() {
         qrPollingTask?.cancel()
         qrSession = nil
-        credentials = UUCredentials()
+        var kept = UUCredentials()
+        kept.clientID = credentials.clientID
+        kept.systemID = credentials.systemID
+        kept.deviceID = credentials.deviceID
+        credentials = kept
         userID = ""
         nickname = ""
         devices = []
@@ -253,8 +269,8 @@ public final class UURemoteAccountStore: ObservableObject {
         qrLoginState = .idle
         qrImageData = nil
         qrStatusHint = ""
-        UserDefaults.standard.removeObject(forKey: Self.persistedKey)
-        Task { await client.updateCredentials(UUCredentials()) }
+        persist()
+        Task { await client.updateCredentials(kept) }
     }
 
     // MARK: - Devices

@@ -19,6 +19,19 @@ public enum UUAPIError: Error, Sendable {
     case tokenExpired
 }
 
+extension UUAPIError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case let .invalidURL(url): "UU Remote: the request address is not valid (\(url))."
+        case let .transport(reason): "Could not reach UU Remote: \(reason)"
+        case let .http(status, reason): "UU Remote answered HTTP \(status): \(reason)"
+        case let .api(_, message): "UU Remote refused the request: \(message)"
+        case let .missingField(field): "UU Remote's answer is missing \(field)."
+        case .tokenExpired: "The UU Remote sign-in has expired. Sign in again."
+        }
+    }
+}
+
 /// Signing key shipped inside the official UU PC client (x-param-plat=1);
 /// the same value for every user, so it may rotate with a client release.
 public enum UUConstants {
@@ -65,6 +78,8 @@ public struct UUDeviceInfo: Equatable, Sendable {
     public var wallpaperURL: String?
     public var versionName: String?
     public var participants: [UUParticipant] = []
+
+    public init() {}
 
     public var isOnline: Bool { status == "CONNECTED" || status == "READY" }
     public var isDesktop: Bool { platform == 1 || platform == 4 }
@@ -142,10 +157,10 @@ public enum UURequestSigner {
     public static func commonHeaders(credentials: UUCredentials, timestamp: Int? = nil, abi: String? = nil) -> [String: String] {
         var headers: [String: String] = [
             "X-Param-CHN": UUConstants.channel,
-            "X-Param-OPR": "",
             "X-Param-PKGN": UUConstants.packageName,
-            "X-Param-PLAT": "4",
-            "X-Param-REL": "prod",
+            // The built-in signing key belongs to the PC client (platform 1);
+            // any other platform's signature is refused as an invalid token.
+            "X-Param-PLAT": "1",
             "X-Param-VC": UUConstants.versionCode,
             "X-Param-VN": UUConstants.versionName,
             "X-Param-TS": String(timestamp ?? Int(Date().timeIntervalSince1970)),

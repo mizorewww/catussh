@@ -17,6 +17,8 @@ public struct UUAPIRequest: Sendable {
     public var query: String?
     public var body: Data
     public var requiresAuth = true
+    /// Seconds to wait for the answer; long polls hold the request open.
+    public var timeout: TimeInterval = 15
 
     public init(method: String, path: String, query: String? = nil, body: [String: Any] = [:], requiresAuth: Bool = true) {
         self.method = method
@@ -108,7 +110,7 @@ public actor UURemoteAPIClient {
             headers.removeValue(forKey: "X-CSRF-TOKEN")
         }
 
-        var urlRequest = URLRequest(url: url, timeoutInterval: 15)
+        var urlRequest = URLRequest(url: url, timeoutInterval: request.timeout)
         urlRequest.httpMethod = request.method
         urlRequest.httpBody = request.body.isEmpty ? nil : request.body
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -143,8 +145,17 @@ public actor UURemoteAPIClient {
         }
         let code = json["code"] as? Int ?? -1
         let msg = json["msg"] as? String ?? ""
-        if status == 422 || code == UUConstants.tokenInvalidCode {
+        if code == UUConstants.tokenInvalidCode {
             throw UUAPIError.tokenExpired
+        }
+        // A request the service could not validate: the fields it names are
+        // the useful part ("header X-Param-device-id: Field required").
+        if status == 422 {
+            let fields = (json["data"] as? [[String: Any]] ?? []).compactMap { item -> String? in
+                let location = (item["loc"] as? [Any])?.map { "\($0)" }.joined(separator: " ")
+                return [location, item["msg"] as? String].compactMap { $0 }.joined(separator: ": ")
+            }
+            throw UUAPIError.api(code, ([msg] + fields).filter { !$0.isEmpty }.joined(separator: "; "))
         }
         return (status, code, msg, json)
     }
@@ -206,7 +217,10 @@ public actor UURemoteAPIClient {
 
     /// Starts QR-code login: generates the QR content and the status ticket.
     public func qrcodeGenLogin() async throws -> (qrcodeJumpURL: String, token: String, statusQueryTicket: String) {
-        let envelope: UUAPIEnvelope<[String: Any]> = try await send(UUAPIRequest(method: "POST", path: "/api/v1/qrcode/gen/login", body: [:], requiresAuth: false))
+        // No body at all: the signature covers the empty string, as the official client sends it.
+        var request = UUAPIRequest(method: "POST", path: "/api/v1/qrcode/gen/login", requiresAuth: false)
+        request.body = Data()
+        let envelope: UUAPIEnvelope<[String: Any]> = try await send(request)
         guard let url = envelope.data?["qrcode_jump_url"] as? String,
               let token = envelope.data?["token"] as? String,
               let ticket = envelope.data?["status_query_ticket"] as? String
@@ -214,10 +228,16 @@ public actor UURemoteAPIClient {
         return (url, token, ticket)
     }
 
+    /// The status request is held open until the code is scanned, confirmed
+    /// or expires.
+    public static let qrStatusTimeout: TimeInterval = 120
+
     /// Long-polls QR login status: `login_status` is the last-seen value.
     public func qrcodeLoginStatus(token: String, qrcodeJumpURL: String, loginStatus: Int) async throws -> Int {
         let body: [String: Any] = ["token": token, "qrcode_jump_url": qrcodeJumpURL, "login_status": loginStatus]
-        let envelope: UUAPIEnvelope<[String: Any]> = try await send(UUAPIRequest(method: "POST", path: "/api/v1/qrcode/login/status", body: body, requiresAuth: false))
+        var request = UUAPIRequest(method: "POST", path: "/api/v1/qrcode/login/status", body: body, requiresAuth: false)
+        request.timeout = Self.qrStatusTimeout
+        let envelope: UUAPIEnvelope<[String: Any]> = try await send(request)
         return envelope.data?["status"] as? Int ?? 1
     }
 
