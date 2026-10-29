@@ -64,6 +64,7 @@
 		EF3DF6A6E382728A43B6008C /* Bridge+Dialogs.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4835E6DD35412B9496F3877 /* Bridge+Dialogs.swift */; };
 		EF68136C09D6AB52B351DB67 /* Generic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A6085FEF3BD869C3B706AF6 /* Generic.swift */; };
 		F02B0EA4860563B18179A98B /* EditorWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = E90844C566AF848CBC562AD8 /* EditorWorkspace.swift */; };
+		F203279EC5DF2195283BAC59 /* FolderActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16D39CED118800E0E3CE611C /* FolderActions.swift */; };
 		FCCFF1E12BA8219BDA494B6C /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = B6B1D7BBF2715F710EA328AA /* LICENSE */; };
 		FFEF215279D41B11CE53919E /* MacBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FE6FDBCE8A195771BC7D9B4 /* MacBridge.swift */; };
 /* End PBXBuildFile section */
@@ -95,6 +96,7 @@
 /* Begin PBXFileReference section */
 		028ECCE99DE613FAC13D0746 /* Bridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bridge.swift; sourceTree = "<group>"; };
 		0AAF63C57D629C74FCF707D9 /* PickerSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PickerSheets.swift; sourceTree = "<group>"; };
+		16D39CED118800E0E3CE611C /* FolderActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderActions.swift; sourceTree = "<group>"; };
 		170CBEF5BCEC366195C96002 /* CatusshEditor */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CatusshEditor; path = ../../Foundation/CatusshEditor; sourceTree = SOURCE_ROOT; };
 		17BE74C1206D9FC92816AD1E /* SnippetEditorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnippetEditorSheet.swift; sourceTree = "<group>"; };
 		1856CB81955E682D39045C2C /* TerminalManager+Context.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TerminalManager+Context.swift"; sourceTree = "<group>"; };
@@ -260,6 +262,7 @@
 		76354A0AC27E679D6969DC1A /* Servers */ = {
 			isa = PBXGroup;
 			children = (
+				16D39CED118800E0E3CE611C /* FolderActions.swift */,
 				4530642C61B9FB027A243A50 /* ServerActions.swift */,
 				A68BC360409179EF724E3132 /* ServerEditorSheet.swift */,
 				407F5291DEE1A1ED0D3206C6 /* ServersView.swift */,
@@ -575,6 +578,7 @@
 				F02B0EA4860563B18179A98B /* EditorWorkspace.swift in Sources */,
 				7E43E227B36818113F691EE3 /* FileTable.swift in Sources */,
 				D3366C1818743898D7AD12F2 /* FileTransferPage.swift in Sources */,
+				F203279EC5DF2195283BAC59 /* FolderActions.swift in Sources */,
 				EF68136C09D6AB52B351DB67 /* Generic.swift in Sources */,
 				BC5BAFA20C443345D50F9B93 /* HomeView.swift in Sources */,
 				5604894077B0AF0D4755E9D6 /* IdentitiesView.swift in Sources */,

@@ -131,8 +131,10 @@ final class AppRouter: ObservableObject {
     /// Opens the server's remote desktop (VNC or UU Remote), reusing a live
     /// session. The session page reports "no remote desktop configured" on
     /// a server that has none, so callers do not have to check first.
-    func openDesktop(machine: RDMachine.ID) {
+    /// - Parameter viewOnly: watch the screen without sending input.
+    func openDesktop(machine: RDMachine.ID, viewOnly: Bool = false) {
         let session = RemoteDesktopManager.shared.begin(for: machine)
+        if viewOnly { session.viewOnly = true }
         route = .desktop(session.id)
     }
 

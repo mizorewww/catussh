@@ -18,6 +18,14 @@ enum ServerActions {
         }
     }
 
+    /// New Server, filled in from `template`.
+    @MainActor
+    static func create(from template: RDMachine) {
+        SheetPresenter.present { dismiss in
+            ServerEditorSheet(machine: nil, template: template, close: dismiss)
+        }
+    }
+
     static func duplicate(_ machine: RDMachine.ID) {
         let store = CatusshStore.shared
         let original = store.machineGroup[machine]
@@ -152,6 +160,39 @@ struct ServerContextMenu: View {
     var includesTools = true
 
     var body: some View {
+        if CatusshStore.shared.machineGroup[machine].isUURemoteDevice {
+            uuDeviceItems
+        } else {
+            sshItems
+        }
+    }
+
+    /// A UU Remote device has its desktop and nothing that needs SSH.
+    @ViewBuilder private var uuDeviceItems: some View {
+        Button {
+            AppRouter.shared.openDesktop(machine: machine)
+        } label: {
+            Label("Open Desktop", systemImage: ServerTool.desktop.systemImage)
+        }
+        Button {
+            AppRouter.shared.openDesktop(machine: machine, viewOnly: true)
+        } label: {
+            Label("View Only", systemImage: "eye")
+        }
+        Divider()
+        Button {
+            ServerActions.edit(machine)
+        } label: {
+            Label("Edit…", systemImage: "pencil")
+        }
+        Button {
+            UIBridge.sendPasteboard(str: CatusshStore.shared.machineGroup[machine].uuDeviceID)
+        } label: {
+            Label("Copy Device ID", systemImage: "doc.on.doc")
+        }
+    }
+
+    @ViewBuilder private var sshItems: some View {
         let router = AppRouter.shared
         Group {
             if includesTools {
@@ -199,6 +240,7 @@ struct ServerContextMenu: View {
             } label: {
                 Label("Edit…", systemImage: "pencil")
             }
+            MoveToFolderMenu(machine: machine)
             Button {
                 ServerActions.duplicate(machine)
             } label: {

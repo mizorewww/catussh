@@ -23,15 +23,17 @@ struct ServersView: View {
         return machines.filter { $0.isQualifiedForSearch(text: searchText) }
     }
 
+    /// The folders in order, Default last; empty folders only while not
+    /// searching.
     var groups: [(name: String, machines: [RDMachine])] {
         let machines = filtered
-        let names = Set(machines.map(\.group)).sorted { lhs, rhs in
-            if lhs.isEmpty { return false }
-            if rhs.isEmpty { return true }
-            return lhs.localizedStandardCompare(rhs) == .orderedAscending
-        }
-        return names.map { name in
-            (name, machines.filter { $0.group == name }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
+        var names = store.folders.map(\.name)
+        if machines.contains(where: { $0.group.isEmpty }) { names.append("") }
+        return names.compactMap { name in
+            let inside = machines.filter { $0.group == name }
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            if inside.isEmpty, !searchText.isEmpty { return nil }
+            return (name, inside)
         }
     }
 
@@ -44,6 +46,15 @@ struct ServersView: View {
             }
         ) {
         } trailing: {
+            RXToolbarMenu(
+                "New Folder",
+                systemImage: "folder.badge.plus",
+                items: [
+                    RXToolbarMenuItem("New Folder…", systemImage: "folder.badge.plus", isOn: false) { FolderActions.newFolder() },
+                    RXToolbarMenuItem("Link UU Remote Account…", systemImage: "link", isOn: false) { FolderActions.linkUURemote() },
+                ]
+            )
+            .help("Make a folder, or fill one from a UU Remote account")
             RedactionMenu()
             Button { router.openTerminals() } label: {
                 Label("Open Terminals…", systemImage: "rectangle.stack.badge.plus")
@@ -58,7 +69,7 @@ struct ServersView: View {
                 }
             }
         } content: {
-            if store.machineGroup.machines.isEmpty {
+            if store.machineGroup.machines.isEmpty, store.folders.isEmpty {
                 EmptyStateView(
                     "No servers yet",
                     systemImage: "server.rack",
@@ -136,6 +147,7 @@ struct RedactionBanner: View {
 private struct ServersTable: View {
     let groups: [(name: String, machines: [RDMachine])]
     @Binding var selection: RDMachine.ID?
+    @EnvironmentObject var store: CatusshStore
     @State private var width: CGFloat = 900
 
     var body: some View {
@@ -144,8 +156,15 @@ private struct ServersTable: View {
             header(columns)
             Hairline()
             ForEach(groups, id: \.name) { group in
-                TableGroupRow(group.name.isEmpty ? "Default" : group.name, trailing: "\(group.machines.count)")
+                FolderHeaderRow(name: group.name, count: group.machines.count)
                     .transition(.opacity)
+                if group.machines.isEmpty {
+                    Text(store.folder(named: group.name)?.isLinked == true ? "No desktop devices on the account" : "Empty — move servers here from their menu")
+                        .font(.rxHelp)
+                        .foregroundStyle(.rxInkSecondary)
+                        .padding(.horizontal, RX.Space.s3)
+                        .frame(maxWidth: .infinity, minHeight: RX.tableRowHeight, alignment: .leading)
+                }
                 ForEach(Array(group.machines.enumerated()), id: \.element.id) { index, machine in
                     ServerRow(machine: machine.id, columns: columns, selection: $selection)
                         .rxRise(index)
@@ -216,7 +235,7 @@ private struct ServerRow: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                RedactableText(read.remoteAddress, redacted: store.machineRedacted != .none)
+                RedactableText(read.isUURemoteDevice ? "UU Remote" : read.remoteAddress, redacted: store.machineRedacted != .none)
                     .font(.rxCode)
                     .foregroundStyle(.rxInk)
                     .lineLimit(1)
@@ -251,6 +270,10 @@ private struct ServerRow: View {
                         .lineLimit(1)
                         .frame(width: columns.lastUsed, alignment: .leading)
                 }
+                if read.isUURemoteDevice {
+                    UUDeviceActions(machine: read)
+                        .frame(width: columns.actions, alignment: .trailing)
+                } else {
                 HStack(spacing: RX.Space.s1) {
                     ForEach([ServerTool.files, .monitor]) { tool in
                         Button(tool.title) { tool.show(machine) }
@@ -267,6 +290,7 @@ private struct ServerRow: View {
                         .help(ServerTool.terminal.help)
                 }
                 .frame(width: columns.actions, alignment: .trailing)
+                }
             }
         }
         .padding(.horizontal, RX.Space.s3)
@@ -274,7 +298,13 @@ private struct ServerRow: View {
         .rxRowBackground(selected: selection == machine, hovered: hovered)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        .gesture(TapGesture(count: 2).onEnded { AppRouter.shared.openTerminal(machine: machine) })
+        .gesture(TapGesture(count: 2).onEnded {
+            if store.machineGroup[machine].isUURemoteDevice {
+                AppRouter.shared.openDesktop(machine: machine)
+            } else {
+                AppRouter.shared.openTerminal(machine: machine)
+            }
+        })
         .simultaneousGesture(TapGesture(count: 1).onEnded { selection = machine })
         .contextMenu { ServerContextMenu(machine: machine) }
     }
@@ -283,5 +313,32 @@ private struct ServerRow: View {
         guard let aid = machine.associatedIdentity, let uid = UUID(uuidString: aid) else { return "Automatic" }
         let identity = store.identityGroup[uid]
         return identity.username.isEmpty ? "Missing" : identity.username
+    }
+}
+
+/// A UU Remote device's row actions: its desktop, or a view of it; the
+/// device's online state from the last refresh.
+private struct UUDeviceActions: View {
+    let machine: RDMachine
+    @ObservedObject private var account = UURemoteAccountStore.shared
+
+    var body: some View {
+        let device = account.devices.first { $0.deviceID == machine.uuDeviceID }
+        HStack(spacing: RX.Space.s2) {
+            if let device {
+                StatusDot(device.isOnline ? .success : .off, size: .small)
+                Text(device.isOnline ? "Online" : "Offline")
+                    .font(.rxHelp)
+                    .foregroundStyle(.rxInkSecondary)
+            }
+            Button("View") { AppRouter.shared.openDesktop(machine: machine.id, viewOnly: true) }
+                .buttonStyle(.rx(.plain, size: .small))
+                .help("Watch the screen without controlling it")
+            Button("Desktop") { AppRouter.shared.openDesktop(machine: machine.id) }
+                .buttonStyle(.rx(size: .small))
+                .help("Control this device's desktop")
+        }
+        // Signed out, the device cannot be reached; offline, nothing answers.
+        .disabled(!account.isLoggedIn || device?.isOnline == false)
     }
 }

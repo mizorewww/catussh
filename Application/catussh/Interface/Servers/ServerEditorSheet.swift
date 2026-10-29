@@ -14,6 +14,9 @@ import SwiftUI
 struct ServerEditorSheet: View {
     /// nil creates a new server.
     let machine: RDMachine.ID?
+    /// What a new server starts from (a host found nearby); nothing is saved
+    /// until Save.
+    var template: RDMachine?
     var close: (() -> Void)?
 
     @EnvironmentObject var store: CatusshStore
@@ -305,8 +308,7 @@ struct ServerEditorSheet: View {
     }
 
     func load() {
-        guard let machine else { return }
-        let read = store.machineGroup[machine]
+        guard let read = machine.map({ store.machineGroup[$0] }) ?? template else { return }
         name = read.name
         address = read.remoteAddress
         port = read.remotePort
