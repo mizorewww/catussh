@@ -18,6 +18,9 @@ public extension RDMachine {
         /// the SSH server behind a Cloudflare Tunnel. The port only names the
         /// host key.
         case cloudflareAccess = "cloudflare-access"
+        /// A NetEase UU Remote port-mapping stream to `remoteAddress:remotePort`,
+        /// carried on the FILE_DATA_CHANNEL of an active UU session.
+        case uuRemote = "uu-remote"
     }
 
     var transport: Transport {

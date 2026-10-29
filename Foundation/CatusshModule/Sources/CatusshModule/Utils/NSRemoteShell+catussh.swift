@@ -42,9 +42,9 @@ public extension NSRemoteShell {
     }
 
     /// Why the last connection failed, for the person: the host key refused,
-    /// the Cloudflare tunnel not opened, or nil when it was just unreachable.
+    /// a tunnel could not be opened, or nil when it was just unreachable.
     var connectFailureReason: String? {
-        hostKeyRefusal ?? tunnelFailure
+        hostKeyRefusal ?? tunnelFailure ?? uuTunnelFailure
     }
 
     /// Tries each identity in order, reconnecting when the username changes

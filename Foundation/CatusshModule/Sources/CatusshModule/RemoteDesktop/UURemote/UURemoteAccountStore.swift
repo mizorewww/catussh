@@ -1,0 +1,335 @@
+//
+//  UURemoteAccountStore.swift
+//  CatusshModule
+//
+//  Observable state store for the signed-in UU Remote account, persisted the
+//  same way CatusshStore keeps its secrets (AES-encrypted UserDefaults). Handles
+//  QR/SMS/token login, device discovery, and one-click RDMachine binding.
+//
+
+import Combine
+import CoreImage
+import CryptoKit
+import Foundation
+#if canImport(AppKit)
+import AppKit
+#endif
+
+@MainActor
+public final class UURemoteAccountStore: ObservableObject {
+    public static let shared = UURemoteAccountStore()
+
+    @Published public private(set) var credentials = UUCredentials()
+    @Published public private(set) var userID = ""
+    @Published public private(set) var nickname = ""
+    @Published public private(set) var devices: [UUDeviceInfo] = []
+    @Published public private(set) var qrLoginState = QRLoginState.idle
+    @Published public private(set) var qrImageData: Data?
+    @Published public private(set) var qrStatusHint = ""
+    @Published public private(set) var loginError: String?
+    @Published public private(set) var isLoggedIn = false
+
+    private let client = UURemoteAPIClient()
+    private var qrPollingTask: Task<Void, Never>?
+    private var qrSession: (token: String, jumpURL: String)?
+
+    public enum QRLoginState: Equatable {
+        case idle
+        case generating
+        case waiting
+        case scanned
+        case confirmed
+        case expired
+        case failed(String)
+    }
+
+    private init() {
+        loadPersisted()
+    }
+
+    // MARK: - Persistence
+
+    private static let persistedKey = "me.mizorewww.rayon.uuremote.account"
+
+    private func loadPersisted() {
+        guard let encrypted = UserDefaults.standard.data(forKey: Self.persistedKey),
+              let decrypted = AES.shared.decrypt(data: encrypted),
+              let saved = try? JSONDecoder().decode(UUCredentials.self, from: decrypted)
+        else { return }
+        credentials = saved
+        userID = saved.userID
+        isLoggedIn = saved.isComplete
+        Task {
+            await client.updateCredentials(saved)
+            // Credentials saved by an older version may lack the device
+            // identity; complete it so `isComplete` reflects the token.
+            await ensureLocalDeviceIdentity()
+            if !credentials.token.isEmpty {
+                isLoggedIn = credentials.isComplete
+            }
+        }
+    }
+
+    private func persist() {
+        var toSave = credentials
+        toSave.userID = userID
+        guard let data = try? JSONEncoder().encode(toSave),
+              let encrypted = AES.shared.encrypt(data: data)
+        else { return }
+        UserDefaults.standard.set(encrypted, forKey: Self.persistedKey)
+    }
+
+    // MARK: - Login
+
+    /// Starts a QR-code login session and returns the QR content to render.
+    public func startQRLogin() async throws -> String {
+        qrPollingTask?.cancel()
+        qrLoginState = .generating
+        qrStatusHint = "Generating QR code…"
+        do {
+            let (jumpURL, token, ticket) = try await client.qrcodeGenLogin()
+            qrSession = (token, jumpURL)
+            qrImageData = Self.makeQRCode(content: jumpURL)
+            qrLoginState = .waiting
+            qrStatusHint = "Scan with the UU Remote app"
+            qrPollingTask = Task { await pollQRLogin(token: token, jumpURL: jumpURL, ticket: ticket) }
+            return jumpURL
+        } catch {
+            qrLoginState = .failed(error.localizedDescription)
+            qrStatusHint = error.localizedDescription
+            loginError = error.localizedDescription
+            throw error
+        }
+    }
+
+    private func pollQRLogin(token: String, jumpURL: String, ticket: String) async {
+        var lastStatus = 1
+        while !Task.isCancelled {
+            do {
+                let status = try await client.qrcodeLoginStatus(token: token, qrcodeJumpURL: jumpURL, loginStatus: lastStatus)
+                switch status {
+                case 0:
+                    qrLoginState = .expired
+                    qrStatusHint = "QR code expired"
+                    return
+                case 1:
+                    qrStatusHint = "Scan with the UU Remote app"
+                case 2:
+                    qrStatusHint = "Scanned — confirm on the device"
+                    qrLoginState = .scanned
+                case 3:
+                    continue
+                case 4:
+                    qrLoginState = .confirmed
+                    qrStatusHint = "Logging in…"
+                    try await finishQRLogin(token: token, jumpURL: jumpURL)
+                    return
+                default:
+                    qrStatusHint = "Waiting…"
+                }
+                lastStatus = status
+                try await Task.sleep(nanoseconds: 350_000_000)
+            } catch {
+                if !Task.isCancelled {
+                    qrStatusHint = error.localizedDescription
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                }
+            }
+        }
+    }
+
+    private func finishQRLogin(token: String, jumpURL: String) async throws {
+        let (uid, nick, jwt) = try await client.loginByQRCode(token: token, qrcodeJumpURL: jumpURL)
+        await applyLoginCredentials(userID: uid, nickname: nick, token: jwt)
+        qrStatusHint = "Logged in as \(nickname.isEmpty ? userID : nickname)"
+    }
+
+    /// Sends an SMS verification code to a phone number.
+    public func sendSMSCode(countryCode: String, mobile: String) async throws {
+        try await client.mobileCode(countryCode: countryCode, mobile: mobile)
+    }
+
+    /// Logs in with an SMS verification code.
+    public func loginBySMS(countryCode: String, mobile: String, code: String) async throws {
+        let (uid, nick, jwt) = try await client.loginByMobile(countryCode: countryCode, mobile: mobile, code: code)
+        await applyLoginCredentials(userID: uid, nickname: nick, token: jwt)
+    }
+
+    /// Imports a token directly (for users who copied it from a client).
+    public func importToken(_ token: String, userID: String = "", deviceID: String = "", clientID: String = "", systemID: String = "") async throws {
+        var creds = credentials
+        creds.token = token
+        creds.userID = userID
+        creds.csrf = UURequestSigner.csrf(from: token) ?? ""
+        creds.deviceID = deviceID
+        creds.clientID = clientID
+        creds.systemID = systemID
+        credentials = creds
+        // Token imports arrive without a login response; read the account
+        // id out of the JWT claims when the caller did not supply one.
+        if creds.userID.isEmpty {
+            creds.userID = UURequestSigner.userID(from: token) ?? ""
+        }
+        self.userID = creds.userID
+        persist()
+        await client.updateCredentials(creds)
+        await ensureLocalDeviceIdentity()
+        isLoggedIn = credentials.isComplete
+    }
+
+    /// Stores a freshly acquired token, fills the missing identity fields,
+    /// registers this machine as a UU device, and lands `isLoggedIn` once
+    /// `isComplete` holds.
+    private func applyLoginCredentials(userID uid: String, nickname nick: String, token jwt: String) async {
+        var creds = credentials
+        creds.token = jwt
+        creds.userID = uid.isEmpty ? (UURequestSigner.userID(from: jwt) ?? "") : uid
+        creds.csrf = UURequestSigner.csrf(from: jwt) ?? ""
+        credentials = creds
+        userID = creds.userID
+        nickname = nick
+        persist()
+        await client.updateCredentials(creds)
+        await ensureLocalDeviceIdentity()
+        isLoggedIn = credentials.isComplete
+    }
+
+    /// Guarantees `clientID`/`systemID`/`deviceID` exist: the ids are
+    /// generated once and persisted, and the device id comes from
+    /// `/api/v1/device/windows/init` (or a deterministic local fallback when
+    /// registration is unreachable, so `isComplete` still reflects a valid
+    /// token).
+    private func ensureLocalDeviceIdentity() async {
+        var creds = credentials
+        var changed = false
+        if creds.clientID.isEmpty { creds.clientID = UUID().uuidString; changed = true }
+        if creds.systemID.isEmpty { creds.systemID = UUID().uuidString; changed = true }
+        if changed {
+            credentials = creds
+            persist()
+            await client.updateCredentials(creds)
+        }
+        guard creds.deviceID.isEmpty, !creds.token.isEmpty else { return }
+        do {
+            _ = try await registerLocalDevice(name: Self.localDeviceName)
+        } catch {
+            var updated = credentials
+            guard updated.deviceID.isEmpty else { return }
+            updated.deviceID = Self.deterministicDeviceID(clientID: updated.clientID, systemID: updated.systemID)
+            credentials = updated
+            persist()
+            await client.updateCredentials(updated)
+        }
+    }
+
+    /// A stable 16-character lowercase-alphanumeric device id derived from
+    /// the persisted client/system ids — deterministic across launches, so
+    /// the server sees the same pseudo-device every time.
+    nonisolated static func deterministicDeviceID(clientID: String, systemID: String) -> String {
+        let digest = SHA256.hash(data: Data("uu|\(clientID)|\(systemID)".utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return String(hex.prefix(16))
+    }
+
+    /// The device name registration reports, mirroring how the official
+    /// client names the host machine.
+    nonisolated static var localDeviceName: String {
+        ProcessInfo.processInfo.hostName.components(separatedBy: ".").first.flatMap {
+            $0.isEmpty ? nil : $0
+        } ?? "catussh"
+    }
+
+    /// Signs out and clears persisted credentials.
+    public func logout() {
+        qrPollingTask?.cancel()
+        qrSession = nil
+        credentials = UUCredentials()
+        userID = ""
+        nickname = ""
+        devices = []
+        isLoggedIn = false
+        qrLoginState = .idle
+        qrImageData = nil
+        qrStatusHint = ""
+        UserDefaults.standard.removeObject(forKey: Self.persistedKey)
+        Task { await client.updateCredentials(UUCredentials()) }
+    }
+
+    // MARK: - Devices
+
+    /// Refreshes the account's device list.
+    public func refreshDevices() async throws {
+        let list = try await client.deviceGroupsOfMy()
+        if list.isEmpty {
+            devices = try await client.deviceList()
+        } else {
+            devices = list
+        }
+    }
+
+    /// Desktop devices only, for the machine-binding picker.
+    public var desktopDevices: [UUDeviceInfo] {
+        devices.filter(\.isDesktop)
+    }
+
+    /// Creates or updates an RDMachine bound to a discovered UU device.
+    public func makeMachine(for device: UUDeviceInfo, store: CatusshStore = .shared) -> RDMachine {
+        var machine = RDMachine(
+            remoteAddress: device.deviceID,
+            remotePort: "22",
+            name: device.alias.isEmpty ? device.deviceID : device.alias,
+            group: "UU Remote",
+            comment: "NetEase UU Remote \(UUDeviceInfo.platformName(device.platform)) device"
+        )
+        machine.remoteDesktopProtocol = .uuRemote
+        machine.uuDeviceID = device.deviceID
+        machine.uuDeviceAlias = device.alias
+        machine.transport = .uuRemote
+        return machine
+    }
+
+    /// Registers the local machine as a UU device (for device-init flow).
+    public func registerLocalDevice(name: String) async throws -> String {
+        let clientID = credentials.clientID.isEmpty ? UUID().uuidString : credentials.clientID
+        let systemID = credentials.systemID.isEmpty ? UUID().uuidString : credentials.systemID
+        let deviceID = try await client.deviceWindowsInit(
+            name: name,
+            clientID: clientID,
+            systemID: systemID,
+            machineGUID: UUID().uuidString,
+            os: "macOS",
+            baseBoard: "Apple",
+            cpu: "Apple Silicon",
+            video: ["Apple GPU"],
+            mac: "00-00-00-00-00-00",
+            memory: 16 * 1024,
+            screen: "1920x1080"
+        )
+        var creds = credentials
+        creds.clientID = clientID
+        creds.systemID = systemID
+        creds.deviceID = deviceID
+        credentials = creds
+        persist()
+        await client.updateCredentials(creds)
+        return deviceID
+    }
+
+    // MARK: - QR rendering
+
+    /// Renders QR content into PNG data via CoreImage.
+    public static func makeQRCode(content: String, scale: Int = 8) -> Data? {
+        guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(content.data(using: .utf8), forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        guard let output = filter.outputImage else { return nil }
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: CGFloat(scale), y: CGFloat(scale)))
+        let context = CIContext()
+        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        let rep = NSBitmapImageRep(cgImage: cgImage)
+        return rep.representation(using: .png, properties: [:])
+    }
+
+    /// Exposes the API client for the driver.
+    public nonisolated var apiClient: UURemoteAPIClient { client }
+}

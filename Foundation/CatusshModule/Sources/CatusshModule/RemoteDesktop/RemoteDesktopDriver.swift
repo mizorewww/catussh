@@ -44,24 +44,9 @@ public protocol RemoteDesktopDriver: AnyObject, Sendable {
     func requestKeyframeOrRefresh()
 }
 
-/// Picks the backend for a machine. `.vnc` is built in; other protocols
-/// (UU Remote) register their factory here so this file does not need to
-/// know their types.
+/// Picks the backend for a machine. `.vnc` and `.uuRemote` are built in.
 public enum RemoteDesktopDriverFactory {
-    public typealias Factory = (RDMachine, RemoteDesktopSession) -> RemoteDesktopDriver?
-
-    private static let lock = NSLock()
-    private nonisolated(unsafe) static var custom: [RDMachine.RemoteDesktopProtocolType: Factory] = [:]
-
-    /// Registers the driver factory for a protocol type. Protocols that are
-    /// not built in call this once (for example from their file's static
-    /// bootstrap) before sessions are created.
-    public static func register(_ type: RDMachine.RemoteDesktopProtocolType, factory: @escaping Factory) {
-        lock.withLock { custom[type] = factory }
-    }
-
-    /// Creates a driver for the machine's protocol; nil for `.none` and for
-    /// protocols whose factory was never registered.
+    /// Creates a driver for the machine's protocol; nil for `.none`.
     @MainActor
     static func make(for machine: RDMachine, session: RemoteDesktopSession) -> RemoteDesktopDriver? {
         switch machine.remoteDesktopProtocol {
@@ -70,8 +55,7 @@ public enum RemoteDesktopDriverFactory {
         case .vnc:
             return VNCRFBDriver(machine: machine, session: session)
         case .uuRemote:
-            guard let factory = lock.withLock({ custom[.uuRemote] }) else { return nil }
-            return factory(machine, session)
+            return UURemoteDriver(session: session)
         }
     }
 }

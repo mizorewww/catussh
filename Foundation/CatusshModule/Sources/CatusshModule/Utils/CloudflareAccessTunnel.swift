@@ -255,10 +255,11 @@ public extension NSRemoteShell {
         set { objc_setAssociatedObject(self, tunnelFailureKey, newValue, .OBJC_ASSOCIATION_COPY) }
     }
 
-    /// Has the shell reach the machine the way the machine says: over TCP, or
-    /// through a Cloudflare tunnel to its address.
+    /// Has the shell reach the machine the way the machine says: over TCP,
+    /// through a Cloudflare tunnel, or through a UU Remote port-mapping stream.
     internal func applyTransport(for machine: RDMachine) {
         tunnelFailure = nil
+        uuTunnelFailure = nil
         switch machine.transport {
         case .direct:
             setupConnectionSocketProvider(nil)
@@ -280,6 +281,8 @@ public extension NSRemoteShell {
                     return -1
                 }
             }
+        case .uuRemote:
+            applyUUTransport(for: machine)
         }
     }
 }
