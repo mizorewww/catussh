@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import os
 
 /// One HTTP request the API client can send.
 public struct UUAPIRequest: Sendable {
@@ -139,9 +140,29 @@ public actor UURemoteAPIClient {
     /// Parses the `{code,msg,data}` envelope without rejecting non-zero
     /// codes — some flows (remote-assistance join) legitimately answer
     /// `0x470` and the caller needs both the code and `data`.
+    private static let log = Logger(subsystem: "me.mizorewww.rayon", category: "uu-api")
+
+    /// The answer with every long string cut down, so tokens and keys never
+    /// reach the log whole.
+    static func redacted(_ value: Any) -> Any {
+        switch value {
+        case let dict as [String: Any]: return dict.mapValues(redacted)
+        case let array as [Any]: return array.map(redacted)
+        case let text as String where text.count > 24: return String(text.prefix(6)) + "…(\(text.count))"
+        default: return value
+        }
+    }
+
     private func parse(data: Data, response: URLResponse, request: UUAPIRequest) throws -> (status: Int, code: Int, msg: String, json: [String: Any]) {
         let http = response as? HTTPURLResponse
         let status = http?.statusCode ?? 0
+        if let object = try? JSONSerialization.jsonObject(with: data),
+           let shown = try? JSONSerialization.data(withJSONObject: Self.redacted(object), options: [.sortedKeys])
+        {
+            Self.log.info("\(request.method, privacy: .public) \(request.path, privacy: .public) http \(status) \(String(decoding: shown.prefix(4000), as: UTF8.self), privacy: .public)")
+        } else {
+            Self.log.error("\(request.method, privacy: .public) \(request.path, privacy: .public) http \(status), not JSON (\(data.count) bytes)")
+        }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw UUAPIError.http(status, "response is not a JSON object")
         }
@@ -334,18 +355,11 @@ public actor UURemoteAPIClient {
     public func roomJoinByDevice(_ deviceID: String, forceJoin: Bool = true) async throws -> UURoomConfig {
         let body: [String: Any] = ["force_join": forceJoin]
         let envelope: UUAPIEnvelope<[String: Any]> = try await send(UUAPIRequest(method: "POST", path: "/api/v1/room/join/by_device/\(deviceID)", body: body))
-        guard let data = envelope.data,
-              let config = data["room_config"] as? [String: Any]
-        else { throw UUAPIError.missingField("room_config") }
-        var result = UURoomConfig()
-        result.token = config["token"] as? String ?? ""
-        result.signalServers = config["signal_servers"] as? [String] ?? []
-        result.timeout = config["timeout"] as? Int ?? 0
-        result.signalReconnectDelay = config["signal_reconnect_delay"] as? Int ?? 0
-        result.reportToken = config["report_token"] as? String
-        result.reportURL = config["report_url"] as? String
-        result.appDataJSON = config["app_data"].flatMap { try? JSONSerialization.data(withJSONObject: $0) }
-        return result
+        guard let data = envelope.data, let config = Self.roomConfig(from: data) else {
+            let keys = envelope.data.map { $0.keys.sorted().joined(separator: ", ") } ?? "no data"
+            throw UUAPIError.missingField("the room token and signaling servers (it sent: \(keys))")
+        }
+        return config
     }
 
     /// Clears the room a device previously joined.
@@ -370,13 +384,23 @@ public actor UURemoteAPIClient {
     /// has to confirm the request (`CONFIRMATION_REQUIRED_CODE` upstream).
     public static let confirmationRequiredCode = 0x470 // 1136
 
-    private static func roomConfig(from data: [String: Any]) -> UURoomConfig? {
-        guard let config = data["room_config"] as? [String: Any] else { return nil }
+    /// A room's connection details. The service answers flat (`token`,
+    /// `signaling_server`, `signaling_list`, …); older answers nested them
+    /// under `room_config` with `signal_servers`.
+    static func roomConfig(from data: [String: Any]) -> UURoomConfig? {
+        let config = data["room_config"] as? [String: Any] ?? data
+        guard let token = config["token"] as? String, !token.isEmpty else { return nil }
         var result = UURoomConfig()
-        result.token = config["token"] as? String ?? ""
-        result.signalServers = config["signal_servers"] as? [String] ?? []
-        result.timeout = config["timeout"] as? Int ?? 0
-        result.signalReconnectDelay = config["signal_reconnect_delay"] as? Int ?? 0
+        result.token = token
+        var servers = config["signal_servers"] as? [String] ?? []
+        if let primary = config["signaling_server"] as? String { servers.append(primary) }
+        servers += config["signaling_list"] as? [String] ?? []
+        // In order, once each: the primary first.
+        result.signalServers = servers.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+        guard !result.signalServers.isEmpty else { return nil }
+        // Both in milliseconds, as the signaling client reads them.
+        result.timeout = config["timeout"] as? Int ?? config["ws_connect_timeout_ms"] as? Int ?? 16000
+        result.signalReconnectDelay = config["signal_reconnect_delay"] as? Int ?? config["streamer_retry_delta_ms"] as? Int ?? 1000
         result.reportToken = config["report_token"] as? String
         result.reportURL = config["report_url"] as? String
         result.appDataJSON = config["app_data"].flatMap { try? JSONSerialization.data(withJSONObject: $0) }

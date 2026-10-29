@@ -257,6 +257,16 @@ public final class UURemoteAccountStore: ObservableObject {
         } ?? "catussh"
     }
 
+    /// Takes a session made elsewhere (a live test's sign-in), without
+    /// saving it or registering a device.
+    func useForTesting(_ saved: UUCredentials, devices list: [UUDeviceInfo] = []) async {
+        credentials = saved
+        userID = saved.userID
+        devices = list
+        isLoggedIn = saved.isComplete
+        await client.updateCredentials(saved)
+    }
+
     /// Signs out and clears the account. The device catussh registered as is
     /// kept, so signing in again does not add another one to the service.
     public func logout() {

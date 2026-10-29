@@ -7,6 +7,7 @@
 //
 
 @testable import CatusshModule
+import ImageIO
 import XCTest
 
 final class UURemoteLiveTests: XCTestCase {
@@ -109,7 +110,7 @@ final class UURemoteLiveTests: XCTestCase {
         try XCTUnwrap(png).write(to: URL(fileURLWithPath: qrPath))
         print("UU_LIVE scan \(qrPath)")
         var last = 1
-        let deadline = Date().addingTimeInterval(180)
+        let deadline = Date().addingTimeInterval(300)
         while Date() < deadline {
             let status = try await client.qrcodeLoginStatus(token: qr.token, qrcodeJumpURL: qr.qrcodeJumpURL, loginStatus: last)
             print("UU_LIVE status \(status)")
@@ -137,5 +138,74 @@ final class UURemoteLiveTests: XCTestCase {
         for device in devices {
             print("UU_LIVE device \(device.alias) platform=\(device.platform) status=\(device.status) controllable=\(device.controllable)")
         }
+    }
+
+    /// One signed request with the saved session, printing the answer with
+    /// long strings cut down.
+    private func signedProbe(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> [String: Any] {
+        let file = try XCTUnwrap(credentialsFile, "set UU_LIVE_CREDENTIALS")
+        let credentials = try JSONDecoder().decode(UUCredentials.self, from: Data(contentsOf: file))
+        let data = try body.map { try JSONSerialization.data(withJSONObject: $0) } ?? Data()
+        var request = URLRequest(url: URL(string: UUConstants.apiBase + path)!)
+        request.httpMethod = method
+        request.httpBody = data.isEmpty ? nil : data
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        for (key, value) in UURequestSigner.signedHeaders(credentials: credentials, method: method, pathWithQuery: path, body: data) where !value.isEmpty {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        let (answer, response) = try await URLSession.shared.data(for: request)
+        let json = (try? JSONSerialization.jsonObject(with: answer)) as? [String: Any] ?? [:]
+        let shown = try JSONSerialization.data(withJSONObject: UURemoteAPIClient.redacted(json), options: [.sortedKeys, .prettyPrinted])
+        print("UU_LIVE \(method) \(path) http \((response as? HTTPURLResponse)?.statusCode ?? 0)\n\(String(decoding: shown, as: UTF8.self))")
+        return json
+    }
+
+    /// What joining an online desktop's room answers.
+    func testRoomJoinSignedIn() async throws {
+        let groups = try await signedProbe("GET", "/api/v1/device/groups/of/my")
+        let desktops = ((groups["data"] as? [String: Any])?["desktop_devices"] as? [[String: Any]]) ?? []
+        for device in desktops {
+            guard let id = device["device_id"] as? String else { continue }
+            print("UU_LIVE device \(device["alias"] ?? "") status=\(device["status"] ?? "") availability=\(device["publisher_availability_status"] ?? "")")
+            if (device["publisher_availability_status"] as? String) == "online" || (device["status"] as? String) == "CONNECTED" {
+                _ = try await signedProbe("POST", "/api/v1/room/join/by_device/\(id)", body: ["force_join": true])
+            }
+        }
+    }
+
+    /// The desktop driver end to end against UU_LIVE_DEVICE (an alias):
+    /// prints every phase and hint for 40 seconds.
+    @MainActor
+    func testDesktopSessionSignedIn() async throws {
+        let file = try XCTUnwrap(credentialsFile, "set UU_LIVE_CREDENTIALS")
+        let alias = try XCTUnwrap(ProcessInfo.processInfo.environment["UU_LIVE_DEVICE"], "set UU_LIVE_DEVICE")
+        let credentials = try JSONDecoder().decode(UUCredentials.self, from: Data(contentsOf: file))
+        let devices = try await UURemoteAPIClient(credentials: credentials).deviceGroupsOfMy()
+        let device = try XCTUnwrap(devices.first { $0.alias == alias }, "no device \(alias)")
+        await UURemoteAccountStore.shared.useForTesting(credentials, devices: devices)
+        let session = RemoteDesktopSession(machine: UURemoteFolderSync.makeMachine(for: device, folder: "UU"), protocolType: .uuRemote)
+        var seen: [String] = []
+        let watch = session.$statusHint.combineLatest(session.$phase).sink { hint, phase in
+            let line = "\(phase) · \(hint)"
+            if seen.last != line { seen.append(line); print("UU_LIVE \(line)") }
+        }
+        session.connect()
+        let deadline = Date().addingTimeInterval(40)
+        while Date() < deadline {
+            try await Task.sleep(nanoseconds: 500_000_000)
+            if let image = session.frameImage {
+                print("UU_LIVE first frame \(session.framebufferSize)")
+                if let path = ProcessInfo.processInfo.environment["UU_LIVE_FRAME"],
+                   let destination = CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL, "public.png" as CFString, 1, nil)
+                {
+                    CGImageDestinationAddImage(destination, image, nil)
+                    CGImageDestinationFinalize(destination)
+                }
+                break
+            }
+            if case .failed = session.phase { break }
+        }
+        session.disconnect()
+        watch.cancel()
     }
 }
