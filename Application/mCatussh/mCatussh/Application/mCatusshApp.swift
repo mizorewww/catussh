@@ -34,6 +34,11 @@ struct mCatusshApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(store)
+                .onOpenURL { url in
+                    // uuremote:// external integration callbacks arrive on
+                    // the app's own catussh:// scheme.
+                    UULocalBridge.handleCallback(url)
+                }
                 #if DEBUG
                 .fullScreenCover(isPresented: .constant(ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_EDITOR"] != nil)) {
                     EditorPreviewScreen()

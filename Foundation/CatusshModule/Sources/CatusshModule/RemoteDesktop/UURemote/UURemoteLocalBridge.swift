@@ -152,21 +152,20 @@ public enum UULocalBridge {
         #endif
     }
 
-    /// True when the official uuyc-cli binary is installed. Mac Catalyst
-    /// cannot spawn a `Process`, so the bridge reports unavailable there.
+    /// True when the official uuyc-cli binary is installed. Only native
+    /// macOS can spawn a `Process`, so the bridge reports unavailable on
+    /// iOS and Mac Catalyst.
     public static var cliInstalled: Bool {
-        #if targetEnvironment(macCatalyst)
-            return false
-        #else
+        #if os(macOS) && !targetEnvironment(macCatalyst)
             return FileManager.default.isExecutableFile(atPath: uuCLIPath)
+        #else
+            return false
         #endif
     }
 
     /// Runs `uuyc-cli <subcommand> <args>` and returns its JSON output.
     public static func runCLI(_ arguments: [String], timeout: TimeInterval = 15) throws -> Data {
-        #if targetEnvironment(macCatalyst)
-            throw CocoaError(.featureUnsupported, userInfo: [NSLocalizedDescriptionKey: "uuyc-cli cannot be spawned from a Mac Catalyst app"])
-        #else
+        #if os(macOS) && !targetEnvironment(macCatalyst)
             guard cliInstalled else {
                 throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "uuyc-cli not installed"])
             }
@@ -183,6 +182,8 @@ public enum UULocalBridge {
                 throw CocoaError(.executableLoad, userInfo: [NSLocalizedDescriptionKey: "uuyc-cli exited \(process.terminationStatus)"])
             }
             return data
+        #else
+            throw CocoaError(.featureUnsupported, userInfo: [NSLocalizedDescriptionKey: "uuyc-cli is only available on macOS"])
         #endif
     }
 

@@ -41,9 +41,10 @@ struct TabsView: View {
     @ObservedObject var terminals = TerminalManager.shared
     @ObservedObject var monitors = MonitorCenter.shared
     @ObservedObject var transfers = FileTransferManager.shared
+    @ObservedObject var desktops = RemoteDesktopManager.shared
 
     var sessionCount: Int {
-        terminals.terminals.count + monitors.sessions.count + transfers.transfers.count
+        terminals.terminals.count + monitors.sessions.count + transfers.transfers.count + desktops.sessions.count
     }
 
     var body: some View {
@@ -80,12 +81,14 @@ struct SidebarView: View {
         case terminal(UUID)
         case monitor(UUID)
         case transfer(UUID)
+        case desktop(UUID)
     }
 
     @EnvironmentObject var store: CatusshStore
     @ObservedObject var terminals = TerminalManager.shared
     @ObservedObject var monitors = MonitorCenter.shared
     @ObservedObject var transfers = FileTransferManager.shared
+    @ObservedObject var desktops = RemoteDesktopManager.shared
     @State private var selection: Route? = .home
 
     var body: some View {
@@ -98,7 +101,7 @@ struct SidebarView: View {
                     row("Snippets", "chevron.left.forwardslash.chevron.right", .snippets, badge: store.snippetGroup.count)
                     row("Port Forward", "arrow.right", .portForward, badge: store.portForwardGroup.count)
                 }
-                if !terminals.terminals.isEmpty || !monitors.sessions.isEmpty {
+                if !terminals.terminals.isEmpty || !monitors.sessions.isEmpty || !desktops.sessions.isEmpty {
                     Section("Sessions") {
                         ForEach(terminals.terminals) { context in
                             Label(context.navigationTitle, systemImage: "terminal")
@@ -109,6 +112,11 @@ struct SidebarView: View {
                             Label(session.machine.name, systemImage: "waveform.path.ecg")
                                 .tag(Route.monitor(session.id))
                                 .swipeActions { closeButton { MonitorCenter.shared.end(session.id) } }
+                        }
+                        ForEach(desktops.sessions) { session in
+                            Label(session.machine.name, systemImage: "display")
+                                .tag(Route.desktop(session.id))
+                                .swipeActions { closeButton { RemoteDesktopManager.shared.end(session.id) } }
                         }
                     }
                 }
@@ -167,6 +175,12 @@ struct SidebarView: View {
             } else {
                 sessionGone
             }
+        case let .desktop(id):
+            if let session = desktops.session(withID: id) {
+                RemoteDesktopStageView(session: session).id(id)
+            } else {
+                sessionGone
+            }
         case let .transfer(id):
             if let context = transfers.transfers.first(where: { $0.id == id }) {
                 FileTransferView(context: context).id(id)
@@ -184,15 +198,16 @@ struct SidebarView: View {
     }
 }
 
-/// Terminals, monitors and transfers that are open.
+/// Terminals, monitors, transfers and desktops that are open.
 struct SessionsView: View {
     @ObservedObject var terminals = TerminalManager.shared
     @ObservedObject var monitors = MonitorCenter.shared
     @ObservedObject var transfers = FileTransferManager.shared
+    @ObservedObject var desktops = RemoteDesktopManager.shared
 
     var body: some View {
         Group {
-            if terminals.terminals.isEmpty, monitors.sessions.isEmpty, transfers.transfers.isEmpty {
+            if terminals.terminals.isEmpty, monitors.sessions.isEmpty, transfers.transfers.isEmpty, desktops.sessions.isEmpty {
                 EmptyStateView(
                     "No sessions",
                     systemImage: "terminal",
@@ -227,6 +242,19 @@ struct SessionsView: View {
                                 .rxListRow()
                             }
                         } header: { RXSectionHeader("Monitors") }
+                    }
+                    if !desktops.sessions.isEmpty {
+                        Section {
+                            ForEach(desktops.sessions) { session in
+                                NavigationLink {
+                                    RemoteDesktopStageView(session: session)
+                                } label: {
+                                    SessionRow(title: session.machine.name, systemImage: "display")
+                                }
+                                .swipeActions { Button("Close", role: .destructive) { RemoteDesktopManager.shared.end(session.id) } }
+                                .rxListRow()
+                            }
+                        } header: { RXSectionHeader("Desktops") }
                     }
                     if !transfers.transfers.isEmpty {
                         Section {

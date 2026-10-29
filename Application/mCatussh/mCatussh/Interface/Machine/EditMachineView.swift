@@ -29,6 +29,18 @@ struct EditMachineView: View {
     @State var serviceTokenID = ""
     @State var serviceTokenSecret = ""
 
+    // Remote Desktop
+    @State var remoteDesktopProtocol: RDMachine.RemoteDesktopProtocolType = .none
+    @State var vncPort = "5900"
+    @State var vncPassword = ""
+    @State var vncOverSSH = false
+    @State var vncShared = true
+    @State var uuDeviceID = ""
+    @State var uuAssistID = ""
+    @State var uuAssistCode = ""
+    @State var openUUAccount = false
+    @ObservedObject var uuAccount = UURemoteAccountStore.shared
+
     // Extra
     @State var fileTransferLoginPath: String = "/"
 
@@ -45,8 +57,9 @@ struct EditMachineView: View {
                 Picker("Connect through", selection: $transport) {
                     Text("Direct (TCP)").tag(RDMachine.Transport.direct)
                     Text("Cloudflare Access").tag(RDMachine.Transport.cloudflareAccess)
+                    Text("NetEase UU Remote").tag(RDMachine.Transport.uuRemote)
                 }
-                TextField(transport == .cloudflareAccess ? "Access Hostname" : "Host Address", text: $remoteAddress)
+                TextField(transport == .cloudflareAccess ? "Access Hostname" : transport == .uuRemote ? "Device ID" : "Host Address", text: $remoteAddress)
                     .disableAutocorrection(true)
                     .textInputAutocapitalization(.never)
                     .onChange(of: remoteAddress) { newValue in
@@ -71,6 +84,67 @@ struct EditMachineView: View {
                     RXSectionHeader("Cloudflare Access Service Token")
                 } footer: {
                     Text("Connects like ssh -o ProxyCommand='cloudflared access ssh --hostname %h'. Leave the service token empty when the application has no Access policy. The port only names the server's host key.")
+                }
+            }
+
+            if transport == .uuRemote {
+                Section {
+                } header: {
+                    RXSectionHeader("UU Remote Transport")
+                } footer: {
+                    Text("SSH, SFTP and Monitor on this server tunnel through the UU Remote session's port mapping — open the Desktop first so the tunnel is live.")
+                }
+            }
+
+            Section {
+                Picker("Remote Desktop", selection: $remoteDesktopProtocol) {
+                    Text("None").tag(RDMachine.RemoteDesktopProtocolType.none)
+                    Text("VNC").tag(RDMachine.RemoteDesktopProtocolType.vnc)
+                    Text("UU Remote").tag(RDMachine.RemoteDesktopProtocolType.uuRemote)
+                }
+            } header: {
+                RXSectionHeader("Remote Desktop")
+            }
+
+            if remoteDesktopProtocol == .vnc {
+                Section {
+                    TextField("VNC Port", text: $vncPort)
+                        .disableAutocorrection(true)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.numberPad)
+                    SecureField("VNC Password (empty = identity password)", text: $vncPassword)
+                    Toggle("Tunnel over SSH", isOn: $vncOverSSH)
+                    Toggle("Shared session", isOn: $vncShared)
+                } header: {
+                    RXSectionHeader("VNC")
+                }
+            }
+
+            if remoteDesktopProtocol == .uuRemote {
+                Section {
+                    if !uuAccount.desktopDevices.isEmpty {
+                        Picker("UU Remote device", selection: $uuDeviceID) {
+                            Text("Manual / assist").tag("")
+                            ForEach(uuAccount.desktopDevices, id: \.deviceID) { device in
+                                Text("\(device.alias.isEmpty ? device.deviceID : device.alias) · \(UUDeviceInfo.platformName(device.platform))")
+                                    .tag(device.deviceID)
+                            }
+                        }
+                    }
+                    TextField("Device ID", text: $uuDeviceID)
+                        .disableAutocorrection(true)
+                        .textInputAutocapitalization(.never)
+                    TextField("Assist connect ID (optional)", text: $uuAssistID)
+                        .disableAutocorrection(true)
+                        .textInputAutocapitalization(.never)
+                    SecureField("Assist code (optional)", text: $uuAssistCode)
+                    Button {
+                        openUUAccount = true
+                    } label: {
+                        Label("UU Remote Account & Devices…", systemImage: "person.crop.circle")
+                    }
+                } header: {
+                    RXSectionHeader("NetEase UU Remote")
                 }
             }
 
@@ -149,6 +223,14 @@ struct EditMachineView: View {
                     transport = read.transport
                     serviceTokenID = read.cloudflareServiceTokenID
                     serviceTokenSecret = read.cloudflareServiceTokenSecret
+                    remoteDesktopProtocol = read.remoteDesktopProtocol
+                    vncPort = read.vncPort
+                    vncPassword = read.vncPassword
+                    vncOverSSH = read.vncOverSSH
+                    vncShared = read.vncShared
+                    uuDeviceID = read.uuDeviceID
+                    uuAssistID = read.uuAssistID
+                    uuAssistCode = read.uuAssistCode
                     if let aid = read.associatedIdentity {
                         associatedIdentity = UUID(uuidString: aid)
                     }
@@ -162,6 +244,20 @@ struct EditMachineView: View {
             }
         }
         .rxGroupedList()
+        .sheet(isPresented: $openUUAccount) {
+            NavigationStack {
+                UURemoteAccountView(onConnectDesktop: { machineID in
+                    openUUAccount = false
+                    ServerActions.openDesktop(machineID)
+                })
+                .navigationTitle("UU Remote")
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { openUUAccount = false }
+                    }
+                }
+            }
+        }
         .navigationTitle(inEditWith == nil ? "New Server" : "Edit Server")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
@@ -208,6 +304,14 @@ struct EditMachineView: View {
         let cloudflare = transport == .cloudflareAccess
         newMachine.cloudflareServiceTokenID = cloudflare ? serviceTokenID.trimmingCharacters(in: .whitespaces) : ""
         newMachine.cloudflareServiceTokenSecret = cloudflare ? serviceTokenSecret.trimmingCharacters(in: .whitespaces) : ""
+        newMachine.remoteDesktopProtocol = remoteDesktopProtocol
+        newMachine.vncPort = vncPort
+        newMachine.vncPassword = vncPassword
+        newMachine.vncOverSSH = vncOverSSH
+        newMachine.vncShared = vncShared
+        newMachine.uuDeviceID = uuDeviceID.trimmingCharacters(in: .whitespaces)
+        newMachine.uuAssistID = uuAssistID.trimmingCharacters(in: .whitespaces)
+        newMachine.uuAssistCode = uuAssistCode
         CatusshStore.shared.machineGroup.insert(newMachine)
 
         dismiss()

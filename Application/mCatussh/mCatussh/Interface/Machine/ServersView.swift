@@ -190,6 +190,17 @@ struct ServerMenuItems: View {
             Button { FileTransferManager.shared.begin(for: machine) } label: {
                 Label("Open File Transfer", systemImage: "arrow.up.arrow.down")
             }
+            let read = CatusshStore.shared.machineGroup[machine]
+            if read.hasRemoteDesktop {
+                Button { ServerActions.openDesktop(machine) } label: {
+                    Label("Open Remote Desktop", systemImage: "display")
+                }
+            }
+            if read.remoteDesktopProtocol == .uuRemote, UULocalBridge.officialAppInstalled {
+                Button { UULocalBridge.openControlInOfficialApp(for: read) } label: {
+                    Label("UU Remote (PiP)", systemImage: "pip")
+                }
+            }
         }
         Section {
             if let edit {
@@ -234,6 +245,22 @@ enum ServerActions {
         } catch {
             UIBridge.presentError(with: "Cannot open monitor")
         }
+    }
+
+    /// The server's remote desktop in a hosted stage view — full screen on
+    /// iPhone, a large sheet on iPad, like the terminal.
+    @MainActor
+    static func openDesktop(_ machine: RDMachine.ID) {
+        let existing = RemoteDesktopManager.shared.session(for: machine)
+        let session = RemoteDesktopManager.shared.begin(for: machine)
+        guard existing != nil || CatusshStore.shared.openInterfaceAutomatically else { return }
+        let host = UIHostingController(rootView: DefaultModalPresenter {
+            RemoteDesktopStageView(session: session)
+        }.environmentObject(CatusshStore.shared))
+        host.modalTransitionStyle = .coverVertical
+        host.modalPresentationStyle = UIDevice.current.userInterfaceIdiom == .phone ? .fullScreen : .formSheet
+        host.preferredContentSize = preferredPopOverSize
+        PresentationQueue.present(next: host)
     }
 
     static func duplicate(_ machine: RDMachine.ID) {

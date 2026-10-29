@@ -11,5 +11,20 @@
 	</dict>
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>catussh</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>catussh</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>uuremote</string>
+	</array>
 </dict>
 </plist>
