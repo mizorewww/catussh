@@ -113,7 +113,11 @@ public struct UURemoteAccountView: View {
             ForEach(account.desktopDevices, id: \.deviceID) { device in
                 deviceRow(device)
             }
-            if account.desktopDevices.isEmpty {
+            if let failure = account.refreshError {
+                Text(failure)
+                    .font(.rxHelp)
+                    .foregroundStyle(Color.rxDanger)
+            } else if account.desktopDevices.isEmpty {
                 Text("No desktop devices on this account yet. Install UU Remote on a computer and sign in there with the same account.")
                     .font(.rxHelp)
                     .foregroundStyle(Color.rxInkTertiary)

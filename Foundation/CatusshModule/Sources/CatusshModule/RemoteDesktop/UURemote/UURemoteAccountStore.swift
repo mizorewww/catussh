@@ -30,6 +30,8 @@ public final class UURemoteAccountStore: ObservableObject {
     @Published public private(set) var qrStatusHint = ""
     @Published public private(set) var loginError: String?
     @Published public private(set) var isLoggedIn = false
+    /// Why the last device refresh failed; nil once one succeeds.
+    @Published public private(set) var refreshError: String?
 
     private let client = UURemoteAPIClient()
     private var qrPollingTask: Task<Void, Never>?
@@ -280,11 +282,17 @@ public final class UURemoteAccountStore: ObservableObject {
 
     /// Refreshes the account's device list and the folder that shows it.
     public func refreshDevices() async throws {
-        let list = try await client.deviceGroupsOfMy()
-        if list.isEmpty {
-            devices = try await client.deviceList()
-        } else {
-            devices = list
+        do {
+            let list = try await client.deviceGroupsOfMy()
+            if list.isEmpty {
+                devices = try await client.deviceList()
+            } else {
+                devices = list
+            }
+            refreshError = nil
+        } catch {
+            refreshError = error.localizedDescription
+            throw error
         }
         syncFolder()
     }

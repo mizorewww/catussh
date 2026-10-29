@@ -131,11 +131,17 @@ struct RemoteDesktopsView: View {
                     Text(account.isLoggedIn ? (account.nickname.isEmpty ? "Signed in" : account.nickname) : "Not signed in")
                         .font(.rxBody)
                         .foregroundStyle(.rxInk)
-                    Text(account.isLoggedIn
-                        ? "\(account.desktopDevices.count) desktop device(s), in the \"\(account.folder(store: store)?.name ?? "UU Remote")\" folder on Servers"
-                        : "Sign in, and the account's devices appear in a folder on Servers.")
-                        .font(.rxHelp)
-                        .foregroundStyle(.rxInkSecondary)
+                    if let failure = account.refreshError, account.isLoggedIn {
+                        Text(failure)
+                            .font(.rxHelp)
+                            .foregroundStyle(.rxDanger)
+                    } else {
+                        Text(account.isLoggedIn
+                            ? "\(account.desktopDevices.count) desktop device(s), in the \"\(account.folder(store: store)?.name ?? "UU Remote")\" folder on Servers"
+                            : "Sign in, and the account's devices appear in a folder on Servers.")
+                            .font(.rxHelp)
+                            .foregroundStyle(.rxInkSecondary)
+                    }
                 }
                 Spacer()
                 if account.isLoggedIn {
