@@ -11,6 +11,7 @@
 
 import Foundation
 import ImageIO
+import os
 import WebKit
 
 public enum UUDriverError: Error, Sendable {
@@ -35,6 +36,12 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     private let signalClient = UURemoteSignalingClient()
     private let videoAssembler = UURTPVideoAssembler()
     private let videoDecoder = UURemoteRTPVideoDecoder()
+    /// Encoded WebRTC frames are decoded here, in arrival order, off the
+    /// main thread.
+    private let decodeQueue = DispatchQueue(label: "me.mizorewww.uu.encoded-decode", qos: .userInteractive)
+    private let encodedDecoder = UURemoteRTPVideoDecoder()
+    /// From the receiver's stats; the host has always sent H.265 so far.
+    private var encodedCodec = "H265"
     private let portMapping: UURemotePortMappingTunnel
 
     private var peer: UURTCPeerConnection?
@@ -285,7 +292,9 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             // Timeout watchdog
             connectTimeoutTask = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 20_000_000_000)
-                guard let self, !self.closed else { return }
+                // The control channel may open before this task exists, so
+                // its cancel() can come too early: look at the state too.
+                guard let self, !self.closed, !self.controlChannelOpen else { return }
                 self.reportTerminal(.failed("UU Remote session timed out waiting for the host."))
                 self.stop()
             }
@@ -426,6 +435,12 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         }
         await peer.setVideoFrameHandler { [weak self] image, size in
             self?.session.reportFrame(image, size: size)
+        }
+        await peer.setCodecHandler { [weak self] name in
+            self?.decodeQueue.async { self?.encodedCodec = name.replacingOccurrences(of: "video/", with: "") }
+        }
+        await peer.setEncodedFrameHandler { [weak self] bytes, timestamp in
+            self?.decodeQueue.async { self?.decodeEncodedFrame(bytes, timestamp: timestamp) }
         }
         await peer.setDataChannelStateHandler("CONTROL_DATA_CHANNEL") { [weak self] (state: String) in
             self?.controlChannelOpen = state == "open"
@@ -793,6 +808,26 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         session.reportFrame(image, size: videoDecoder.outputSize)
     }
 
+    /// One encoded frame from the WebRTC receiver, Annex-B. On decodeQueue.
+    private func decodeEncodedFrame(_ bytes: Data, timestamp: UInt32) {
+        let unit = UUVideoAccessUnit(
+            nalUnits: UUVideoAccessUnit.nalUnits(annexB: bytes),
+            sequence: 0,
+            timestamp: timestamp,
+            codecName: encodedCodec
+        )
+        let image = encodedDecoder.decode(accessUnit: unit)
+        encodedCount += 1
+        if encodedCount <= 3 || (image == nil && encodedCount.isMultiple(of: 200)) {
+            let types = unit.nalUnits.prefix(8).map { nal in nal.isEmpty ? -1 : Int((nal[nal.startIndex] >> 1) & 0x3F) }
+            Self.log.info("encoded frame \(self.encodedCount): \(bytes.count) bytes, \(self.encodedCodec, privacy: .public) NAL types \(types, privacy: .public), decoded \(image != nil)")
+        }
+        guard let image else { return }
+        session.reportFrame(image, size: encodedDecoder.outputSize)
+    }
+    private var encodedCount = 0
+    private static let log = Logger(subsystem: "me.mizorewww.rayon", category: "uu-driver")
+
     private func handleTextChannel(_ data: Data) {
         // Clipboard V3 inbound: case-10 text-change request -> surface the
         // text and acknowledge with a case-6 response (CB_SUCCEEDED).
@@ -943,12 +978,20 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     private var dataChannelStateHandlers: [String: (String) -> Void] = [:]
     private var trackHandler: ((String, Data) -> Void)?
     private var videoFrameHandler: ((CGImage, CGSize) -> Void)?
+    private var encodedFrameHandler: ((Data, UInt32) -> Void)?
+    private var codecHandler: ((String) -> Void)?
     private var iceStateHandler: ((String) -> Void)?
 
     override init() {
         let config = WKWebViewConfiguration()
         config.userContentController = WKUserContentController()
-        webView = WKWebView(frame: .zero, configuration: config)
+        // The remote screen is a muted video nobody taps on: it must play
+        // without a user gesture, and inline.
+        config.mediaTypesRequiringUserActionForPlayback = []
+        #if os(iOS)
+            config.allowsInlineMediaPlayback = true
+        #endif
+        webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 16, height: 16), configuration: config)
         super.init()
         config.userContentController.add(self, name: "rtc")
         webView.navigationDelegate = self
@@ -961,6 +1004,33 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         let pc = null; let channels = {}; let channelsMade = false;
         let videoEl = null; let videoCanvas = null; let frameTimer = null;
         function post(name, data) { window.webkit.messageHandlers.rtc.postMessage({name: name, data: data}); }
+        // Encoded frames straight off the receiver, decoded natively: the page
+        // is in no window, so WebKit never plays a <video> here.
+        const transformSource = `onrtctransform = (event) => {
+            const t = event.transformer;
+            t.readable.pipeThrough(new TransformStream({ transform(frame, out) {
+                if (frame.data && frame.data.byteLength) {
+                    const copy = frame.data.slice(0);
+                    self.postMessage({key: frame.type === 'key', ts: frame.timestamp, data: copy}, [copy]);
+                }
+                out.enqueue(frame);
+            } })).pipeTo(t.writable);
+        };`;
+        let transformWorker = null;
+        function base64(bytes) {
+            let text = '';
+            for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            return btoa(text);
+        }
+        function transformReceiver(receiver) {
+            if (!window.RTCRtpScriptTransform) return false;
+            if (!transformWorker) {
+                transformWorker = new Worker(URL.createObjectURL(new Blob([transformSource], {type: 'text/javascript'})));
+                transformWorker.onmessage = m => post('encoded', {data: base64(new Uint8Array(m.data.data)), ts: m.data.ts, key: m.data.key});
+            }
+            receiver.transform = new RTCRtpScriptTransform(transformWorker, {});
+            return true;
+        }
         function makePeer(iceServers, forceRelay) {
             pc = new RTCPeerConnection({ iceServers: iceServers || [], iceTransportPolicy: forceRelay ? 'relay' : 'all' });
             pc.onicecandidate = e => post('icecandidate', e.candidate ? {sdpMid: e.candidate.sdpMid, sdpMLineIndex: e.candidate.sdpMLineIndex, candidate: e.candidate.candidate} : {done: true});
@@ -975,26 +1045,40 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
             };
             pc.ontrack = e => {
                 if (e.track.kind === 'video') {
-                    attachVideo(e.streams && e.streams[0] ? e.streams[0] : new MediaStream([e.track]));
-                    post('track', {kind: 'video', id: e.track.id});
+                    const transformed = transformReceiver(e.receiver);
+                    if (!transformed) attachVideo(e.streams && e.streams[0] ? e.streams[0] : new MediaStream([e.track]));
+                    post('track', {kind: 'video', id: e.track.id, transformed: transformed});
                 }
             };
+            setInterval(async () => {
+                if (!pc) return;
+                const report = await pc.getStats();
+                const codecs = {}; const inbound = [];
+                report.forEach(r => { if (r.type === 'codec') codecs[r.id] = r.mimeType; });
+                report.forEach(r => { if (r.type === 'inbound-rtp' && r.kind === 'video' && r.bytesReceived > 0) inbound.push({codec: codecs[r.codecId] || '', bytes: r.bytesReceived, decoded: r.framesDecoded || 0, w: r.frameWidth || 0, h: r.frameHeight || 0}); });
+                post('stats', {video: inbound, ready: videoEls.map(v => v.readyState)});
+                if (inbound.length) post('codec', {name: inbound[0].codec});
+            }, 3000);
             return 'ok';
         }
+        // The offer asks for five video tracks and the host fills one: each
+        // gets an element, and frames come from whichever is playing.
+        let videoEls = [];
         function attachVideo(stream) {
-            if (!videoEl) {
-                videoEl = document.createElement('video');
-                videoEl.muted = true; videoEl.autoplay = true; videoEl.playsInline = true;
-                document.body.appendChild(videoEl);
-            }
-            videoEl.srcObject = stream;
-            videoEl.play().catch(() => {});
+            const el = document.createElement('video');
+            el.muted = true; el.autoplay = true; el.playsInline = true;
+            el.width = 16; el.height = 16;
+            document.body.appendChild(el);
+            el.srcObject = stream;
+            el.play().catch(() => {});
+            videoEls.push(el);
             if (!frameTimer) {
                 videoCanvas = document.createElement('canvas');
                 const ctx = videoCanvas.getContext('2d');
                 frameTimer = setInterval(() => {
-                    if (!videoEl || videoEl.readyState < 2 || !videoEl.videoWidth) return;
-                    if (videoCanvas.width !== videoEl.videoWidth) {
+                    videoEl = videoEls.find(v => v.readyState >= 2 && v.videoWidth > 0) || null;
+                    if (!videoEl) { videoEls.forEach(v => { if (v.paused) v.play().catch(() => {}); }); return; }
+                    if (videoCanvas.width !== videoEl.videoWidth || videoCanvas.height !== videoEl.videoHeight) {
                         videoCanvas.width = videoEl.videoWidth;
                         videoCanvas.height = videoEl.videoHeight;
                     }
@@ -1035,8 +1119,13 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         function closeAll() { if (frameTimer) { clearInterval(frameTimer); frameTimer = null; } for (const k in channels) { try { channels[k].close(); } catch (e) {} } if (pc) { try { pc.close(); } catch (e) {} } return 'ok'; }
         </script></body></html>
         """
-        webView.loadHTMLString(html, baseURL: nil)
+        // An origin of its own, so the page may start a worker from a blob.
+        webView.loadHTMLString(html, baseURL: URL(string: "https://rtc.catussh.invalid/"))
     }
+
+    private static let log = Logger(subsystem: "me.mizorewww.rayon", category: "uu-rtc")
+    /// Messages seen per data channel, to log the first few of each.
+    private var messageCounts: [String: Int] = [:]
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "rtc",
@@ -1044,6 +1133,23 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
               let name = body["name"] as? String,
               let data = body["data"] as? [String: Any]
         else { return }
+        switch name {
+        case "dc_message":
+            let label = data["label"] as? String ?? ""
+            let count = messageCounts[label, default: 0] + 1
+            messageCounts[label] = count
+            if count <= 3 || count.isMultiple(of: 500) {
+                Self.log.info("\(label, privacy: .public) message \(count), \((data["data"] as? [Any])?.count ?? 0) bytes")
+            }
+        case "video_frame", "encoded":
+            let count = messageCounts[name, default: 0] + 1
+            messageCounts[name] = count
+            if count <= 2 || count.isMultiple(of: 300) { Self.log.info("\(name, privacy: .public) \(count)") }
+        case "icecandidate", "codec":
+            break
+        default:
+            Self.log.info("\(name, privacy: .public) \(String(describing: data), privacy: .public)")
+        }
         switch name {
         case "icecandidate":
             candidateHandler?(data)
@@ -1060,6 +1166,12 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
             }
         case "track":
             trackHandler?(data["kind"] as? String ?? "", Data())
+        case "encoded":
+            if let text = data["data"] as? String, let bytes = Data(base64Encoded: text) {
+                encodedFrameHandler?(bytes, (data["ts"] as? NSNumber)?.uint32Value ?? 0)
+            }
+        case "codec":
+            codecHandler?(data["name"] as? String ?? "")
         case "video_frame":
             if let jpeg = data["jpeg"] as? String,
                let jpegData = Data(base64Encoded: jpeg, options: .ignoreUnknownCharacters),
@@ -1097,8 +1209,11 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         }
     }
 
+    /// Runs a call into the page and waits for it: most of the page's
+    /// functions are async, and evaluateJavaScript cannot return a Promise
+    /// ("a result of an unsupported type"), nor `undefined`.
     func evaluate<T>(_ script: String) async throws -> T? {
-        let result = try await webView.evaluateJavaScript(script)
+        let result = try await webView.callAsyncJavaScript("return await (\(script));", contentWorld: .page)
         return result as? T
     }
 
@@ -1107,5 +1222,7 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     func setDataChannelStateHandler(_ label: String, handler: @escaping (String) -> Void) { dataChannelStateHandlers[label] = handler }
     func setTrackHandler(_ handler: @escaping (String, Data) -> Void) { trackHandler = handler }
     func setVideoFrameHandler(_ handler: @escaping (CGImage, CGSize) -> Void) { videoFrameHandler = handler }
+    func setEncodedFrameHandler(_ handler: @escaping (Data, UInt32) -> Void) { encodedFrameHandler = handler }
+    func setCodecHandler(_ handler: @escaping (String) -> Void) { codecHandler = handler }
     func setICEStateHandler(_ handler: @escaping (String) -> Void) { iceStateHandler = handler }
 }
