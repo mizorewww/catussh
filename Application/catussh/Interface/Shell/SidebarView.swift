@@ -18,6 +18,7 @@ struct SidebarView: View {
     @ObservedObject var terminals = TerminalManager.shared
     @ObservedObject var monitors = MonitorCenter.shared
     @ObservedObject var transfers = FileTransferManager.shared
+    @ObservedObject var desktops = RemoteDesktopManager.shared
 
     /// A place (Home, Servers…) or a server with open sessions. Selecting a
     /// server shows the tool it showed last; the toolbar switcher changes tools.
@@ -43,7 +44,8 @@ struct SidebarView: View {
 
     /// Changes whenever a session opens or closes; drives the row animation.
     private var sessionIDs: [UUID] {
-        terminals.sessionContexts.map(\.id) + transfers.transfers.map(\.id) + monitors.sessions.map(\.id)
+        terminals.sessionContexts.map(\.id) + transfers.transfers.map(\.id)
+            + monitors.sessions.map(\.id) + desktops.sessions.map(\.id)
     }
 
     var body: some View {
@@ -241,6 +243,7 @@ private struct OwnerSidebarRow: View {
     @ObservedObject var transfers = FileTransferManager.shared
     @ObservedObject var editors = EditorCenter.shared
     @ObservedObject var monitors = MonitorCenter.shared
+    @ObservedObject var desktops = RemoteDesktopManager.shared
 
     private var routes: [Route] { AppRouter.shared.routes(of: owner) }
 
@@ -257,7 +260,7 @@ private struct OwnerSidebarRow: View {
         ServerTool.allCases.filter { tool in
             routes.contains { route in
                 switch (tool, route) {
-                case (.terminal, .terminal), (.files, .transfer), (.editor, .editor), (.monitor, .monitor): return true
+                case (.terminal, .terminal), (.files, .transfer), (.editor, .editor), (.monitor, .monitor), (.desktop, .desktop): return true
                 default: return false
                 }
             }
@@ -304,6 +307,8 @@ private struct OwnerSidebarRow: View {
                 }
             case let .monitor(id):
                 Button("Close Monitor") { MonitorCenter.shared.end(id) }
+            case let .desktop(id):
+                Button("Close Desktop") { RemoteDesktopManager.shared.end(id) }
             default:
                 EmptyView()
             }

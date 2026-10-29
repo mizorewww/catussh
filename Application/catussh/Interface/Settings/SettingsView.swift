@@ -38,6 +38,9 @@ struct SettingsView: View {
                 ConfigHostSettingsSection(id: "connection.ssh", keywords: "ssh timeout connect wait host key known hosts fingerprint") {
                     SSHSettings().environmentObject(store)
                 },
+                ConfigHostSettingsSection(id: "connection.uuremote", keywords: "uu remote netease remote desktop device account qr login") {
+                    UURemoteSettings()
+                },
                 ConfigHostSettingsSection(id: "connection.monitor", keywords: "monitor refresh interval status") {
                     MonitorSettings().environmentObject(store)
                 },
@@ -205,6 +208,62 @@ private struct MonitorSettings: View {
             }
             .labelsHidden()
             .fixedSize()
+        }
+    }
+}
+
+/// The NetEase UU Remote account behind the remote desktop feature.
+private struct UURemoteSettings: View {
+    @ObservedObject private var account = UURemoteAccountStore.shared
+
+    var body: some View {
+        RXDividedStack {
+            RXFormRow(
+                "Account",
+                description: "Signs the built-in UU Remote client in with QR code, SMS or an imported token."
+            ) {
+                HStack(spacing: RX.Space.s3) {
+                    if account.isLoggedIn {
+                        Label(account.nickname.isEmpty ? "Signed in" : account.nickname,
+                              systemImage: "person.crop.circle")
+                            .lineLimit(1)
+                        Button("Manage…") { openAccountSheet() }
+                            .buttonStyle(.rx)
+                        Button("Sign Out") { account.logout() }
+                            .buttonStyle(.rx)
+                    } else {
+                        Text("Not signed in")
+                            .foregroundStyle(.rxInkSecondary)
+                        Button("Sign In…") { openAccountSheet() }
+                            .buttonStyle(.rx)
+                    }
+                }
+            }
+            if account.isLoggedIn {
+                RXFormRow(
+                    "Devices",
+                    description: "Desktop devices on this account; add them as servers from the account panel."
+                ) {
+                    HStack(spacing: RX.Space.s3) {
+                        Text("\(account.desktopDevices.count) desktop device(s)")
+                            .foregroundStyle(.rxInkSecondary)
+                        Button("Refresh") {
+                            Task { try? await account.refreshDevices() }
+                        }
+                        .buttonStyle(.rx)
+                    }
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func openAccountSheet() {
+        SheetPresenter.present { dismiss in
+            UURemoteAccountSheet(onConnectDesktop: { machineID in
+                dismiss()
+                AppRouter.shared.openDesktop(machine: machineID)
+            }, close: dismiss)
         }
     }
 }

@@ -263,10 +263,12 @@ public enum UUControlProtocol {
 
     // MARK: - JSON input on CONTROL_DATA_CHANNEL
 
+    /// Wire values per upstream `STREAMER_MOUSE_BUTTON_CODES`:
+    /// primary=1, secondary=2, tertiary=4, back=8, forward=16.
     public enum Button: Int32 {
         case left = 1
-        case middle = 2
-        case right = 4
+        case right = 2
+        case middle = 4
         case back = 8
         case forward = 16
     }

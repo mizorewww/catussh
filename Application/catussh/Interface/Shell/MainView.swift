@@ -112,7 +112,7 @@ struct MainView: View {
             SnippetsView()
         case .portForward:
             PortForwardView()
-        case .settings, .terminal, .monitor, .transfer, .editor:
+        case .settings, .terminal, .monitor, .transfer, .editor, .desktop:
             EmptyView()
         }
     }
@@ -128,6 +128,7 @@ private struct SessionPages: View {
     @ObservedObject var transfers = FileTransferManager.shared
     @ObservedObject var editors = EditorCenter.shared
     @ObservedObject var monitors = MonitorCenter.shared
+    @ObservedObject var desktops = RemoteDesktopManager.shared
 
     var body: some View {
         ZStack {
@@ -146,6 +147,10 @@ private struct SessionPages: View {
             ForEach(monitors.sessions) { session in
                 MonitorPage(session: session)
                     .sessionPage(active: route == .monitor(session.id))
+            }
+            ForEach(desktops.sessions) { session in
+                RemoteDesktopPage(session: session)
+                    .sessionPage(active: route == .desktop(session.id))
             }
         }
     }

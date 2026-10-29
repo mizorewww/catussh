@@ -390,6 +390,9 @@ struct ServerTile: View {
             .help(ServerTool.terminal.help)
             toolButton(.files)
             toolButton(.monitor)
+            if CatusshStore.shared.machineGroup[machine].hasRemoteDesktop {
+                toolButton(.desktop)
+            }
             Spacer(minLength: 0)
             Menu {
                 ServerContextMenu(machine: machine, includesTools: false)

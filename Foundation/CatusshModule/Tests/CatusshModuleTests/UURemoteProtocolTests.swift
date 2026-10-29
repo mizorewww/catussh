@@ -397,17 +397,19 @@ final class UURemoteProtocolTests: XCTestCase {
     // MARK: - uuremote:// local bridge
 
     func testUuremoteAuthorizeURL() {
-        let url = UULocalBridge.authorizeURL(deviceID: "dev-9")
+        let url = UULocalBridge.authorizeURL(callback: "catussh://uuremote-authorize", nonce: "n-1")
         XCTAssertEqual(url?.scheme, "uuremote")
         XCTAssertEqual(url?.host, "external")
         XCTAssertEqual(url?.path, "/device/authorize")
-        XCTAssertTrue(url?.absoluteString.contains("device_id=dev-9") ?? false)
+        XCTAssertTrue(url?.absoluteString.contains("callback=") ?? false)
+        XCTAssertTrue(url?.absoluteString.contains("nonce=n-1") ?? false)
     }
 
     func testUuremoteControlURLHasWindowType() {
-        let url = UULocalBridge.controlURL(deviceID: "dev-9", windowType: 1)
+        let url = UULocalBridge.controlURL(anonymousDeviceID: "enc-dev-9", windowType: 1)
+        XCTAssertEqual(url?.path, "/device/control")
         XCTAssertTrue(url?.absoluteString.contains("window_type=1") ?? false)
-        XCTAssertEqual(url?.path, "/control")
+        XCTAssertTrue(url?.absoluteString.contains("anonymous_device_id=enc-dev-9") ?? false)
     }
 
     // MARK: - Signed headers match sent headers

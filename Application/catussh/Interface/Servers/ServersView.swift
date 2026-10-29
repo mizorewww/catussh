@@ -257,6 +257,11 @@ private struct ServerRow: View {
                             .buttonStyle(.rx(.plain, size: .small))
                             .help(tool.help)
                     }
+                    if CatusshStore.shared.machineGroup[machine].hasRemoteDesktop {
+                        Button(ServerTool.desktop.title) { ServerTool.desktop.show(machine) }
+                            .buttonStyle(.rx(.plain, size: .small))
+                            .help(ServerTool.desktop.help)
+                    }
                     Button(ServerTool.terminal.title) { ServerTool.terminal.show(machine) }
                         .buttonStyle(.rx(size: .small))
                         .help(ServerTool.terminal.help)

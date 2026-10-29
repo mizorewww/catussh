@@ -96,6 +96,14 @@ public extension RDMachine {
         set { attachment["remoteDesktop.uu.deviceAlias"] = newValue.isEmpty ? nil : newValue }
     }
 
+    /// The encrypted `anonymous_device_id` the official UU Remote app
+    /// hands back through its authorize callback; lets the
+    /// `uuremote://external/device/control` PiP handoff skip re-auth.
+    var uuAnonymousDeviceID: String {
+        get { attachment["remoteDesktop.uu.anonymousDeviceID", default: ""] }
+        set { attachment["remoteDesktop.uu.anonymousDeviceID"] = newValue.isEmpty ? nil : newValue }
+    }
+
     /// Remote-assistance connect id, for sessions that join by code rather
     /// than by account device.
     var uuAssistID: String {

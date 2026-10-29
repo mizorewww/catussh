@@ -11,8 +11,10 @@ import Combine
 import CoreImage
 import CryptoKit
 import Foundation
-#if canImport(AppKit)
-import AppKit
+#if canImport(UIKit)
+    import UIKit
+#elseif canImport(AppKit)
+    import AppKit
 #endif
 
 @MainActor
@@ -326,8 +328,12 @@ public final class UURemoteAccountStore: ObservableObject {
         let scaled = output.transformed(by: CGAffineTransform(scaleX: CGFloat(scale), y: CGFloat(scale)))
         let context = CIContext()
         guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
-        let rep = NSBitmapImageRep(cgImage: cgImage)
-        return rep.representation(using: .png, properties: [:])
+        #if canImport(UIKit)
+            return UIImage(cgImage: cgImage).pngData()
+        #else
+            let rep = NSBitmapImageRep(cgImage: cgImage)
+            return rep.representation(using: .png, properties: [:])
+        #endif
     }
 
     /// Exposes the API client for the driver.

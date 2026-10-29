@@ -23,6 +23,8 @@ enum Route: Hashable {
     case transfer(UUID)
     /// A server's editor, by the id of the SFTP session it works over.
     case editor(UUID)
+    /// A server's remote desktop, by the RemoteDesktopSession id.
+    case desktop(UUID)
 }
 
 /// The router and everything it publishes are main-thread state, like the
@@ -77,6 +79,10 @@ final class AppRouter: ObservableObject {
             if case let .editor(id) = $0 { return id }
             return nil
         }
+        leaveWhenSessionEnds(RemoteDesktopManager.shared.$sessions) {
+            if case let .desktop(id) = $0 { return id }
+            return nil
+        }
     }
 
     /// Returns to the last non-session place once the open session page's id
@@ -118,6 +124,14 @@ final class AppRouter: ObservableObject {
         } catch {
             UIBridge.presentError(with: error.localizedDescription)
         }
+    }
+
+    /// Opens the server's remote desktop (VNC or UU Remote), reusing a live
+    /// session. The session page reports "no remote desktop configured" on
+    /// a server that has none, so callers do not have to check first.
+    func openDesktop(machine: RDMachine.ID) {
+        let session = RemoteDesktopManager.shared.begin(for: machine)
+        route = .desktop(session.id)
     }
 
     func openFileTransfer(machine: RDMachine.ID) {
@@ -195,17 +209,20 @@ final class AppRouter: ObservableObject {
             return FileTransferManager.shared.transfers.first { $0.id == id }.map { .server($0.machine.id) }
         case let .monitor(id):
             return MonitorCenter.shared.session(withID: id).map { .server($0.machine.id) }
+        case let .desktop(id):
+            return RemoteDesktopManager.shared.session(withID: id).map { .server($0.machine.id) }
         default:
             return nil
         }
     }
 
-    /// Every open session page, terminals first, then files, editors and monitors.
+    /// Every open session page, terminals first, then files, editors, monitors and desktops.
     var sessionRoutes: [Route] {
         TerminalManager.shared.sessionContexts.map { .terminal($0.id) }
             + FileTransferManager.shared.transfers.map { .transfer($0.id) }
             + EditorCenter.shared.workspaces.map { .editor($0.id) }
             + MonitorCenter.shared.sessions.map { .monitor($0.id) }
+            + RemoteDesktopManager.shared.sessions.map { .desktop($0.id) }
     }
 
     /// Servers and Quick Connect terminals with something open, in the order
@@ -244,6 +261,8 @@ final class AppRouter: ObservableObject {
                 EditorCenter.shared.end(id)
             case let .monitor(id):
                 MonitorCenter.shared.end(id)
+            case let .desktop(id):
+                RemoteDesktopManager.shared.end(id)
             default:
                 break
             }
@@ -266,7 +285,7 @@ enum SessionOwner: Hashable {
 extension Route {
     var isSession: Bool {
         switch self {
-        case .terminal, .monitor, .transfer, .editor: return true
+        case .terminal, .monitor, .transfer, .editor, .desktop: return true
         default: return false
         }
     }

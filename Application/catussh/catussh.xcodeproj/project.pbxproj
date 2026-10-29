@@ -27,6 +27,7 @@
 		4802EDECA623F2AA806FCC6C /* CatusshEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 842F8E9C9EF20432D43A6FA1 /* CatusshEditor */; };
 		534E0C39D6AE5C1FAECC2773 /* SnippetEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17BE74C1206D9FC92816AD1E /* SnippetEditorSheet.swift */; };
 		5604894077B0AF0D4755E9D6 /* IdentitiesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D31865414647C869DB65A5EA /* IdentitiesView.swift */; };
+		56E4225A71A66DEF3D672326 /* UURemoteAccountSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CADA9A8B9B1D6099187DE96 /* UURemoteAccountSheet.swift */; };
 		5786F36A8E57A651DA6D8350 /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45DE8B604167895C3769BB9A /* MainView.swift */; };
 		585578AEB7BAC75300F01FE0 /* DoubleConfirm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 392CE42F5222D4560F93BAAD /* DoubleConfirm.swift */; };
 		6744D08D418A4E72332513EF /* EditorPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B13C84D745F6F6944AAFB06 /* EditorPage.swift */; };
@@ -39,6 +40,7 @@
 		7E43E227B36818113F691EE3 /* FileTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D3A668FA6BD225FD7E3E32 /* FileTable.swift */; };
 		8826CE5DB5C92BABEAFCF2C8 /* Bench.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A07404131A2C93D24D03427 /* Bench.swift */; };
 		8904D5AA4B418378C05DBC98 /* MachineStatus in Frameworks */ = {isa = PBXBuildFile; productRef = 271516C2933034E783776ABC /* MachineStatus */; };
+		8C29374EC417DDA473AC4B8C /* RemoteDesktopPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF2FA665652EF4B465127A8B /* RemoteDesktopPage.swift */; };
 		9198F97B98D5C26D6D3D517E /* MonitorPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19CF1C02A79363E0852B870E /* MonitorPage.swift */; };
 		965372179CA588A76109AA11 /* PickerSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AAF63C57D629C74FCF707D9 /* PickerSheets.swift */; };
 		97BE64B61C3B797501047714 /* TerminalManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CA43C1FB0FF7420A3761040 /* TerminalManager.swift */; };
@@ -109,6 +111,7 @@
 		47CB98F28440B7771F6C6F47 /* CatusshTerminal */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CatusshTerminal; path = ../../Foundation/CatusshTerminal; sourceTree = SOURCE_ROOT; };
 		4A07404131A2C93D24D03427 /* Bench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bench.swift; sourceTree = "<group>"; };
 		4A6085FEF3BD869C3B706AF6 /* Generic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Generic.swift; sourceTree = "<group>"; };
+		4CADA9A8B9B1D6099187DE96 /* UURemoteAccountSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UURemoteAccountSheet.swift; sourceTree = "<group>"; };
 		5CA43C1FB0FF7420A3761040 /* TerminalManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalManager.swift; sourceTree = "<group>"; };
 		628394C574FEB76DF35B6C36 /* Bridge+Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Bridge+Keychain.swift"; sourceTree = "<group>"; };
 		6976CC5A7157D6BB5D195848 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
@@ -136,6 +139,7 @@
 		B686416B9BF772E20E9141A1 /* EULA */ = {isa = PBXFileReference; path = EULA; sourceTree = "<group>"; };
 		B6B1D7BBF2715F710EA328AA /* LICENSE */ = {isa = PBXFileReference; path = LICENSE; sourceTree = "<group>"; };
 		BA4D9C1F51A23AF711D4B0A4 /* Bridge+StatusItems.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Bridge+StatusItems.swift"; sourceTree = "<group>"; };
+		CF2FA665652EF4B465127A8B /* RemoteDesktopPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopPage.swift; sourceTree = "<group>"; };
 		D31865414647C869DB65A5EA /* IdentitiesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentitiesView.swift; sourceTree = "<group>"; };
 		D402A322C1664FF4392E0AE2 /* TerminalPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPage.swift; sourceTree = "<group>"; };
 		D4D3A668FA6BD225FD7E3E32 /* FileTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTable.swift; sourceTree = "<group>"; };
@@ -232,6 +236,7 @@
 				BA9C487FDB708E69DDAA735D /* Menubar */,
 				F18743301C5463984B73606D /* Monitor */,
 				3AF6F6A17BF6457D5CE6ED47 /* PortForward */,
+				AE761176D8FFA501F711A011 /* RemoteDesktop */,
 				76354A0AC27E679D6969DC1A /* Servers */,
 				A6A605175506006A63B06566 /* Settings */,
 				92E582479197923218A0EFA2 /* Shell */,
@@ -297,6 +302,15 @@
 				2A5202DB7A8085B581D31CDF /* SettingsView.swift */,
 			);
 			path = Settings;
+			sourceTree = "<group>";
+		};
+		AE761176D8FFA501F711A011 /* RemoteDesktop */ = {
+			isa = PBXGroup;
+			children = (
+				CF2FA665652EF4B465127A8B /* RemoteDesktopPage.swift */,
+				4CADA9A8B9B1D6099187DE96 /* UURemoteAccountSheet.swift */,
+			);
+			path = RemoteDesktop;
 			sourceTree = "<group>";
 		};
 		B12783D9AF0C46B4783E5673 /* Common */ = {
@@ -572,6 +586,7 @@
 				D92BD8F2FF0B471BDDAC7A0A /* PortForwardBackend.swift in Sources */,
 				2EE34FB083F1DDE3BB4CD2F3 /* PortForwardView.swift in Sources */,
 				00EA19928EFEED2755FCB704 /* PresentError.swift in Sources */,
+				8C29374EC417DDA473AC4B8C /* RemoteDesktopPage.swift in Sources */,
 				72A10AD25ABB949565E37D36 /* ServerActions.swift in Sources */,
 				41AA3A107DDCDEFB74252E29 /* ServerEditorSheet.swift in Sources */,
 				D2C986AB96D0E5E7A3B9834F /* ServersView.swift in Sources */,
@@ -585,6 +600,7 @@
 				97BE64B61C3B797501047714 /* TerminalManager.swift in Sources */,
 				D103F108119B7D0DC4FFB8D4 /* TerminalPage.swift in Sources */,
 				EB71E7617AFB6DAFE269530E /* UIBridge.swift in Sources */,
+				56E4225A71A66DEF3D672326 /* UURemoteAccountSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

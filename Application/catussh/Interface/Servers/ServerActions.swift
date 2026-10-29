@@ -82,7 +82,7 @@ enum ServerActions {
     }
 }
 
-/// The four ways into a server. Every surface that opens one (tiles, table rows,
+/// The five ways into a server. Every surface that opens one (tiles, table rows,
 /// context menus, the session switcher, the sidebar) uses these names, symbols and
 /// descriptions, so a button means the same thing wherever it appears.
 enum ServerTool: CaseIterable, Identifiable {
@@ -90,6 +90,7 @@ enum ServerTool: CaseIterable, Identifiable {
     case files
     case editor
     case monitor
+    case desktop
 
     var id: Self { self }
 
@@ -99,6 +100,7 @@ enum ServerTool: CaseIterable, Identifiable {
         case .files: return "Files"
         case .editor: return "Editor"
         case .monitor: return "Monitor"
+        case .desktop: return "Desktop"
         }
     }
 
@@ -108,6 +110,7 @@ enum ServerTool: CaseIterable, Identifiable {
         case .files: return "folder"
         case .editor: return "square.and.pencil"
         case .monitor: return "gauge.with.dots.needle.33percent"
+        case .desktop: return "display"
         }
     }
 
@@ -118,6 +121,7 @@ enum ServerTool: CaseIterable, Identifiable {
         case .files: return "Browse, upload and download files over SFTP"
         case .editor: return "Edit text files on this server"
         case .monitor: return "Watch CPU, memory, disk and network usage"
+        case .desktop: return "Open a VNC or UU Remote desktop"
         }
     }
 
@@ -135,6 +139,7 @@ enum ServerTool: CaseIterable, Identifiable {
         case .files: router.openFileTransfer(machine: machine)
         case .editor: router.openEditor(machine: machine)
         case .monitor: router.openMonitor(machine: machine)
+        case .desktop: router.openDesktop(machine: machine)
         }
     }
 }
@@ -169,6 +174,13 @@ struct ServerContextMenu: View {
                     ServerTool.monitor.show(machine)
                 } label: {
                     Label("Open Monitor", systemImage: ServerTool.monitor.systemImage)
+                }
+                if CatusshStore.shared.machineGroup[machine].hasRemoteDesktop {
+                    Button {
+                        ServerTool.desktop.show(machine)
+                    } label: {
+                        Label("Open Desktop", systemImage: ServerTool.desktop.systemImage)
+                    }
                 }
             }
             Button {
@@ -259,21 +271,30 @@ struct ServerLiveReader<Content: View>: View {
     }
 }
 
-/// Terminal · Files · Editor · Monitor for one server, centred in a session page's toolbar,
-/// so moving between the four views of a server is one click from any of them.
+/// Terminal · Files · Editor · Monitor (· Desktop when the server has a remote
+/// desktop) for one server, centred in a session page's toolbar, so moving
+/// between its views is one click from any of them.
 struct ServerToolSwitcher: View {
     let machine: RDMachine.ID
     let current: ServerTool
+
+    /// The tools the server can actually show; a dead-end "Desktop" on an
+    /// unconfigured server would only error out.
+    private var tools: [ServerTool] {
+        ServerTool.allCases.filter {
+            $0 != .desktop || CatusshStore.shared.machineGroup[machine].hasRemoteDesktop
+        }
+    }
 
     var body: some View {
         if #available(iOS 26.0, *) {
             RXToolbarSegmented(
                 selection: current,
-                options: ServerTool.allCases.map { .init($0, $0.title, help: $0.help) }
+                options: tools.map { .init($0, $0.title, help: $0.help) }
             ) { $0.show(machine) }
         } else {
             Picker("View", selection: Binding(get: { current }, set: { $0.show(machine) })) {
-                ForEach(ServerTool.allCases) { tool in
+                ForEach(tools) { tool in
                     Text(tool.title)
                         .help(tool.help)
                         .tag(tool)

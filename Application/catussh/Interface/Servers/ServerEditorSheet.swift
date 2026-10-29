@@ -30,6 +30,16 @@ struct ServerEditorSheet: View {
     @State private var startFolder = "/"
     @State private var comment = ""
     @State private var banner = ""
+    @State private var remoteDesktopProtocol: RDMachine.RemoteDesktopProtocolType = .none
+    @State private var vncPort = "5900"
+    @State private var vncPassword = ""
+    @State private var vncOverSSH = false
+    @State private var vncShared = true
+    @State private var uuDeviceID = ""
+    @State private var uuAssistID = ""
+    @State private var uuAssistCode = ""
+
+    @ObservedObject private var uuAccount = UURemoteAccountStore.shared
 
     @State private var connecting = false
     @State private var error: String?
@@ -55,12 +65,13 @@ struct ServerEditorSheet: View {
                         options: [
                             .init(.direct, "Direct (TCP)"),
                             .init(.cloudflareAccess, "Cloudflare Access"),
+                            .init(.uuRemote, "NetEase UU Remote"),
                         ]
                     )
                 }
                 HStack(alignment: .top, spacing: RX.Space.s4) {
-                    RXField(transport == .cloudflareAccess ? "Access hostname" : "Address") {
-                        TextField(transport == .cloudflareAccess ? "ssh.example.com" : "Host name or IP address", text: $address)
+                    RXField(transport == .cloudflareAccess ? "Access hostname" : transport == .uuRemote ? "Device ID" : "Address") {
+                        TextField(transport == .cloudflareAccess ? "ssh.example.com" : transport == .uuRemote ? "UU Remote device id" : "Host name or IP address", text: $address)
                             .textFieldStyle(.rxMono)
                             .disableAutocorrection(true)
                     }
@@ -72,6 +83,23 @@ struct ServerEditorSheet: View {
                 }
                 if transport == .cloudflareAccess {
                     cloudflareFields
+                } else if transport == .uuRemote {
+                    HelpText("SSH, SFTP and Monitor on this server tunnel through the UU Remote session's port mapping — open the Desktop first so the tunnel is live.")
+                }
+                RXField("Remote Desktop") {
+                    RXPicker(
+                        selection: $remoteDesktopProtocol,
+                        options: [
+                            .init(RDMachine.RemoteDesktopProtocolType.none, "None"),
+                            .init(.vnc, "VNC"),
+                            .init(.uuRemote, "NetEase UU Remote"),
+                        ]
+                    )
+                }
+                if remoteDesktopProtocol == .vnc {
+                    vncFields
+                } else if remoteDesktopProtocol == .uuRemote {
+                    uuFields
                 }
                 HStack(alignment: .top, spacing: RX.Space.s4) {
                     RXField("Identity") {
@@ -154,6 +182,81 @@ struct ServerEditorSheet: View {
         .onAppear(perform: load)
     }
 
+    /// The VNC listener details; reach it over an SSH local forward when
+    /// the port only listens on the remote loopback.
+    @ViewBuilder var vncFields: some View {
+        HStack(alignment: .top, spacing: RX.Space.s4) {
+            RXField("VNC port") {
+                TextField("5900", text: $vncPort)
+                    .textFieldStyle(.rxMono)
+            }
+            RXField("VNC password") {
+                SecureField("Use identity password", text: $vncPassword)
+                    .textFieldStyle(.rx)
+            }
+        }
+        HStack(spacing: RX.Space.s5) {
+            Toggle("Tunnel over SSH", isOn: $vncOverSSH)
+            Toggle("Shared session", isOn: $vncShared)
+        }
+        .toggleStyle(.switch)
+    }
+
+    /// Which UU Remote device draws the screen — pick one off the signed-in
+    /// account or paste an id, or leave it to an assist code.
+    @ViewBuilder var uuFields: some View {
+        if !uuAccount.isLoggedIn {
+            HelpText("Sign in to a UU Remote account to pick a device, or paste a device id / assist code below.")
+        }
+        if !uuAccount.desktopDevices.isEmpty {
+            RXField("UU Remote device") {
+                RXPicker(
+                    selection: $uuDeviceID,
+                    options: [.init("", "Manual / assist")]
+                        + uuAccount.desktopDevices.map {
+                            .init($0.deviceID, "\($0.alias.isEmpty ? $0.deviceID : $0.alias) · \(UUDeviceInfo.platformName($0.platform))")
+                        }
+                )
+            }
+        }
+        if uuDeviceID.isEmpty {
+            HStack(alignment: .top, spacing: RX.Space.s4) {
+                RXField("Device ID") {
+                    TextField("From the account's device list", text: $uuDeviceID)
+                        .textFieldStyle(.rxMono)
+                        .disableAutocorrection(true)
+                }
+            }
+            HStack(alignment: .top, spacing: RX.Space.s4) {
+                RXField("Assist connect ID") {
+                    TextField("Optional", text: $uuAssistID)
+                        .textFieldStyle(.rxMono)
+                        .disableAutocorrection(true)
+                }
+                RXField("Assist code") {
+                    SecureField("Optional", text: $uuAssistCode)
+                        .textFieldStyle(.rxMono)
+                }
+            }
+        }
+        HStack {
+            Button("UU Remote Account & Devices…") {
+                SheetPresenter.present { dismiss in
+                    UURemoteAccountSheet(onConnectDesktop: { machineID in
+                        dismiss()
+                        AppRouter.shared.openDesktop(machine: machineID)
+                    }, close: dismiss)
+                }
+            }
+            .buttonStyle(.rx)
+            if uuAccount.isLoggedIn {
+                Text("\(uuAccount.desktopDevices.count) desktop device(s)")
+                    .font(.rxCaption)
+                    .foregroundStyle(.rxInkSecondary)
+            }
+        }
+    }
+
     /// What `cloudflared access ssh` would send: nothing for an application
     /// without an Access policy, a service token for one that asks for it.
     @ViewBuilder var cloudflareFields: some View {
@@ -183,6 +286,14 @@ struct ServerEditorSheet: View {
         let cloudflare = transport == .cloudflareAccess
         target.cloudflareServiceTokenID = cloudflare ? serviceTokenID.trimmingCharacters(in: .whitespaces) : ""
         target.cloudflareServiceTokenSecret = cloudflare ? serviceTokenSecret.trimmingCharacters(in: .whitespaces) : ""
+        target.remoteDesktopProtocol = remoteDesktopProtocol
+        target.vncPort = vncPort
+        target.vncPassword = vncPassword
+        target.vncOverSSH = vncOverSSH
+        target.vncShared = vncShared
+        target.uuDeviceID = uuDeviceID.trimmingCharacters(in: .whitespaces)
+        target.uuAssistID = uuAssistID.trimmingCharacters(in: .whitespaces)
+        target.uuAssistCode = uuAssistCode
     }
 
     func load() {
@@ -198,6 +309,14 @@ struct ServerEditorSheet: View {
         transport = read.transport
         serviceTokenID = read.cloudflareServiceTokenID
         serviceTokenSecret = read.cloudflareServiceTokenSecret
+        remoteDesktopProtocol = read.remoteDesktopProtocol
+        vncPort = read.vncPort
+        vncPassword = read.vncPassword
+        vncOverSSH = read.vncOverSSH
+        vncShared = read.vncShared
+        uuDeviceID = read.uuDeviceID
+        uuAssistID = read.uuAssistID
+        uuAssistCode = read.uuAssistCode
         if let aid = read.associatedIdentity, let uid = UUID(uuidString: aid) {
             identity = uid
         }
