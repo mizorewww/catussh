@@ -252,6 +252,33 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 MenubarTool.shared.showPreview()
             }
             Bench.runIfRequested()
+            // "servers" or "desktops": that page in front, for screenshots.
+            if let page = ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_ROUTE"] {
+                let routes: [String: Route] = ["servers": .servers, "desktops": .desktops, "home": .home]
+                if let route = routes[page] { AppRouter.shared.route = route }
+            }
+            if ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_UU_SIGNIN"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { FolderActions.linkUURemote() }
+            }
+            // Sample folders: an empty local one and a UU Remote one with two
+            // devices. Saved in the debug build's own container.
+            if ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_FOLDERS"] != nil {
+                let store = CatusshStore.shared
+                if store.folder(named: "Lab") == nil { store.createFolder(named: "Lab") }
+                let folder = store.folderGroup.folders.first { $0.isLinked }
+                    ?? store.createFolder(named: "UU Remote", source: .uuRemote(userID: "preview"))
+                var devices: [UUDeviceInfo] = []
+                for (id, alias, platform) in [("preview-mac", "Macbook_Pro_M2", 4), ("preview-pc", "Studio PC", 1)] {
+                    var device = UUDeviceInfo()
+                    device.deviceID = id
+                    device.alias = alias
+                    device.platform = platform
+                    devices.append(device)
+                }
+                var group = store.machineGroup
+                UURemoteFolderSync.apply(devices: devices, folder: folder.name, to: &group)
+                store.machineGroup = group
+            }
             if ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_EDITOR"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { AppRouter.shared.showEditorPreview() }
             }
