@@ -13,5 +13,12 @@
 	<false/>
 	<key>NSSupportsSuddenTermination</key>
 	<false/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>catussh connects to servers and screen-sharing Macs on your local network, and looks for them nearby.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_rfb._tcp</string>
+		<string>_ssh._tcp</string>
+	</array>
 </dict>
 </plist>
