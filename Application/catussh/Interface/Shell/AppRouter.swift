@@ -269,6 +269,34 @@ final class AppRouter: ObservableObject {
         }
     }
 
+    /// ⌘W: closes the session page in front, as a browser closes its tab.
+    /// The window itself never closes from here (it is the whole app); on a
+    /// place, or with a sheet or alert up, the key does nothing.
+    @MainActor
+    func closeTabInFront() {
+        guard CatusshUtil.topViewController()?.presentingViewController == nil,
+              Mac.bridge?.isShowingSheet() != true
+        else { return }
+        switch route {
+        case .terminal:
+            if let terminal = terminalInFront { TerminalSessionActions.closeTab(terminal) }
+        case let .transfer(id):
+            if let context = FileTransferManager.shared.transfers.first(where: { $0.id == id }) {
+                FileTransferSessionActions.close(context)
+            }
+        case let .editor(id):
+            if let workspace = EditorCenter.shared.workspaces.first(where: { $0.id == id }) {
+                EditorSessionActions.close(workspace)
+            }
+        case let .monitor(id):
+            MonitorCenter.shared.end(id)
+        case let .desktop(id):
+            RemoteDesktopManager.shared.end(id)
+        default:
+            break
+        }
+    }
+
     func openSettings(_ category: String = SettingsCategory.general) {
         settingsSelection = category
         route = .settings

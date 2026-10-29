@@ -254,6 +254,49 @@ private struct TerminalStatusBar: View {
 }
 
 enum TerminalSessionActions {
+    /// ⌘W on a terminal: closes the tab. The server's last tab is replaced by
+    /// a fresh terminal to the same server, so the page stays open.
+    @MainActor
+    static func closeTab(_ context: TerminalManager.Context) {
+        let manager = TerminalManager.shared
+        let replace = context.tabSiblings.count == 1
+        let perform = {
+            // Asked twice, answered twice: only the first closes anything.
+            guard manager.sessionContexts.contains(where: { $0.id == context.id }) else { return }
+            if replace, let fresh = openReplacement(for: context) {
+                AppRouter.shared.route = .terminal(fresh.id)
+            }
+            manager.closeSession(withContextID: context.id)
+        }
+        if manager.sessionAlive(forContext: context.id) {
+            UIBridge.requiresConfirmation(
+                message: "Close the session on \(context.displayName)?",
+                informative: replace ? "A new terminal to the same server opens in its place." : nil,
+                confirmTitle: "Close Session",
+                destructive: true
+            ) { confirmed in
+                if confirmed { MainActor.assumeIsolated { perform() } }
+            }
+        } else {
+            perform()
+        }
+    }
+
+    /// A new terminal like the one closing: the same saved server, or the same
+    /// Quick Connect command.
+    @MainActor
+    private static func openReplacement(for context: TerminalManager.Context) -> TerminalManager.Context? {
+        let manager = TerminalManager.shared
+        if context.remoteType == .machine {
+            let machine = CatusshStore.shared.machineGroup[context.machine.id]
+            guard machine.isNotPlaceholder() else { return nil }
+            var created: TerminalManager.Context?
+            manager.createSession(withMachineObject: machine, force: true) { created = $0 }
+            return created
+        }
+        return context.command.map { manager.createSession(withCommand: $0) }
+    }
+
     @MainActor
     static func close(_ context: TerminalManager.Context) {
         let manager = TerminalManager.shared

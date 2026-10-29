@@ -36,6 +36,12 @@ import Foundation
     /// Asked before the app quits; return false to keep it running.
     func setTerminationGuard(_ mayTerminate: @escaping () -> Bool)
     func terminate()
+    /// Takes ⌘Q (quit) and ⌘W in a main window before the menu or the
+    /// window's content sees them. `handler` answers ⌘W: true when the app
+    /// closed something (or wants the key dropped), false to let it through.
+    func setCloseShortcutHandler(_ handler: @escaping () -> Bool)
+    /// Whether a main window has an alert sheet up.
+    func isShowingSheet() -> Bool
     /// Brings the app and the given window forward.
     func activate(window uiWindow: AnyObject?)
     /// Whether any ordinary window is on screen (not a menu bar item or popover).

@@ -50,7 +50,7 @@ struct CatusshApp: App {
 }
 
 /// Menu commands: New Server, Settings (Settings is a sidebar destination), navigation.
-/// On a terminal, ⌘W closes the tab in front instead of the window, and ⌘1–⌘9
+/// On a session, ⌘W closes the tab in front instead of the window, and ⌘1–⌘9
 /// pick a tab (⌘9 the last, as in Safari) instead of a sidebar place.
 struct CatusshCommands: Commands {
     @ObservedObject private var router = AppRouter.shared
@@ -70,10 +70,12 @@ struct CatusshCommands: Commands {
             Button("Open Terminals…") { AppRouter.shared.openTerminals() }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
         }
-        // Takes the place of the window's Close and Close All while a terminal is in front.
-        if let terminal {
+        // Takes the place of the window's Close and Close All while a session
+        // is in front. The key itself is caught by MacBridge before the menu
+        // (see AppDelegate), so this is the item to click.
+        if router.route.isSession {
             CommandGroup(replacing: .saveItem) {
-                Button("Close Tab") { TerminalSessionActions.close(terminal) }
+                Button("Close Tab") { AppRouter.shared.closeTabInFront() }
                     .keyboardShortcut("w", modifiers: .command)
             }
         }
@@ -170,6 +172,12 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         UITextField.drawPlaceholdersAsAppKit()
         Mac.bridge?.setTerminationGuard { AppDelegate.shared.mayTerminate() }
         Mac.bridge?.setOpenAppHandler { MainActor.assumeIsolated { MainWindow.show() } }
+        // ⌘W closes the tab in front and never the main window: with one
+        // window, closing it looks like the app quitting.
+        Mac.bridge?.setCloseShortcutHandler {
+            MainActor.assumeIsolated { AppRouter.shared.closeTabInFront() }
+            return true
+        }
         TraySceneDelegate.discardLeftovers()
         MenubarTool.shared.restore()
         #if DEBUG
@@ -225,12 +233,15 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
     /// Set once the user agreed to quit, so the quit that follows goes through.
     @MainActor private var quitConfirmed = false
+    /// The quit question is on screen; another quit waits for its answer.
+    @MainActor private var quitAsked = false
 
     /// Asked when the app is about to quit. With terminals open or unsaved
     /// text, the answer is no for now, and the question goes to the user.
     @MainActor func mayTerminate() -> Bool {
         // The question was answered; this is the quit that follows it.
         if quitConfirmed { return true }
+        if quitAsked { return false }
         let terminals = !TerminalManager.shared.sessionContexts.isEmpty
         // Unsaved text is always asked about, whatever the setting.
         let unsaved = EditorCenter.shared.workspaces.contains(where: \.hasUnsavedChanges)
@@ -243,6 +254,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             unsaved ? "Unsaved changes in the editor will be lost." : nil,
             terminals ? "Open terminal sessions will be closed." : nil,
         ]
+        quitAsked = true
         UIBridge.requiresConfirmation(
             message: "Quit catussh?",
             informative: consequences.compactMap { $0 }.joined(separator: " "),
@@ -250,6 +262,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             destructive: true,
             always: unsaved
         ) { confirmed in
+            MainActor.assumeIsolated { self.quitAsked = false }
             guard confirmed else { return }
             MainActor.assumeIsolated { self.quitConfirmed = true }
             TerminalManager.shared.closeAll()
