@@ -299,11 +299,7 @@ private struct ServerRow: View {
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .gesture(TapGesture(count: 2).onEnded {
-            if store.machineGroup[machine].isUURemoteDevice {
-                AppRouter.shared.openDesktop(machine: machine)
-            } else {
-                AppRouter.shared.openTerminal(machine: machine)
-            }
+            AppRouter.shared.openTerminal(machine: machine)
         })
         .simultaneousGesture(TapGesture(count: 1).onEnded { selection = machine })
         .contextMenu { ServerContextMenu(machine: machine) }
@@ -335,8 +331,11 @@ private struct UUDeviceActions: View {
                 .buttonStyle(.rx(.plain, size: .small))
                 .help("Watch the screen without controlling it")
             Button("Desktop") { AppRouter.shared.openDesktop(machine: machine.id) }
-                .buttonStyle(.rx(size: .small))
+                .buttonStyle(.rx(.plain, size: .small))
                 .help("Control this device's desktop")
+            Button("Terminal") { ServerTool.terminal.show(machine.id) }
+                .buttonStyle(.rx(size: .small))
+                .help("Open the device's own shell through UU Remote")
         }
         // Signed out, the device cannot be reached; offline, nothing answers.
         .disabled(!account.isLoggedIn || device?.isOnline == false)

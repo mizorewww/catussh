@@ -133,6 +133,14 @@ enum ServerTool: CaseIterable, Identifiable {
         }
     }
 
+    /// The tools a server can actually show. A UU Remote device has a
+    /// terminal and a desktop through UU, and none of the SSH tools; a
+    /// dead-end "Desktop" on a server without one would only error out.
+    static func available(for machine: RDMachine) -> [ServerTool] {
+        if machine.isUURemoteDevice { return [.terminal, .desktop] }
+        return allCases.filter { $0 != .desktop || machine.hasRemoteDesktop }
+    }
+
     /// Shows this tool for the server, reusing a session that is already open.
     @MainActor
     func show(_ machine: RDMachine.ID) {
@@ -169,6 +177,17 @@ struct ServerContextMenu: View {
 
     /// A UU Remote device has its desktop and nothing that needs SSH.
     @ViewBuilder private var uuDeviceItems: some View {
+        Button {
+            ServerTool.terminal.show(machine)
+        } label: {
+            Label("Open Terminal", systemImage: ServerTool.terminal.systemImage)
+        }
+        Button {
+            AppRouter.shared.openTerminal(machine: machine)
+        } label: {
+            Label("New Terminal", systemImage: "plus.rectangle")
+        }
+        Divider()
         Button {
             AppRouter.shared.openDesktop(machine: machine)
         } label: {
@@ -320,12 +339,8 @@ struct ServerToolSwitcher: View {
     let machine: RDMachine.ID
     let current: ServerTool
 
-    /// The tools the server can actually show; a dead-end "Desktop" on an
-    /// unconfigured server would only error out.
     private var tools: [ServerTool] {
-        ServerTool.allCases.filter {
-            $0 != .desktop || CatusshStore.shared.machineGroup[machine].hasRemoteDesktop
-        }
+        ServerTool.available(for: CatusshStore.shared.machineGroup[machine])
     }
 
     var body: some View {
