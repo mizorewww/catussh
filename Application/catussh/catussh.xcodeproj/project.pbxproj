@@ -40,6 +40,7 @@
 		7E43E227B36818113F691EE3 /* FileTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D3A668FA6BD225FD7E3E32 /* FileTable.swift */; };
 		8826CE5DB5C92BABEAFCF2C8 /* Bench.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A07404131A2C93D24D03427 /* Bench.swift */; };
 		8904D5AA4B418378C05DBC98 /* MachineStatus in Frameworks */ = {isa = PBXBuildFile; productRef = 271516C2933034E783776ABC /* MachineStatus */; };
+		890CFB18971B357C7410BFD2 /* RemoteDesktopsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94D080FEFC501890CD6E6AC4 /* RemoteDesktopsView.swift */; };
 		8C29374EC417DDA473AC4B8C /* RemoteDesktopPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF2FA665652EF4B465127A8B /* RemoteDesktopPage.swift */; };
 		9198F97B98D5C26D6D3D517E /* MonitorPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19CF1C02A79363E0852B870E /* MonitorPage.swift */; };
 		965372179CA588A76109AA11 /* PickerSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AAF63C57D629C74FCF707D9 /* PickerSheets.swift */; };
@@ -127,6 +128,7 @@
 		8E574B03E87346054E4EBE46 /* BatchRunSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatchRunSheet.swift; sourceTree = "<group>"; };
 		8FE6FDBCE8A195771BC7D9B4 /* MacBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacBridge.swift; sourceTree = "<group>"; };
 		8FF51545AC1094D2033DD0BA /* MachineStatusView */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MachineStatusView; path = ../../Foundation/MachineStatusView; sourceTree = SOURCE_ROOT; };
+		94D080FEFC501890CD6E6AC4 /* RemoteDesktopsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopsView.swift; sourceTree = "<group>"; };
 		9C9C5467FDA2C3C6D1866ECA /* CodeMirrorUI */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CodeMirrorUI; path = ../../External/CodeMirrorUI; sourceTree = SOURCE_ROOT; };
 		9E2CD7BF9E1A87B4883ADD6D /* PortForwardBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortForwardBackend.swift; sourceTree = "<group>"; };
 		A68BC360409179EF724E3132 /* ServerEditorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerEditorSheet.swift; sourceTree = "<group>"; };
@@ -308,6 +310,7 @@
 			isa = PBXGroup;
 			children = (
 				CF2FA665652EF4B465127A8B /* RemoteDesktopPage.swift */,
+				94D080FEFC501890CD6E6AC4 /* RemoteDesktopsView.swift */,
 				4CADA9A8B9B1D6099187DE96 /* UURemoteAccountSheet.swift */,
 			);
 			path = RemoteDesktop;
@@ -587,6 +590,7 @@
 				2EE34FB083F1DDE3BB4CD2F3 /* PortForwardView.swift in Sources */,
 				00EA19928EFEED2755FCB704 /* PresentError.swift in Sources */,
 				8C29374EC417DDA473AC4B8C /* RemoteDesktopPage.swift in Sources */,
+				890CFB18971B357C7410BFD2 /* RemoteDesktopsView.swift in Sources */,
 				72A10AD25ABB949565E37D36 /* ServerActions.swift in Sources */,
 				41AA3A107DDCDEFB74252E29 /* ServerEditorSheet.swift in Sources */,
 				D2C986AB96D0E5E7A3B9834F /* ServersView.swift in Sources */,

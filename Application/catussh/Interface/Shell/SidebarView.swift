@@ -59,6 +59,7 @@ struct SidebarView: View {
                 place(.identities, "Identities", systemImage: "person.badge.key", badge: store.identityGroup.count)
                 place(.snippets, "Snippets", systemImage: "chevron.left.forwardslash.chevron.right", badge: store.snippetGroup.count)
                 place(.portForward, "Port Forward", systemImage: "arrow.left.arrow.right", badge: store.portForwardGroup.count)
+                place(.desktops, "Remote Desktop", systemImage: "display", badge: store.machineGroup.machines.filter(\.hasRemoteDesktop).count)
 
                 if !sessionIDs.isEmpty {
                     SidebarHeader("Sessions")

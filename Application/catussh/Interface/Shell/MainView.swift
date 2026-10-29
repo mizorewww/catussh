@@ -112,6 +112,8 @@ struct MainView: View {
             SnippetsView()
         case .portForward:
             PortForwardView()
+        case .desktops:
+            RemoteDesktopsView()
         case .settings, .terminal, .monitor, .transfer, .editor, .desktop:
             EmptyView()
         }

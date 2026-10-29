@@ -17,6 +17,8 @@ enum Route: Hashable {
     case identities
     case snippets
     case portForward
+    /// Every server with a remote desktop, and the UU Remote account.
+    case desktops
     case settings
     case terminal(UUID)
     case monitor(UUID)
@@ -192,6 +194,12 @@ final class AppRouter: ObservableObject {
     }
 
     // MARK: - Sessions by server
+
+    /// The remote desktop whose page is showing, if one is.
+    var desktopInFront: RemoteDesktopSession? {
+        guard case let .desktop(id) = route else { return nil }
+        return RemoteDesktopManager.shared.session(withID: id)
+    }
 
     /// The terminal whose page is showing, if one is.
     var terminalInFront: TerminalManager.Context? {

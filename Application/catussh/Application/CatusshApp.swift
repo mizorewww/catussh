@@ -58,6 +58,8 @@ struct CatusshCommands: Commands {
     @ObservedObject private var terminals = TerminalManager.shared
 
     private var terminal: TerminalManager.Context? { router.terminalInFront }
+    /// For the Desktop menu: sessions open and close without the route changing.
+    @ObservedObject private var desktops = RemoteDesktopManager.shared
 
     var body: some Commands {
         CommandGroup(replacing: .appSettings) {
@@ -85,12 +87,18 @@ struct CatusshCommands: Commands {
                     .keyboardShortcut("f", modifiers: .command)
             }
         #endif
+        if let desktop = router.desktopInFront {
+            CommandMenu("Desktop") {
+                DesktopCommands(session: desktop)
+            }
+        }
         CommandGroup(after: .sidebar) {
             place("Home", .home, key: "1")
             place("Servers", .servers, key: "2")
             place("Identities", .identities, key: "3")
             place("Snippets", .snippets, key: "4")
             place("Port Forward", .portForward, key: "5")
+            place("Remote Desktop", .desktops, key: "6")
             if let terminal {
                 Divider()
                 let tabs = terminal.tabSiblings
@@ -111,6 +119,37 @@ struct CatusshCommands: Commands {
     private func place(_ title: String, _ route: Route, key: KeyEquivalent) -> some View {
         Button(title) { AppRouter.shared.route = route }
             .keyboardShortcut(terminal == nil ? KeyboardShortcut(key, modifiers: .command) : nil)
+    }
+}
+
+/// The Desktop menu, while a remote desktop is in front: the stage's controls
+/// with keys to them.
+private struct DesktopCommands: View {
+    @ObservedObject var session: RemoteDesktopSession
+
+    var body: some View {
+        let connected = session.phase == .connected
+        Button("Send Ctrl+Alt+Delete") { session.sendKeys(RemoteDesktopSpecialKeys.ctrlAltDelete) }
+            .disabled(!connected || session.viewOnly)
+        Button("Paste Clipboard to Remote") {
+            if let text = UIPasteboard.general.string, !text.isEmpty { session.pushClipboard(text) }
+        }
+        .keyboardShortcut("v", modifiers: [.command, .shift])
+        .disabled(!connected)
+        Button("Copy Remote Clipboard") { UIPasteboard.general.string = session.remoteClipboard }
+            .disabled(session.remoteClipboard.isEmpty)
+        Divider()
+        Toggle("View Only", isOn: $session.viewOnly)
+        Button("Refresh Screen") { session.refresh() }
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(!connected)
+        Divider()
+        if session.phase.isTerminal || session.phase == .idle {
+            Button("Reconnect") { session.connect() }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+        } else {
+            Button("Disconnect") { session.disconnect() }
+        }
     }
 }
 
