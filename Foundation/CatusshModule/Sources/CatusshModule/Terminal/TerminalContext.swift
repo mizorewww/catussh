@@ -206,6 +206,12 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
             self?.terminalSize = size
         }
 
+        // A UU Remote device has a shell of its own, reached through UU.
+        if machine.isUURemoteDevice {
+            runUURemoteTerminal()
+            return
+        }
+
         let identity: RDIdentity?
         if machine.associatedIdentity != nil {
             guard let resolved = CatusshStore.shared.workerAssociatedIdentity(for: machine) else {

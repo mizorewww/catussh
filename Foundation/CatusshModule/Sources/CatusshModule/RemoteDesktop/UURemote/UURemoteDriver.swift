@@ -82,6 +82,20 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     private var reportedTerminalPhase = false
     private var requestedDisplayApplied = false
 
+    /// What the connection is for: a desktop streams the screen; a terminal
+    /// connection carries terminals (and port mappings) and no video.
+    public enum Purpose: Sendable { case desktop, terminal }
+    public var purpose: Purpose = .desktop
+
+    /// Terminals open on this connection, by TERM session id; their frames
+    /// go to these. Main thread.
+    private var terminalSinks: [UInt32: (UUTerminalFrame) -> Void] = [:]
+    private var nextTerminalID: UInt32 = 1
+
+    /// Control and binary channels are both open: terminals can start.
+    public var isReady: Bool { controlChannelOpen && binaryChannelOpen && !closed }
+    public var isClosed: Bool { closed }
+
     public required init(session: RemoteDesktopSession) {
         self.session = session
         let tunnel = UURemotePortMappingTunnel(sendEnvelope: { _ in })
@@ -255,7 +269,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             session.reportPhase(.connecting("Requesting control"), hint: "Asking host to control…")
             appControlID = UUID().uuidString
             iceID = Self.randomHexID(byteCount: 16)
-            let options = await makeConnectOptions(capture: UUCaptureType.desktop)
+            let options = await makeConnectOptions(capture: purpose == .terminal ? UUCaptureType.terminal : UUCaptureType.desktop)
             let ackData = try await signalClient.emitControl(
                 appControlID: appControlID,
                 connectOptions: options,
@@ -780,6 +794,12 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
 
     private func handleBinaryChannel(_ data: Data) {
         guard UUTerminalFrame.isFrame(data), let frame = UUTerminalFrame.decode(data) else { return }
+        // A terminal's frames go to it; with one open, frames whose id the
+        // host renumbered go to that one too.
+        if let sink = terminalSinks[frame.sessionID] ?? (terminalSinks.count == 1 ? terminalSinks.values.first : nil) {
+            sink(frame)
+            return
+        }
         switch frame.kind {
         case .stdout:
             session.reportHint(String(decoding: frame.payload, as: UTF8.self))
@@ -849,6 +869,26 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         let frame = UUTerminalFrame(kind: .open, sessionID: 1, payload: UUTerminalJSON.open(cols: cols, rows: rows, shell: shell))
         sendBinaryChannel(frame.encode())
     }
+
+    /// Opens a terminal of its own and returns its TERM session id; its
+    /// frames (output, exit, errors) go to `onFrame`. Main thread.
+    public func openTerminal(cols: Int, rows: Int, onFrame: @escaping (UUTerminalFrame) -> Void) -> UInt32 {
+        let id = nextTerminalID
+        nextTerminalID += 1
+        terminalSinks[id] = onFrame
+        // The host's own default shell on Windows; the login shell on a Mac.
+        let shell = targetIsWindows ? "powershell.exe" : "/bin/zsh"
+        sendBinaryChannel(UUTerminalFrame(kind: .open, sessionID: id, payload: UUTerminalJSON.open(cols: cols, rows: rows, shell: shell)).encode())
+        return id
+    }
+
+    /// Ends a terminal and stops delivering its frames. Main thread.
+    public func closeTerminal(_ id: UInt32) {
+        guard terminalSinks.removeValue(forKey: id) != nil else { return }
+        sendBinaryChannel(UUTerminalFrame(kind: .close, sessionID: id).encode())
+    }
+
+    public var openTerminalCount: Int { terminalSinks.count }
 
     /// Sends stdin bytes to the host's terminal session.
     public func sendTerminalStdin(_ data: Data, sessionID: UInt32 = 1) {
@@ -921,6 +961,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         }
 
         videoRequestTask?.cancel()
+        guard purpose == .desktop else { return }
         videoRequestTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard let self, !self.closed else { return }

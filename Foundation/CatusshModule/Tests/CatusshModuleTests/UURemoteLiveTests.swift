@@ -208,4 +208,78 @@ final class UURemoteLiveTests: XCTestCase {
         session.disconnect()
         watch.cancel()
     }
+
+    /// A native UU terminal on UU_LIVE_DEVICE: open, run one harmless
+    /// command, print what comes back.
+    @MainActor
+    func testTerminalSignedIn() async throws {
+        let file = try XCTUnwrap(credentialsFile, "set UU_LIVE_CREDENTIALS")
+        let alias = try XCTUnwrap(ProcessInfo.processInfo.environment["UU_LIVE_DEVICE"], "set UU_LIVE_DEVICE")
+        let credentials = try JSONDecoder().decode(UUCredentials.self, from: Data(contentsOf: file))
+        let devices = try await UURemoteAPIClient(credentials: credentials).deviceGroupsOfMy()
+        let device = try XCTUnwrap(devices.first { $0.alias == alias }, "no device \(alias)")
+        await UURemoteAccountStore.shared.useForTesting(credentials, devices: devices)
+        let session = RemoteDesktopSession(machine: UURemoteFolderSync.makeMachine(for: device, folder: "UU"), protocolType: .uuRemote)
+        let driver = UURemoteDriver(session: session)
+        var output = ""
+        let watch = session.$statusHint.sink { hint in
+            if hint.hasPrefix("UU Remote terminal") || !hint.hasPrefix("UU Remote echo") { print("UU_LIVE hint \(hint)") }
+            if !hint.hasPrefix("UU Remote") && !hint.isEmpty { output += hint }
+        }
+        driver.start(session: session)
+        var deadline = Date().addingTimeInterval(20)
+        while Date() < deadline, session.statusHint != "Control channel open", session.phase != .connected || session.statusHint.isEmpty {
+            try await Task.sleep(nanoseconds: 200_000_000)
+            if case .failed = session.phase { break }
+        }
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        driver.openTerminal(cols: 100, rows: 30)
+        try await Task.sleep(nanoseconds: 2_000_000_000)
+        driver.sendTerminalStdin(Data("echo catussh-terminal-ok; uname -a\n".utf8))
+        deadline = Date().addingTimeInterval(6)
+        while Date() < deadline { try await Task.sleep(nanoseconds: 300_000_000) }
+        print("UU_LIVE terminal output: \(output.suffix(800))")
+        driver.stop()
+        watch.cancel()
+    }
+
+    /// A terminal tab on a UU device, as the app opens one: TerminalContext
+    /// over a renderer that records what it is sent.
+    @MainActor
+    func testTerminalContextSignedIn() async throws {
+        let file = try XCTUnwrap(credentialsFile, "set UU_LIVE_CREDENTIALS")
+        let alias = try XCTUnwrap(ProcessInfo.processInfo.environment["UU_LIVE_DEVICE"], "set UU_LIVE_DEVICE")
+        let credentials = try JSONDecoder().decode(UUCredentials.self, from: Data(contentsOf: file))
+        let devices = try await UURemoteAPIClient(credentials: credentials).deviceGroupsOfMy()
+        let device = try XCTUnwrap(devices.first { $0.alias == alias }, "no device \(alias)")
+        await UURemoteAccountStore.shared.useForTesting(credentials, devices: devices)
+        CatusshStore.shared.openInterfaceAutomatically = false
+        let surface = RecordingSurface()
+        let context = TerminalContext(machine: UURemoteFolderSync.makeMachine(for: device, folder: "UU"), surface: surface)
+        var deadline = Date().addingTimeInterval(30)
+        while Date() < deadline, !surface.text.contains("%"), !surface.text.contains("$"), !surface.text.contains("[!]") {
+            try await Task.sleep(nanoseconds: 300_000_000)
+        }
+        surface.type("echo catussh-tab-ok\n")
+        deadline = Date().addingTimeInterval(8)
+        while Date() < deadline, !surface.text.contains("catussh-tab-ok\r\n") { try await Task.sleep(nanoseconds: 300_000_000) }
+        print("UU_LIVE tab output: \(surface.text.suffix(600).debugDescription)")
+        XCTAssertTrue(surface.text.contains("catussh-tab-ok"))
+        context.processShutdown()
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+    }
+}
+
+/// A terminal renderer that keeps what it is sent, and types on request.
+final class RecordingSurface: TerminalSessionSurface, @unchecked Sendable {
+    private let lock = NSLock()
+    private var written = ""
+    private var buffer: ((String) -> Void)?
+    var text: String { lock.withLock { written } }
+    func type(_ string: String) { buffer?(string) }
+    func write(_ string: String) { lock.withLock { written += string } }
+    func setupBellChain(_: @escaping () -> Void) {}
+    func setupBufferChain(_ callback: @escaping (String) -> Void) { buffer = callback }
+    func setupTitleChain(_: @escaping (String) -> Void) {}
+    func setupSizeChain(_: @escaping (CGSize) -> Void) {}
 }
