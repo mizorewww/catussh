@@ -57,6 +57,12 @@ public class CatusshStore: ObservableObject, @unchecked Sendable {
             machineGroup = read
         }
         if let read = readEncryptedDefault(
+            from: .folderGroupEncrypted,
+            folderGroup.self
+        ) {
+            folderGroup = read
+        }
+        if let read = readEncryptedDefault(
             from: .machineRedacted,
             machineRedacted.self
         ) {
@@ -276,6 +282,17 @@ public class CatusshStore: ObservableObject, @unchecked Sendable {
             storeEncryptedDefault(
                 to: .snippetGroupEncrypted,
                 with: snippetGroup
+            )
+        }
+    }
+
+    /// Folders of servers; kept on this device. The servers carry their
+    /// folder's name, which is what syncs.
+    @Published public var folderGroup: RDFolderGroup = .init() {
+        didSet {
+            storeEncryptedDefault(
+                to: .folderGroupEncrypted,
+                with: folderGroup
             )
         }
     }

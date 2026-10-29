@@ -62,6 +62,7 @@ public extension CatusshStore {
         case snippetGroupEncrypted
         case recentRecordEncrypted
         case portForwardEncrypted
+        case folderGroupEncrypted
         case machineRedacted
         case licenseAgreed
         case openInterfaceAutomatically

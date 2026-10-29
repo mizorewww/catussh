@@ -31,6 +31,14 @@ public extension RDMachine {
         remoteDesktopProtocol != .none
     }
 
+    /// A device on a UU Remote account, reached through UU Remote alone:
+    /// no SSH address, so SSH tools do not apply.
+    var isUURemoteDevice: Bool {
+        // An SSH server may show its desktop through UU Remote; it is still
+        // an SSH server.
+        remoteDesktopProtocol == .uuRemote && transport == .uuRemote && !uuDeviceID.isEmpty
+    }
+
     // MARK: - VNC
 
     /// The port the VNC server listens on, on `remoteAddress`.

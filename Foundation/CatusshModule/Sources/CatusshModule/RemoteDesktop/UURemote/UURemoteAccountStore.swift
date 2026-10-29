@@ -179,6 +179,7 @@ public final class UURemoteAccountStore: ObservableObject {
         await client.updateCredentials(creds)
         await ensureLocalDeviceIdentity()
         isLoggedIn = credentials.isComplete
+        try? await refreshDevices()
     }
 
     /// Stores a freshly acquired token, fills the missing identity fields,
@@ -196,6 +197,8 @@ public final class UURemoteAccountStore: ObservableObject {
         await client.updateCredentials(creds)
         await ensureLocalDeviceIdentity()
         isLoggedIn = credentials.isComplete
+        // The account's folder fills as soon as there is an account.
+        try? await refreshDevices()
     }
 
     /// Guarantees `clientID`/`systemID`/`deviceID` exist: the ids are
@@ -275,7 +278,7 @@ public final class UURemoteAccountStore: ObservableObject {
 
     // MARK: - Devices
 
-    /// Refreshes the account's device list.
+    /// Refreshes the account's device list and the folder that shows it.
     public func refreshDevices() async throws {
         let list = try await client.deviceGroupsOfMy()
         if list.isEmpty {
@@ -283,27 +286,50 @@ public final class UURemoteAccountStore: ObservableObject {
         } else {
             devices = list
         }
+        syncFolder()
+    }
+
+    /// The folder this account's devices are in, if it was made.
+    public func folder(store: CatusshStore = .shared) -> RDFolder? {
+        guard !userID.isEmpty else { return nil }
+        return store.folderGroup.folders.first { $0.source == .uuRemote(userID: userID) }
+    }
+
+    /// Puts the devices in the account's folder, making the folder the first
+    /// time.
+    public func syncFolder(store: CatusshStore = .shared) {
+        guard isLoggedIn, !userID.isEmpty else { return }
+        let folder = folder(store: store) ?? adoptOrCreateFolder(store: store)
+        var group = store.machineGroup
+        UURemoteFolderSync.apply(devices: devices, folder: folder.name, ownDeviceID: credentials.deviceID, to: &group)
+        if group != store.machineGroup { store.machineGroup = group }
+    }
+
+    /// The account's folder the first time: the "UU Remote" folder earlier
+    /// versions put devices in (by name only, here or synced from another
+    /// device) becomes it, so its servers are not left beside an empty one.
+    private func adoptOrCreateFolder(store: CatusshStore) -> RDFolder {
+        let source = RDFolder.Source.uuRemote(userID: userID)
+        let legacy = "UU Remote"
+        if let existing = store.folder(named: legacy), !existing.isLinked {
+            var folders = store.folderGroup
+            folders.folders.removeAll { $0.name == legacy }
+            let adopted = RDFolder(id: existing.id, name: legacy, source: source)
+            folders.folders.append(adopted)
+            store.folderGroup = folders
+            return adopted
+        }
+        return store.createFolder(named: legacy, source: source)
     }
 
     /// Desktop devices only, for the machine-binding picker.
     public var desktopDevices: [UUDeviceInfo] {
-        devices.filter(\.isDesktop)
+        devices.filter { $0.isDesktop && $0.deviceID != credentials.deviceID }
     }
 
-    /// Creates or updates an RDMachine bound to a discovered UU device.
+    /// A server for a device, in the account's folder.
     public func makeMachine(for device: UUDeviceInfo, store: CatusshStore = .shared) -> RDMachine {
-        var machine = RDMachine(
-            remoteAddress: device.deviceID,
-            remotePort: "22",
-            name: device.alias.isEmpty ? device.deviceID : device.alias,
-            group: "UU Remote",
-            comment: "NetEase UU Remote \(UUDeviceInfo.platformName(device.platform)) device"
-        )
-        machine.remoteDesktopProtocol = .uuRemote
-        machine.uuDeviceID = device.deviceID
-        machine.uuDeviceAlias = device.alias
-        machine.transport = .uuRemote
-        return machine
+        UURemoteFolderSync.makeMachine(for: device, folder: folder(store: store)?.name ?? "UU Remote")
     }
 
     /// The saved server bound to a device, if one is.
