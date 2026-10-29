@@ -24,7 +24,9 @@ public struct UUAPIRequest: Sendable {
         self.method = method
         self.path = path
         self.query = query
-        self.body = (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
+        // A GET carries no body: URLSession refuses one ("resource exceeds
+        // maximum size"), and the signature then covers the empty string.
+        self.body = method == "GET" ? Data() : (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
         self.requiresAuth = requiresAuth
     }
 }
@@ -295,15 +297,20 @@ public actor UURemoteAPIClient {
         return devices
     }
 
-    private static func device(from json: [String: Any]) -> UUDeviceInfo? {
+    /// The service sends some flags as JSON booleans and some as 0 / 1.
+    private static func flag(_ value: Any?) -> Bool {
+        (value as? Bool) ?? ((value as? Int).map { $0 != 0 } ?? false)
+    }
+
+    static func device(from json: [String: Any]) -> UUDeviceInfo? {
         guard let deviceID = json["device_id"] as? String else { return nil }
         var device = UUDeviceInfo()
         device.deviceID = deviceID
         device.alias = json["alias"] as? String ?? ""
         device.status = json["status"] as? String ?? ""
         device.platform = json["platform"] as? Int ?? 0
-        device.controllable = (json["controllable"] as? Int ?? 0) != 0
-        device.supportWOL = (json["support_wol"] as? Int ?? 0) != 0
+        device.controllable = flag(json["controllable"])
+        device.supportWOL = flag(json["support_wol"])
         device.wallpaperURL = json["wallpaper_url"] as? String
         device.versionName = json["version_name"] as? String
         if let participants = json["participants_info"] as? [[String: Any]] {
