@@ -324,6 +324,7 @@ public final class UURemoteRTPVideoDecoder: @unchecked Sendable {
         ) { _, _, imageBufferOut, _, _ in
             imageBuffer = imageBufferOut
         }
+        VTDecompressionSessionWaitForAsynchronousFrames(decompressionSession!)
         guard status == noErr, let pixelBuffer = imageBuffer else { return nil }
         outputWidth = CVPixelBufferGetWidth(pixelBuffer)
         outputHeight = CVPixelBufferGetHeight(pixelBuffer)
@@ -336,9 +337,10 @@ public final class UURemoteRTPVideoDecoder: @unchecked Sendable {
             guard !nal.isEmpty else { continue }
             let type = isH265 ? (nal[0] >> 1) & 0x3F : nal[0] & 0x1F
             if isH265 {
-                if type == 32 { sps = nal }
+                // H.265 numbers them VPS 32, SPS 33, PPS 34.
+                if type == 32 { vps = nal }
+                if type == 33 { sps = nal }
                 if type == 34 { pps = nal }
-                if type == 33 { vps = nal }
             } else {
                 if type == 7 { sps = nal }
                 if type == 8 { pps = nal }
@@ -348,40 +350,46 @@ public final class UURemoteRTPVideoDecoder: @unchecked Sendable {
 
     private func makeFormatDescription(for codecName: String) -> CMVideoFormatDescription? {
         let isH265 = codecName.uppercased().contains("H265") || codecName.uppercased().contains("HEVC")
-        var format: CMVideoFormatDescription?
+        let sets: [Data]
         if isH265 {
             guard let vps, let sps, let pps else { return nil }
-            let parameterSets: [Data] = [vps, sps, pps]
-            let pointers = parameterSets.map { $0.withUnsafeBytes { $0.baseAddress!.assumingMemoryBound(to: UInt8.self) } }
-            let sizes = parameterSets.map(\.count)
-            var description: CMVideoFormatDescription?
-            let status = CMVideoFormatDescriptionCreateFromHEVCParameterSets(
-                allocator: kCFAllocatorDefault,
-                parameterSetCount: 3,
-                parameterSetPointers: pointers,
-                parameterSetSizes: sizes,
-                nalUnitHeaderLength: 4,
-                extensions: nil,
-                formatDescriptionOut: &description
-            )
-            format = status == noErr ? description : nil
+            sets = [vps, sps, pps]
         } else {
             guard let sps, let pps else { return nil }
-            let parameterSets: [Data] = [sps, pps]
-            let pointers = parameterSets.map { $0.withUnsafeBytes { $0.baseAddress!.assumingMemoryBound(to: UInt8.self) } }
-            let sizes = parameterSets.map(\.count)
-            var description: CMVideoFormatDescription?
-            let status = CMVideoFormatDescriptionCreateFromH264ParameterSets(
+            sets = [sps, pps]
+        }
+        // The pointers must stay valid for the call: copy the sets into one
+        // buffer and point into it while it is pinned.
+        let joined = [UInt8](sets.reduce(Data(), +))
+        let sizes = sets.map(\.count)
+        var description: CMVideoFormatDescription?
+        let status = joined.withUnsafeBufferPointer { buffer -> OSStatus in
+            var offset = 0
+            let pointers: [UnsafePointer<UInt8>] = sizes.map { size in
+                defer { offset += size }
+                return buffer.baseAddress! + offset
+            }
+            if isH265 {
+                return CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+                    allocator: kCFAllocatorDefault,
+                    parameterSetCount: sets.count,
+                    parameterSetPointers: pointers,
+                    parameterSetSizes: sizes,
+                    nalUnitHeaderLength: 4,
+                    extensions: nil,
+                    formatDescriptionOut: &description
+                )
+            }
+            return CMVideoFormatDescriptionCreateFromH264ParameterSets(
                 allocator: kCFAllocatorDefault,
-                parameterSetCount: 2,
+                parameterSetCount: sets.count,
                 parameterSetPointers: pointers,
                 parameterSetSizes: sizes,
                 nalUnitHeaderLength: 4,
                 formatDescriptionOut: &description
             )
-            format = status == noErr ? description : nil
         }
-        return format
+        return status == noErr ? description : nil
     }
 
     private func startSession(with format: CMVideoFormatDescription) -> Bool {
@@ -390,16 +398,14 @@ public final class UURemoteRTPVideoDecoder: @unchecked Sendable {
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
             kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
         ]
-        var callback = VTDecompressionOutputCallbackRecord(
-            decompressionOutputCallback: { _, _, status, _, imageBuffer, _, _ in },
-            decompressionOutputRefCon: nil
-        )
+        // No output callback: frames are decoded with a handler each, which
+        // VideoToolbox refuses on a session that has a callback.
         let status = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: format,
             decoderSpecification: nil,
             imageBufferAttributes: attributes as CFDictionary,
-            outputCallback: &callback,
+            outputCallback: nil,
             decompressionSessionOut: &session
         )
         guard status == noErr, let session else { return false }
@@ -416,7 +422,7 @@ public final class UURemoteRTPVideoDecoder: @unchecked Sendable {
 
     private func makeSampleBuffer(accessUnit: UUVideoAccessUnit, format: CMVideoFormatDescription) -> CMSampleBuffer? {
         var blockBuffer: CMBlockBuffer?
-        let total = accessUnit.nalUnits.reduce(0) { $0 + 4 + $1.count }
+        let total = accessUnit.nalUnits.reduce(0) { $1.isEmpty ? $0 : $0 + 4 + $1.count }
         var status = CMBlockBufferCreateWithMemoryBlock(
             allocator: kCFAllocatorDefault,
             memoryBlock: nil,
@@ -430,24 +436,30 @@ public final class UURemoteRTPVideoDecoder: @unchecked Sendable {
         )
         guard status == kCMBlockBufferNoErr, let block = blockBuffer else { return nil }
 
-        for nal in accessUnit.nalUnits {
+        // Each NAL unit as a 4-byte length and its bytes, one after another.
+        // The block is allocated whole, so its data length is `total` from
+        // the start and cannot say where the next one goes.
+        var offset = 0
+        for nal in accessUnit.nalUnits where !nal.isEmpty {
             var header = UInt32(nal.count).bigEndian
             status = CMBlockBufferReplaceDataBytes(
                 with: &header,
                 blockBuffer: block,
-                offsetIntoDestination: CMBlockBufferGetDataLength(block),
+                offsetIntoDestination: offset,
                 dataLength: 4
             )
             guard status == kCMBlockBufferNoErr else { return nil }
+            offset += 4
             nal.withUnsafeBytes { raw in
                 status = CMBlockBufferReplaceDataBytes(
                     with: raw.baseAddress!,
                     blockBuffer: block,
-                    offsetIntoDestination: CMBlockBufferGetDataLength(block),
+                    offsetIntoDestination: offset,
                     dataLength: nal.count
                 )
             }
             guard status == kCMBlockBufferNoErr else { return nil }
+            offset += nal.count
         }
 
         var timing = CMSampleTimingInfo(
@@ -480,5 +492,32 @@ public final class UURemoteRTPVideoDecoder: @unchecked Sendable {
 
     public var outputSize: CGSize {
         CGSize(width: outputWidth, height: outputHeight)
+    }
+}
+
+public extension UUVideoAccessUnit {
+    /// NAL units out of an Annex-B byte stream (00 00 01 or 00 00 00 01
+    /// before each), as WebRTC hands over an encoded H.264 / H.265 frame.
+    static func nalUnits(annexB data: Data) -> [Data] {
+        let bytes = [UInt8](data)
+        var units: [Data] = []
+        var start: Int?
+        var index = 0
+        while index + 2 < bytes.count {
+            if bytes[index] == 0, bytes[index + 1] == 0, bytes[index + 2] == 1 {
+                if let start {
+                    var end = index
+                    // A 4-byte start code's leading zero belongs to it.
+                    if end > start, bytes[end - 1] == 0 { end -= 1 }
+                    if end > start { units.append(Data(bytes[start ..< end])) }
+                }
+                index += 3
+                start = index
+            } else {
+                index += 1
+            }
+        }
+        if let start, start < bytes.count { units.append(Data(bytes[start...])) }
+        return units
     }
 }
