@@ -42,9 +42,12 @@ import Foundation
     func setCloseShortcutHandler(_ handler: @escaping () -> Bool)
     /// Whether a main window has an alert sheet up.
     func isShowingSheet() -> Bool
+    /// Whether an app-modal alert or panel is running.
+    func hasModalWindow() -> Bool
     /// Brings the app and the given window forward.
     func activate(window uiWindow: AnyObject?)
-    /// Whether any ordinary window is on screen (not a menu bar item or popover).
+    /// Whether any ordinary window is open, on screen or minimized (not a menu
+    /// bar item or popover).
     func hasVisibleWindow() -> Bool
     /// An accessory app has no Dock icon or menu bar: catussh while only its menu
     /// bar items are showing.

@@ -80,9 +80,8 @@ import ObjectiveC
     }
 
     /// ⌘Q quits and ⌘W closes the tab in front of a main window. Anything
-    /// modal (an alert, a panel) keeps its own keys; while a sheet is up
-    /// both keys are dropped, so a second quit or close question is never
-    /// stacked on the first.
+    /// modal (an alert, a panel) keeps its own keys; while a sheet is up ⌘W
+    /// is dropped, so a second close question is never stacked on the first.
     private func handleShortcut(_ event: NSEvent) -> Bool {
         guard event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
               NSApp.modalWindow == nil
@@ -94,12 +93,15 @@ import ObjectiveC
         case (13, _), (_, "w"): key = "w"
         default: return false
         }
-        if isShowingSheet() { return true }
         switch key {
         case "q":
+            // Never dropped: the termination guard knows whether its own
+            // question is still up, and a sheet left behind by anything else
+            // must not keep catussh from quitting.
             NSApp.terminate(nil)
             return true
         case "w":
+            if isShowingSheet() { return true }
             let window = event.window ?? NSApp.keyWindow
             guard let window, ordinaryWindows.contains(window) else { return false }
             // Held down, ⌘W would close and reopen the last tab over and over.
@@ -108,6 +110,10 @@ import ObjectiveC
         default:
             return false
         }
+    }
+
+    func hasModalWindow() -> Bool {
+        NSApp.modalWindow != nil
     }
 
     func isShowingSheet() -> Bool {
@@ -122,7 +128,9 @@ import ObjectiveC
     }
 
     func hasVisibleWindow() -> Bool {
-        ordinaryWindows.contains { $0.isVisible }
+        // A minimized window is not visible, but it is still open: catussh
+        // must keep its Dock icon to bring it back, and its menu to quit.
+        ordinaryWindows.contains { $0.isVisible || $0.isMiniaturized }
     }
 
     func setAccessory(_ accessory: Bool) {

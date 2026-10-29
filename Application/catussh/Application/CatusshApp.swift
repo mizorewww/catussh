@@ -7,6 +7,7 @@
 
 import CodeEditorUI
 import CatusshModule
+import os
 import CatusshTerminal
 import SwiftUI
 import UIKit
@@ -274,16 +275,34 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     @MainActor private var quitConfirmed = false
     /// The quit question is on screen; another quit waits for its answer.
     @MainActor private var quitAsked = false
+    /// When it was asked: with no window to hang it on, the alert opens a
+    /// run-loop turn later, and until then it is neither a sheet nor modal.
+    @MainActor private var quitAskedAt = Date.distantPast
+
+    private static let quitLog = Logger(subsystem: "me.mizorewww.rayon", category: "quit")
 
     /// Asked when the app is about to quit. With terminals open or unsaved
     /// text, the answer is no for now, and the question goes to the user.
     @MainActor func mayTerminate() -> Bool {
         // The question was answered; this is the quit that follows it.
         if quitConfirmed { return true }
-        if quitAsked { return false }
+        if quitAsked {
+            // Still on screen: this quit waits for its answer. Gone without
+            // one (its window closed under it): ask again rather than refuse
+            // every quit from now on.
+            if Mac.bridge?.isShowingSheet() == true || Mac.bridge?.hasModalWindow() == true
+                || Date().timeIntervalSince(quitAskedAt) < 2
+            {
+                Self.quitLog.info("quit waits for the open question")
+                return false
+            }
+            Self.quitLog.error("quit question lost without an answer; asking again")
+            quitAsked = false
+        }
         let terminals = !TerminalManager.shared.sessionContexts.isEmpty
         // Unsaved text is always asked about, whatever the setting.
         let unsaved = EditorCenter.shared.workspaces.contains(where: \.hasUnsavedChanges)
+        Self.quitLog.info("quit requested: terminals \(terminals), unsaved \(unsaved)")
         guard terminals || unsaved else { return true }
         if CatusshStore.shared.disableConformation, !unsaved {
             TerminalManager.shared.closeAll()
@@ -294,6 +313,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             terminals ? "Open terminal sessions will be closed." : nil,
         ]
         quitAsked = true
+        quitAskedAt = Date()
         UIBridge.requiresConfirmation(
             message: "Quit catussh?",
             informative: consequences.compactMap { $0 }.joined(separator: " "),
