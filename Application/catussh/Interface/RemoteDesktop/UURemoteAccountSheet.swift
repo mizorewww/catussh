@@ -25,6 +25,6 @@ struct UURemoteAccountSheet: View {
                 .buttonStyle(.rxPrimary)
                 .keyboardShortcut(.defaultAction)
         }
-        .frame(width: 560, height: 520)
+        .frame(width: 600, height: 520)
     }
 }

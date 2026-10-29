@@ -3,9 +3,8 @@
 //  CatusshModule
 //
 //  The shared NetEase UU Remote account surface: QR / SMS / token sign-in,
-//  the account's device list with "Add to Servers" / "Connect" actions,
-//  a Remote Assistance quick-connect, and — on macOS — the local
-//  `uuyc-cli` bridge to the installed official app.
+//  then the account, its devices (servers in the account's folder) and a
+//  Remote Assistance quick-connect.
 //
 
 import CatusshDesign
@@ -36,7 +35,6 @@ public struct UURemoteAccountView: View {
     @State private var assistCode = ""
     @State private var busyAction = ""
     @State private var infoLine = ""
-    @State private var addedDeviceIDs: Set<String> = []
 
     public init(onConnectDesktop: ((RDMachine.ID) -> Void)? = nil) {
         self.onConnectDesktop = onConnectDesktop
@@ -49,253 +47,241 @@ public struct UURemoteAccountView: View {
     }
 
     public var body: some View {
-        List {
-            if account.isLoggedIn {
-                accountSection
-                devicesSection
-                assistSection
-                #if os(macOS)
-                localAppSection
-                #endif
-            } else {
-                loginSection
-            }
-            if !infoLine.isEmpty {
-                Section {
+        ScrollView {
+            VStack(alignment: .leading, spacing: RX.Space.s4) {
+                if account.isLoggedIn {
+                    accountCard
+                    devicesCard
+                    assistCard
+                } else {
+                    signInCard
+                }
+                if !infoLine.isEmpty {
                     Text(infoLine)
-                        .font(.rxCaption)
+                        .font(.rxHelp)
                         .foregroundStyle(Color.rxInkSecondary)
                 }
             }
+            .padding(RX.Space.s4)
         }
-        .task {
+        .task(id: account.isLoggedIn) {
             if account.isLoggedIn, account.devices.isEmpty {
                 try? await account.refreshDevices()
             }
         }
     }
 
-    // MARK: - Signed-in sections
+    // MARK: - Signed in
 
-    private var accountSection: some View {
-        Section("Account") {
-            HStack {
-                Label(account.nickname.isEmpty ? "UU Remote user" : account.nickname,
-                      systemImage: "person.crop.circle")
-                Spacer()
-                if !account.userID.isEmpty {
-                    Text(account.userID)
-                        .font(.rxCaption)
-                        .foregroundStyle(Color.rxInkTertiary)
-                }
+    private var accountCard: some View {
+        HStack(spacing: RX.Space.s3) {
+            Image(systemName: "person.crop.circle.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(Color.rxAccent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(account.nickname.isEmpty ? "UU Remote account" : account.nickname)
+                    .font(.rxBodyStrong)
+                    .foregroundStyle(Color.rxInk)
+                Text(account.userID.isEmpty ? "Signed in" : "ID \(account.userID)")
+                    .font(.rxHelp)
+                    .foregroundStyle(Color.rxInkSecondary)
             }
-            Button("Sign Out", role: .destructive) {
-                account.logout()
-            }
+            Spacer()
+            Button("Sign Out", role: .destructive) { account.logout() }
+                .buttonStyle(.rx(.plain))
         }
+        .rxCard()
     }
 
-    private var devicesSection: some View {
-        Section {
-            ForEach(account.desktopDevices, id: \.deviceID) { device in
-                deviceRow(device)
-            }
-            if account.desktopDevices.isEmpty {
-                Text("No desktop devices on this account")
-                    .font(.rxCaption)
-                    .foregroundStyle(Color.rxInkTertiary)
-            }
-        } header: {
+    /// The devices, which are servers in the account's folder.
+    private var devicesCard: some View {
+        VStack(alignment: .leading, spacing: RX.Space.s2) {
             HStack {
-                Text("Devices")
+                CardHead("Devices")
                 Spacer()
                 Button {
                     run("refreshing") { try await account.refreshDevices() }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .buttonStyle(.rx(.plain, size: .small))
                 .disabled(busyAction == "refreshing")
             }
+            Text("They are servers in the \"\(account.folder()?.name ?? "UU Remote")\" folder, kept up to date with the account.")
+                .font(.rxHelp)
+                .foregroundStyle(Color.rxInkSecondary)
+            ForEach(account.desktopDevices, id: \.deviceID) { device in
+                deviceRow(device)
+            }
+            if account.desktopDevices.isEmpty {
+                Text("No desktop devices on this account yet. Install UU Remote on a computer and sign in there with the same account.")
+                    .font(.rxHelp)
+                    .foregroundStyle(Color.rxInkTertiary)
+            }
         }
+        .rxCard()
     }
 
     private func deviceRow(_ device: UUDeviceInfo) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: RX.Space.s3) {
             StatusDot(device.isOnline ? .success : .off, size: .small)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(device.alias.isEmpty ? device.deviceID : device.alias)
+                    .font(.rxBody)
+                    .foregroundStyle(Color.rxInk)
                     .lineLimit(1)
-                Text("\(UUDeviceInfo.platformName(device.platform)) · \(device.deviceID)")
-                    .font(.rxCaption)
-                    .foregroundStyle(Color.rxInkTertiary)
+                Text("\(UUDeviceInfo.platformName(device.platform)) · \(device.isOnline ? "Online" : "Offline")")
+                    .font(.rxHelp)
+                    .foregroundStyle(Color.rxInkSecondary)
                     .lineLimit(1)
             }
             Spacer()
-            if addedDeviceIDs.contains(device.deviceID) {
-                Image(systemName: "checkmark")
-                    .foregroundStyle(Color.rxSuccess)
-            } else {
-                Button("Add") { addToServers(device) }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-            }
-            Button("Connect") { connect(to: device) }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+            Button("Desktop") { connect(to: device) }
+                .buttonStyle(.rx(size: .small))
                 .disabled(!device.isOnline)
         }
+        .frame(minHeight: 36)
     }
 
-    private var assistSection: some View {
-        Section {
-            TextField("Connect ID (e.g. 123 456 789)", text: $assistID)
-            SecureField("Verification code", text: $assistCode)
-            Button("Connect to Assisted Device") { connectAssist() }
-                .disabled(assistID.trimmingCharacters(in: .whitespaces).isEmpty || busyAction == "assist")
-        } header: {
-            Text("Remote Assistance")
-        } footer: {
-            Text("The Connect ID and code the other side shows in UU Remote's Remote Assistance.")
-        }
-    }
-
-    #if os(macOS)
-    private var localAppSection: some View {
-        Section {
-            if UULocalBridge.cliInstalled {
-                ForEach(cliDevices) { entry in
-                    HStack {
-                        Image(systemName: "desktopcomputer")
-                        Text(entry.name)
-                            .lineLimit(1)
-                        Spacer()
-                        Button("Open") {
-                            try? UULocalBridge.cliConnect(deviceID: entry.id)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(entry.id.isEmpty)
-                    }
-                }
-                if cliDevices.isEmpty {
-                    Text("UURemote.app is installed; no devices reported by uuyc-cli.")
-                        .font(.rxCaption)
-                        .foregroundStyle(Color.rxInkTertiary)
-                }
-            } else {
-                Text("Install UURemote.app to hand sessions off to the official client.")
-                    .font(.rxCaption)
-                    .foregroundStyle(Color.rxInkTertiary)
+    private var assistCard: some View {
+        VStack(alignment: .leading, spacing: RX.Space.s2) {
+            CardHead("Remote Assistance")
+            Text("Join someone's screen with the Connect ID and code their UU Remote shows.")
+                .font(.rxHelp)
+                .foregroundStyle(Color.rxInkSecondary)
+            HStack(spacing: RX.Space.s2) {
+                TextField("Connect ID", text: $assistID)
+                    .textFieldStyle(.roundedBorder)
+                SecureField("Code", text: $assistCode)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 120)
+                Button("Join") { connectAssist() }
+                    .buttonStyle(.rx)
+                    .disabled(assistID.trimmingCharacters(in: .whitespaces).isEmpty || busyAction == "assist")
             }
-        } header: {
-            Text("Installed UU Remote App")
         }
+        .rxCard()
     }
 
-    /// Names + ids out of `uuyc-cli device list`; best-effort parsing —
-    /// the CLI output is JSON of whatever shape the app build returns.
-    private struct CLIDevice: Identifiable {
-        let name: String
-        let id: String
-    }
+    // MARK: - Signing in
 
-    private var cliDevices: [CLIDevice] {
-        guard let list = try? UULocalBridge.cliDeviceList() else { return [] }
-        return list.compactMap { dict in
-            let id = (dict["device_id"] ?? dict["deviceId"] ?? dict["id"] ?? "") as? String ?? ""
-            let name = (dict["alias"] ?? dict["name"] ?? dict["device_name"] ?? id) as? String ?? id
-            return name.isEmpty && id.isEmpty ? nil : CLIDevice(name: name, id: id)
-        }
-    }
-    #endif
-
-    // MARK: - Login section
-
-    private var loginSection: some View {
-        Section {
+    private var signInCard: some View {
+        VStack(alignment: .leading, spacing: RX.Space.s4) {
+            // The host's chrome names UU Remote; this says what signing in does.
+            Text("Sign in, and the account's computers appear as servers in a folder of their own, kept up to date.")
+                .font(.rxBody)
+                .foregroundStyle(Color.rxInkSecondary)
             Picker("Sign in with", selection: $loginMode) {
                 ForEach(LoginMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
-
+            .labelsHidden()
             switch loginMode {
             case .qr: qrFields
             case .sms: smsFields
             case .token: tokenFields
             }
-
             if let error = account.loginError {
                 Text(error)
-                    .font(.rxCaption)
+                    .font(.rxHelp)
                     .foregroundStyle(Color.rxDanger)
             }
-            if !account.qrStatusHint.isEmpty, loginMode != .qr {
-                Text(account.qrStatusHint)
-                    .font(.rxCaption)
-                    .foregroundStyle(Color.rxInkSecondary)
+        }
+        .rxCard()
+    }
+
+    /// The code is made as soon as it is shown, and made again when it expires.
+    private var qrFields: some View {
+        HStack(alignment: .top, spacing: RX.Space.s5) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10).fill(Color.white)
+                if let data = account.qrImageData, let image = RemoteDesktopImage(data: data) {
+                    Image(rxImage: image)
+                        .resizable()
+                        .interpolation(.none)
+                        .padding(10)
+                        .opacity(account.qrLoginState == .expired ? 0.15 : 1)
+                } else {
+                    ProgressView()
+                }
+                if account.qrLoginState == .expired {
+                    Button("Refresh Code") { generateQR() }
+                        .buttonStyle(.rxPrimary)
+                }
             }
-        } header: {
-            Text("Sign In to NetEase UU Remote")
+            .frame(width: 180, height: 180)
+            VStack(alignment: .leading, spacing: RX.Space.s2) {
+                step(1, "Open UU Remote on your phone.")
+                step(2, "Tap Scan, and point it at this code.")
+                step(3, "Confirm the sign-in on the phone.")
+                Spacer(minLength: RX.Space.s2)
+                HStack(spacing: RX.Space.s2) {
+                    if account.qrLoginState == .scanned || account.qrLoginState == .confirmed {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(qrStatus)
+                        .font(.rxHelp)
+                        .foregroundStyle(Color.rxInkSecondary)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
+        }
+        .onAppear {
+            if account.qrImageData == nil || account.qrLoginState == .idle { generateQR() }
         }
     }
 
-    private var qrFields: some View {
-        VStack(alignment: .center, spacing: 10) {
-            if let data = account.qrImageData, let image = RemoteDesktopImage(data: data) {
-                Image(rxImage: image)
-                    .resizable()
-                    .interpolation(.none)
-                    .frame(width: 200, height: 200)
-                    .background(Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.rxSurfaceSunken)
-                    .frame(width: 200, height: 200)
-                    .overlay {
-                        if busyAction == "qr" { ProgressView() }
-                        else { Text("No QR code").font(.rxCaption).foregroundStyle(Color.rxInkTertiary) }
-                    }
-            }
-            Text(account.qrStatusHint.isEmpty
-                 ? "Generate a code and scan it with the UU Remote mobile app."
-                 : account.qrStatusHint)
-                .font(.rxCaption)
-                .foregroundStyle(Color.rxInkSecondary)
-                .multilineTextAlignment(.center)
-            HStack {
-                Button("Generate QR Code") {
-                    run("qr") { _ = try await account.startQRLogin() }
-                }
-                .disabled(busyAction == "qr")
-                if account.qrLoginState == .expired {
-                    Text("(expired — generate a new one)")
-                        .font(.rxCaption)
-                        .foregroundStyle(Color.rxWarning)
-                }
-            }
+    private var qrStatus: String {
+        switch account.qrLoginState {
+        case .idle, .generating: "Making a code…"
+        case .waiting: "Waiting for the scan."
+        case .scanned: "Scanned. Confirm on the phone."
+        case .confirmed: "Signing in…"
+        case .expired: "The code expired."
+        case let .failed(reason): reason
         }
-        .frame(maxWidth: .infinity)
+    }
+
+    private func step(_ number: Int, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: RX.Space.s2) {
+            Text("\(number)")
+                .font(.rxHelp.weight(.semibold))
+                .foregroundStyle(Color.rxOnAccent)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(Color.rxAccent))
+            Text(text)
+                .font(.rxBody)
+                .foregroundStyle(Color.rxInk)
+        }
+    }
+
+    private func generateQR() {
+        run("qr") { _ = try await account.startQRLogin() }
     }
 
     private var smsFields: some View {
-        Group {
-            HStack {
+        VStack(alignment: .leading, spacing: RX.Space.s2) {
+            HStack(spacing: RX.Space.s2) {
                 TextField("+86", text: $phoneCountry)
-                    .frame(width: 70)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 64)
                 TextField("Phone number", text: $phoneNumber)
+                    .textFieldStyle(.roundedBorder)
                     #if os(iOS)
                     .keyboardType(.phonePad)
                     #endif
-            }
-            Button(busyAction == "sms-send" ? "Sending…" : "Send Code") {
-                run("sms-send") {
-                    try await account.sendSMSCode(countryCode: phoneCountry, mobile: phoneNumber)
+                Button(busyAction == "sms-send" ? "Sending…" : "Send Code") {
+                    run("sms-send") {
+                        try await account.sendSMSCode(countryCode: phoneCountry, mobile: phoneNumber)
+                        infoLine = "A code was sent to \(phoneCountry) \(phoneNumber)."
+                    }
                 }
+                .buttonStyle(.rx)
+                .disabled(phoneNumber.isEmpty || busyAction == "sms-send")
             }
-            .disabled(phoneNumber.isEmpty || busyAction == "sms-send")
-            HStack {
-                TextField("SMS code", text: $smsCode)
+            HStack(spacing: RX.Space.s2) {
+                TextField("Code from the SMS", text: $smsCode)
+                    .textFieldStyle(.roundedBorder)
                     #if os(iOS)
                     .keyboardType(.numberPad)
                     #endif
@@ -304,20 +290,25 @@ public struct UURemoteAccountView: View {
                         try await account.loginBySMS(countryCode: phoneCountry, mobile: phoneNumber, code: smsCode)
                     }
                 }
+                .buttonStyle(.rxPrimary)
                 .disabled(smsCode.isEmpty || busyAction == "sms-login")
             }
         }
     }
 
     private var tokenFields: some View {
-        Group {
-            SecureField("Access token", text: $tokenDraft)
-            Button("Import Token") {
-                run("token") { try await account.importToken(tokenDraft) }
+        VStack(alignment: .leading, spacing: RX.Space.s2) {
+            HStack(spacing: RX.Space.s2) {
+                SecureField("Access token", text: $tokenDraft)
+                    .textFieldStyle(.roundedBorder)
+                Button("Sign In") {
+                    run("token") { try await account.importToken(tokenDraft) }
+                }
+                .buttonStyle(.rxPrimary)
+                .disabled(tokenDraft.isEmpty || busyAction == "token")
             }
-            .disabled(tokenDraft.isEmpty || busyAction == "token")
-            Text("Grab the token from a logged-in UU Remote client (`nrd_access_token`).")
-                .font(.rxCaption)
+            Text("For an access token you already have; most people sign in with the QR code.")
+                .font(.rxHelp)
                 .foregroundStyle(Color.rxInkTertiary)
         }
     }
@@ -337,13 +328,6 @@ public struct UURemoteAccountView: View {
         }
     }
 
-    private func addToServers(_ device: UUDeviceInfo) {
-        let machine = account.makeMachine(for: device)
-        CatusshStore.shared.machineGroup.insert(machine)
-        addedDeviceIDs.insert(device.deviceID)
-        infoLine = "Added \"\(machine.name)\" to Servers."
-    }
-
     private func connect(to device: UUDeviceInfo) {
         openDesktop(on: account.upsertMachine(for: device))
     }
@@ -354,7 +338,8 @@ public struct UURemoteAccountView: View {
             remoteAddress: id,
             remotePort: "22",
             name: "Assist \(id)",
-            group: "UU Remote",
+            // Not the account's folder: a refresh would treat it as a device.
+            group: "",
             comment: "UU Remote assistance session"
         )
         machine.remoteDesktopProtocol = .uuRemote

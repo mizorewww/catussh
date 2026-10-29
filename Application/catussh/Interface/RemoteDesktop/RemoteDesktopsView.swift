@@ -3,8 +3,8 @@
 //  catussh (macOS)
 //
 //  Remote Desktop, a sidebar place: every server with a desktop (VNC or UU
-//  Remote) and whether it is open, then the UU Remote account and the
-//  desktop devices on it that can be opened or saved as servers.
+//  Remote) and whether it is open, the screen-sharing Macs and VNC servers
+//  nearby, and the UU Remote account whose devices fill a folder.
 //
 
 import CatusshDesign
@@ -15,10 +15,9 @@ struct RemoteDesktopsView: View {
     @EnvironmentObject var store: CatusshStore
     @ObservedObject var desktops = RemoteDesktopManager.shared
     @ObservedObject var account = UURemoteAccountStore.shared
+    @ObservedObject var nearby = VNCDiscovery.shared
 
     @State private var searchText = ""
-    @State private var refreshing = false
-    @State private var refreshError: String?
 
     private var servers: [RDMachine] {
         let all = store.machineGroup.machines.filter(\.hasRemoteDesktop)
@@ -32,11 +31,6 @@ struct RemoteDesktopsView: View {
         }
     }
 
-    /// Desktop devices on the account that no saved server is bound to.
-    private var unsavedDevices: [UUDeviceInfo] {
-        account.desktopDevices.filter { account.savedMachine(for: $0) == nil }
-    }
-
     var body: some View {
         PageScaffold(
             search: $searchText,
@@ -46,14 +40,17 @@ struct RemoteDesktopsView: View {
             }
         ) {
         } trailing: {
-            ToolbarAction("UU Remote Account", systemImage: "person.crop.circle") { openAccount() }
+            ToolbarAction("UU Remote Account", systemImage: "person.crop.circle") { FolderActions.linkUURemote() }
         } header: {
             PageTitle("Remote Desktop", subtitle: "VNC, macOS Screen Sharing and NetEase UU Remote")
         } content: {
             VStack(alignment: .leading, spacing: RX.Space.s6) {
                 serversCard
+                nearbyCard
                 uuCard
             }
+            .onAppear { nearby.start() }
+            .onDisappear { nearby.stop() }
         }
     }
 
@@ -88,21 +85,44 @@ struct RemoteDesktopsView: View {
         }
     }
 
-    // MARK: - UU Remote
+    // MARK: - Nearby
 
-    private var uuCard: some View {
+    /// Bonjour `_rfb._tcp`: Macs with Screen Sharing on, and VNC servers.
+    private var nearbyCard: some View {
         VStack(alignment: .leading, spacing: RX.Space.s2) {
-            CardHead("UU Remote") {
-                if account.isLoggedIn {
-                    Button {
-                        refresh()
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.rx(.plain, size: .small))
-                    .disabled(refreshing)
+            CardHead("Nearby")
+                .padding(.horizontal, RX.Space.s3)
+            if let failure = nearby.failure {
+                HelpText(failure, isError: true)
+                    .padding(.horizontal, RX.Space.s3)
+                    .padding(.bottom, RX.Space.s2)
+            } else if nearby.hosts.isEmpty {
+                HStack(spacing: RX.Space.s2) {
+                    if nearby.isSearching { ProgressView().controlSize(.small) }
+                    Text(nearby.isSearching
+                        ? "Looking for Macs with Screen Sharing and VNC servers on this network…"
+                        : "None found. On a Mac, turn on Screen Sharing in System Settings › General › Sharing.")
+                        .font(.rxHelp)
+                        .foregroundStyle(.rxInkSecondary)
+                }
+                .padding(.horizontal, RX.Space.s3)
+                .frame(height: RX.tableRowHeight)
+            } else {
+                ForEach(nearby.hosts) { host in
+                    NearbyHostRow(host: host)
                 }
             }
+        }
+        .rxCard(padding: RX.Space.s2)
+    }
+
+    // MARK: - UU Remote
+
+    /// The account, and where its devices are: a folder on Servers.
+    private var uuCard: some View {
+        VStack(alignment: .leading, spacing: RX.Space.s2) {
+            CardHead("UU Remote")
+                .padding(.horizontal, RX.Space.s3)
             HStack(spacing: RX.Space.s3) {
                 Image(systemName: account.isLoggedIn ? "person.crop.circle.fill" : "person.crop.circle")
                     .font(.system(size: 22))
@@ -112,58 +132,71 @@ struct RemoteDesktopsView: View {
                         .font(.rxBody)
                         .foregroundStyle(.rxInk)
                     Text(account.isLoggedIn
-                        ? "\(account.desktopDevices.count) desktop device(s) on this account"
-                        : "Sign in with a QR code, SMS or a token to see your devices.")
+                        ? "\(account.desktopDevices.count) desktop device(s), in the \"\(account.folder(store: store)?.name ?? "UU Remote")\" folder on Servers"
+                        : "Sign in, and the account's devices appear in a folder on Servers.")
                         .font(.rxHelp)
                         .foregroundStyle(.rxInkSecondary)
                 }
                 Spacer()
-                Button(account.isLoggedIn ? "Manage…" : "Sign In…") { openAccount() }
+                if account.isLoggedIn {
+                    Button("Show in Servers") { AppRouter.shared.route = .servers }
+                        .buttonStyle(.rx(.plain))
+                }
+                Button(account.isLoggedIn ? "Account…" : "Sign In…") { FolderActions.linkUURemote() }
                     .buttonStyle(account.isLoggedIn ? .rx : .rxPrimary)
             }
             .padding(.horizontal, RX.Space.s3)
             .padding(.vertical, RX.Space.s2)
-            if let refreshError {
-                HelpText(refreshError, isError: true)
-                    .padding(.horizontal, RX.Space.s3)
-            }
-            if account.isLoggedIn, !unsavedDevices.isEmpty {
-                Divider().padding(.horizontal, RX.Space.s3)
-                CapsLabel("Not saved as servers")
-                    .padding(.horizontal, RX.Space.s3)
-                    .padding(.top, RX.Space.s2)
-                ForEach(unsavedDevices, id: \.deviceID) { device in
-                    UUDeviceRow(device: device)
-                }
-            }
         }
         .rxCard(padding: RX.Space.s2)
         .task(id: account.isLoggedIn) {
-            if account.isLoggedIn, account.devices.isEmpty { refresh() }
+            if account.isLoggedIn { try? await account.refreshDevices() }
         }
     }
+}
 
-    private func refresh() {
-        refreshing = true
-        refreshError = nil
-        Task { @MainActor in
-            defer { refreshing = false }
-            do {
-                try await account.refreshDevices()
-            } catch {
-                refreshError = error.localizedDescription
+/// A screen-sharing host on the network: saved already (Connect), or Add,
+/// which saves it and opens the editor for the account to sign in with.
+private struct NearbyHostRow: View {
+    let host: VNCDiscoveredHost
+    @EnvironmentObject var store: CatusshStore
+    @State private var hovered = false
+
+    var body: some View {
+        let saved = store.machineGroup.machines.first(where: host.matches)
+        HStack(spacing: RX.Space.s3) {
+            Image(systemName: "macbook.and.iphone")
+                .font(.system(size: 15))
+                .foregroundStyle(.rxAccent)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(host.displayName)
+                    .font(.rxBody)
+                    .foregroundStyle(.rxInk)
+                    .lineLimit(1)
+                RedactableText("\(host.hostName):\(host.port)", redacted: store.machineRedacted != .none)
+                    .font(.rxHelp)
+                    .foregroundStyle(.rxInkSecondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let saved {
+                Text("Saved as \(saved.name)")
+                    .font(.rxHelp)
+                    .foregroundStyle(.rxInkSecondary)
+                Button("Connect") { AppRouter.shared.openDesktop(machine: saved.id) }
+                    .buttonStyle(.rx(size: .small))
+            } else {
+                // A Mac asks for an account: the editor is where it goes.
+                Button("Add…") { ServerActions.create(from: host.makeMachine()) }
+                .buttonStyle(.rx(size: .small))
+                .help("Save as a VNC server and enter the Mac's user name and password")
             }
         }
-    }
-
-    @MainActor
-    private func openAccount() {
-        SheetPresenter.present { dismiss in
-            UURemoteAccountSheet(onConnectDesktop: { machineID in
-                dismiss()
-                AppRouter.shared.openDesktop(machine: machineID)
-            }, close: dismiss)
-        }
+        .padding(.horizontal, RX.Space.s3)
+        .frame(height: RX.tableRowHeight)
+        .rxRowBackground(selected: false, hovered: hovered)
+        .onHover { hovered = $0 }
     }
 }
 
@@ -222,8 +255,9 @@ private struct DesktopServerRow: View {
             if machine.vncOverSSH { parts.append("over SSH") }
             return parts.joined(separator: " · ")
         case .uuRemote:
+            // The device's name only when the server's says something else.
             let device = machine.uuDeviceAlias.isEmpty ? machine.uuDeviceID : machine.uuDeviceAlias
-            return device.isEmpty ? "UU Remote" : "UU Remote · " + device
+            return device.isEmpty || device == machine.name ? "UU Remote" : "UU Remote · " + device
         case .none:
             return ""
         }
@@ -261,42 +295,5 @@ private struct SessionPhaseLabel: View {
         case .closed: "Closed"
         case .failed: "Failed"
         }
-    }
-}
-
-/// A UU Remote device with no server yet: Save as Server, or Connect, which
-/// saves it and opens its desktop.
-private struct UUDeviceRow: View {
-    let device: UUDeviceInfo
-    @ObservedObject var account = UURemoteAccountStore.shared
-    @State private var hovered = false
-
-    var body: some View {
-        HStack(spacing: RX.Space.s3) {
-            StatusDot(device.isOnline ? .success : .off, size: .small)
-                .frame(width: 22)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(device.alias.isEmpty ? device.deviceID : device.alias)
-                    .font(.rxBody)
-                    .foregroundStyle(.rxInk)
-                    .lineLimit(1)
-                Text("\(UUDeviceInfo.platformName(device.platform)) · \(device.isOnline ? "Online" : "Offline")")
-                    .font(.rxHelp)
-                    .foregroundStyle(.rxInkSecondary)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Save as Server") { _ = account.upsertMachine(for: device) }
-                .buttonStyle(.rx(.plain, size: .small))
-            Button("Connect") {
-                AppRouter.shared.openDesktop(machine: account.upsertMachine(for: device).id)
-            }
-            .buttonStyle(.rx(size: .small))
-            .disabled(!device.isOnline)
-        }
-        .padding(.horizontal, RX.Space.s3)
-        .frame(height: RX.tableRowHeight)
-        .rxRowBackground(selected: false, hovered: hovered)
-        .onHover { hovered = $0 }
     }
 }
