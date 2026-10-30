@@ -45,4 +45,13 @@ final class UURemoteStreamTests: XCTestCase {
         XCTAssertEqual(data["alias"] as? String, "…(6)")
         XCTAssertEqual(data["mobile"] as? String, "…(11)")
     }
+
+    /// What a new UU tab put on the prompt: DA1, DA2 and XTVERSION answers.
+    func testStartupRepliesAreDroppedAndTypingKept() {
+        let replies = "\u{1B}[?62;22;52c\u{1B}[>1;10;0c\u{1B}P>|ghostty 1.3.2-HEAD+35a81a980\u{1B}\\"
+        XCTAssertEqual(TerminalReplies.dropping(from: replies), "")
+        XCTAssertEqual(TerminalReplies.dropping(from: "ls" + replies + "\r"), "ls\r")
+        XCTAssertEqual(TerminalReplies.dropping(from: "\u{1B}[A"), "\u{1B}[A") // an arrow key stays
+    }
 }
+

@@ -75,6 +75,7 @@ private final class UUTerminalLink {
     private var driver: UURemoteDriver?
     private var terminalID: UInt32?
     private var sentSize: CGSize = .zero
+    private var openedAt = Date.distantFuture
     private var ended = false
     private let decoder = UTF8StreamDecoder()
 
@@ -93,6 +94,7 @@ private final class UUTerminalLink {
                 }
                 driver = connection
                 sentSize = size
+                openedAt = Date()
                 terminalID = connection.openTerminal(
                     cols: Int(max(size.width, 8)), rows: Int(max(size.height, 8))
                 ) { [weak self, weak context] frame in
@@ -134,12 +136,17 @@ private final class UUTerminalLink {
             finished.signal()
             return
         }
-        if !typed.isEmpty { driver.sendTerminalStdin(Data(typed.utf8), sessionID: id) }
+        // Just after it opens, the terminal's answers to the host's start-up
+        // queries reach a shell already at its prompt, which prints them.
+        let input = Date().timeIntervalSince(openedAt) < Self.startupReplyWindow ? TerminalReplies.dropping(from: typed) : typed
+        if !input.isEmpty { driver.sendTerminalStdin(Data(input.utf8), sessionID: id) }
         if size != sentSize, size.width >= 8, size.height >= 8 {
             sentSize = size
             driver.sendTerminalResize(cols: Int(size.width), rows: Int(size.height), sessionID: id)
         }
     }
+
+    static let startupReplyWindow: TimeInterval = 3
 
     func end() {
         guard !ended else { return }
@@ -173,3 +180,23 @@ final class UTF8StreamDecoder: @unchecked Sendable {
         return String(decoding: complete, as: UTF8.self)
     }
 }
+
+/// The terminal's answers to a program's queries, told apart from typing.
+enum TerminalReplies {
+    /// The terminal's own answers (device attributes, version, colours),
+    /// whole, out of what is about to be sent; what a person typed stays.
+    static func dropping(from text: String) -> String {
+        guard text.contains("\u{1B}") else { return text }
+        return replyPattern.stringByReplacingMatches(
+            in: text, range: NSRange(text.startIndex..., in: text), withTemplate: ""
+        )
+    }
+
+    private static let replyPattern = try! NSRegularExpression(pattern: [
+        "\u{1B}\\[[?>=][0-9;]*c", // DA1, DA2, DA3
+        "\u{1B}P>\\|[^\u{1B}]*\u{1B}\\\\", // XTVERSION
+        "\u{1B}\\][0-9]+;rgb:[^\u{07}\u{1B}]*(\u{07}|\u{1B}\\\\)", // OSC 10/11/12 colours
+        "\u{1B}\\[\\?[0-9;]*\\$y", // DECRPM
+    ].joined(separator: "|"))
+}
+
