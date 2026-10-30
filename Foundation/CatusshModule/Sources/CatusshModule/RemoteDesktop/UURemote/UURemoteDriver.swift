@@ -1201,7 +1201,7 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         async function answer(sdp) { await pc.setRemoteDescription({type: 'answer', sdp: sdp}); return 'ok'; }
         async function offerDesc(sdp) { await pc.setRemoteDescription({type: 'offer', sdp: sdp}); const a = await pc.createAnswer(); await pc.setLocalDescription(a); return a.sdp; }
         async function addIce(c) { await pc.addIceCandidate(c); return 'ok'; }
-        function dcSend(label, data) { channels[label] && channels[label].send(new Uint8Array(data)); }
+        function dcSend(label, data) { const c = channels[label]; if (c && c.readyState === 'open') c.send(new Uint8Array(data)); }
         function dcClose(label) { channels[label] && channels[label].close(); }
         function closeAll() { if (frameTimer) { clearInterval(frameTimer); frameTimer = null; } for (const k in channels) { try { channels[k].close(); } catch (e) {} } if (pc) { try { pc.close(); } catch (e) {} } return 'ok'; }
         </script></body></html>
