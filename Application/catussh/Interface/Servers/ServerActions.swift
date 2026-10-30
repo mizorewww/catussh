@@ -67,6 +67,16 @@ enum ServerActions {
     }
 
     /// For a server whose keys were replaced: its next host key is saved.
+    /// The next terminal checks the server for Ghostty's terminfo again and
+    /// installs it if it is missing (say, after ~/.terminfo was cleared).
+    @MainActor
+    static func reinstallTerminfo(_ machine: RDMachine.ID) {
+        var read = CatusshStore.shared.machineGroup[machine]
+        guard read.isNotPlaceholder() else { return }
+        read.forgetGhosttyTerminfo()
+        CatusshStore.shared.machineGroup[machine] = read
+    }
+
     static func forgetHostKey(_ machine: RDMachine.ID) {
         let read = CatusshStore.shared.machineGroup[machine]
         guard read.isNotPlaceholder() else { return }
@@ -279,6 +289,14 @@ struct ServerContextMenu: View {
                 ServerActions.forgetHostKey(machine)
             } label: {
                 Label("Forget Host Key…", systemImage: "key.slash")
+            }
+            if CatusshStore.shared.machineGroup[machine].hasGhosttyTerminfo {
+                Button {
+                    ServerActions.reinstallTerminfo(machine)
+                } label: {
+                    Label("Check Terminfo Again", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .help("On the next terminal, check that the server still has Ghostty's terminfo, and install it if not")
             }
             Divider()
             Button(role: .destructive) {

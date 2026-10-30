@@ -150,6 +150,7 @@ private struct RecentSettings: View {
 
 private struct SSHSettings: View {
     @EnvironmentObject var store: CatusshStore
+    @State private var installsTerminfo = GhosttyTerminfo.installsAutomatically
 
     var body: some View {
         RXDividedStack {
@@ -159,6 +160,14 @@ private struct SSHSettings: View {
                 value: $store.timeout,
                 in: 2 ... 30,
                 unit: "s"
+            )
+            SwitchRow(
+                "Install Ghostty's terminfo",
+                description: "The terminal is Ghostty's. On a server that does not know it yet, catussh adds its terminfo to ~/.terminfo once, so programs there draw it fully; it touches nothing else. Off, or where that cannot be done, sessions run as xterm-256color.",
+                isOn: Binding(
+                    get: { installsTerminfo },
+                    set: { installsTerminfo = $0; GhosttyTerminfo.installsAutomatically = $0 }
+                )
             )
             HostKeysRow()
         }
