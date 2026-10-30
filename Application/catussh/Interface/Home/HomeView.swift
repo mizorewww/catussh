@@ -384,9 +384,8 @@ struct ServerTile: View {
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: hovered)
         .contentShape(RoundedRectangle(cornerRadius: RX.Radius.card, style: .continuous))
         .onHover { hovered = $0 }
-        .onTapGesture { connect() }
+        .onTapGesture { if !offline { connect() } }
         .contextMenu { ServerContextMenu(machine: machine) }
-        .help("Click to open a terminal")
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isButton)
     }
@@ -402,7 +401,8 @@ struct ServerTile: View {
                 Label(ServerTool.terminal.title, systemImage: ServerTool.terminal.systemImage)
             }
             .buttonStyle(.rx(.primary, size: .small))
-            .help(ServerTool.terminal.help)
+            .help(offline ? "The device is offline in UU Remote" : ServerTool.terminal.help)
+            .disabled(offline)
             // What the server can show (a UU device: its desktop); past two,
             // as icons, so none is cut short.
             let others = ServerTool.available(for: store.machineGroup[machine]).filter { $0 != .terminal && $0 != .editor }
@@ -430,7 +430,15 @@ struct ServerTile: View {
             Label(tool.title, systemImage: tool.systemImage)
         }
         .buttonStyle(.rx(size: .small, iconOnly: iconOnly))
-        .help(tool.help)
+        .help(offline ? "The device is offline in UU Remote" : tool.help)
+        .disabled(offline)
+    }
+
+    /// A UU device the account lists as offline: nothing on it can open.
+    var offline: Bool {
+        let read = store.machineGroup[machine]
+        guard read.isUURemoteDevice else { return false }
+        return account.devices.first { $0.deviceID == read.uuDeviceID }?.isOnline == false
     }
 
     /// "UU Remote · Online", from the account's last refresh.
