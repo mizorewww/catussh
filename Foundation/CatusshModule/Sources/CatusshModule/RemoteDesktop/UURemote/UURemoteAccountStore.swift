@@ -63,7 +63,7 @@ public final class UURemoteAccountStore: ObservableObject {
         credentials = saved
         userID = saved.userID
         isLoggedIn = saved.isComplete
-        Task {
+        loading = Task {
             await client.updateCredentials(saved)
             // Credentials saved by an older version may lack the device
             // identity; complete it so `isComplete` reflects the token.
@@ -71,8 +71,15 @@ public final class UURemoteAccountStore: ObservableObject {
             if !credentials.token.isEmpty {
                 isLoggedIn = credentials.isComplete
             }
+            // The devices' online state, for every page that lists them.
+            if isLoggedIn { try? await fetchDevices() }
         }
     }
+
+    /// Handing the saved account to the client at launch. The store says
+    /// "signed in" at once; requests wait for this, or the first one goes
+    /// out without the token.
+    private var loading: Task<Void, Never>?
 
     private func persist() {
         var toSave = credentials
@@ -307,6 +314,16 @@ public final class UURemoteAccountStore: ObservableObject {
 
     /// Refreshes the account's device list and the folder that shows it.
     public func refreshDevices() async throws {
+        await ready()
+        try await fetchDevices()
+    }
+
+    /// Returns once the saved account is in the client (at once if it is).
+    public func ready() async {
+        if let loading { await loading.value }
+    }
+
+    private func fetchDevices() async throws {
         do {
             let list = try await client.deviceGroupsOfMy()
             if list.isEmpty {

@@ -240,7 +240,8 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         UURemotePortMappingTunnelProvider.shared.register(portMapping, for: deviceID)
 
         do {
-            // Room bootstrap
+            // Room bootstrap, once the saved account is in the client.
+            await UURemoteAccountStore.shared.ready()
             session.reportPhase(.connecting("Joining room"), hint: "Joining UU Remote room…")
             let roomConfig: UURoomConfig
             if !session.machine.uuAssistID.isEmpty {
