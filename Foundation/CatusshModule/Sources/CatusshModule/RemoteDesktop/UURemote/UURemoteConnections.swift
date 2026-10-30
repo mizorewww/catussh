@@ -27,13 +27,18 @@ public final class UURemoteConnections {
     private init() {}
 
     /// The device's terminal connection, ready for terminals: made and
-    /// connected if there is none. Pair with `release(_:)`.
+    /// connected if there is none. Pair with `release(_:driver:)`.
     public func acquire(for machine: RDMachine, timeout: TimeInterval = 30) async throws -> UURemoteDriver {
         let deviceID = machine.uuDeviceID
         if var entry = entries[deviceID], !entry.driver.isClosed {
             entry.users += 1
             entries[deviceID] = entry
-            try await waitUntilReady(entry, timeout: timeout)
+            do {
+                try await waitUntilReady(entry, timeout: timeout)
+            } catch {
+                release(machine, driver: entry.driver)
+                throw error
+            }
             return entry.driver
         }
         let session = RemoteDesktopSession(machine: machine, protocolType: .uuRemote)
@@ -45,16 +50,22 @@ public final class UURemoteConnections {
         do {
             try await waitUntilReady(entry, timeout: timeout)
         } catch {
-            release(machine)
+            release(machine, driver: driver)
             throw error
         }
         return driver
     }
 
-    /// One user fewer; the connection closes with the last.
-    public func release(_ machine: RDMachine) {
+    /// One user fewer of `driver`; the connection closes with the last. A
+    /// driver the device's entry no longer holds (it dropped and was
+    /// replaced) leaves the new one alone.
+    public func release(_ machine: RDMachine, driver: UURemoteDriver) {
         let deviceID = machine.uuDeviceID
         guard var entry = entries[deviceID] else { return }
+        guard entry.driver === driver else {
+            driver.stop()
+            return
+        }
         entry.users -= 1
         if entry.users > 0 {
             entries[deviceID] = entry

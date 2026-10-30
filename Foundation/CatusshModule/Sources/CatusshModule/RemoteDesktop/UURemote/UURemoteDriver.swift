@@ -90,6 +90,8 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     /// Terminals open on this connection, by TERM session id; their frames
     /// go to these. Main thread.
     private var terminalSinks: [UInt32: (UUTerminalFrame) -> Void] = [:]
+    /// Terminals closed here: the host's late frames for them go nowhere.
+    private var closedTerminalIDs: Set<UInt32> = []
     private var nextTerminalID: UInt32 = 1
 
     /// Control and binary channels are both open: terminals can start.
@@ -796,6 +798,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         guard UUTerminalFrame.isFrame(data), let frame = UUTerminalFrame.decode(data) else { return }
         // A terminal's frames go to it; with one open, frames whose id the
         // host renumbered go to that one too.
+        if closedTerminalIDs.contains(frame.sessionID) { return }
         if let sink = terminalSinks[frame.sessionID] ?? (terminalSinks.count == 1 ? terminalSinks.values.first : nil) {
             sink(frame)
             return
@@ -885,6 +888,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     /// Ends a terminal and stops delivering its frames. Main thread.
     public func closeTerminal(_ id: UInt32) {
         guard terminalSinks.removeValue(forKey: id) != nil else { return }
+        closedTerminalIDs.insert(id)
         sendBinaryChannel(UUTerminalFrame(kind: .close, sessionID: id).encode())
     }
 
