@@ -10,7 +10,7 @@
 		00EA19928EFEED2755FCB704 /* PresentError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47ACDCBD613C43B1D1CAA2F4 /* PresentError.swift */; };
 		01584692327938728000048F /* StatusItem+Loop.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3862B18A2B829943AA5A02 /* StatusItem+Loop.swift */; };
 		0487D9ACB0C7C0407E89EBB7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 88648B7475A80AEBEAB0931F /* Assets.xcassets */; };
-		0599982D053065B28A9EF315 /* RTCHelper in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 79CAF4DBA7954C5AC88A8037 /* RTCHelper */; platformFilter = maccatalyst; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		0599982D053065B28A9EF315 /* RTCHelper in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 79CAF4DBA7954C5AC88A8037 /* RTCHelper */; platformFilter = maccatalyst; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		10697B47ADDEC74C31844D6C /* MacBridging.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8674B615BAE6791247180334 /* MacBridging.swift */; };
 		143AB1BC2D8836C2DC6FBFB0 /* StatusItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = D72552ECD95A4193B0A81B80 /* StatusItem.swift */; };
 		1B57A8965356C74EA79AAA01 /* SnippetsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A06001424E5811ADB847D9B /* SnippetsView.swift */; };
@@ -93,9 +93,9 @@
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
-			dstSubfolderSpec = 13;
+			dstSubfolderSpec = 6;
 			files = (
-				C78A4A00B6E36E65FB5531D2 /* MacBridge.bundle in Embed Dependencies */,
+				0599982D053065B28A9EF315 /* RTCHelper in Embed Dependencies */,
 			);
 			name = "Embed Dependencies";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -104,9 +104,9 @@
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
-			dstSubfolderSpec = 6;
+			dstSubfolderSpec = 13;
 			files = (
-				0599982D053065B28A9EF315 /* RTCHelper in Embed Dependencies */,
+				C78A4A00B6E36E65FB5531D2 /* MacBridge.bundle in Embed Dependencies */,
 			);
 			name = "Embed Dependencies";
 			runOnlyForDeploymentPostprocessing = 0;

@@ -112,6 +112,9 @@ targets:
         platformFilter: macOS
       - target: RTCHelper
         embed: true
+        # Signed again with the app's identity, as MacBridge is: a helper that
+        # stays ad hoc fails notarization and may not start under the app.
+        codeSign: true
         copy:
           destination: executables
         platformFilter: macOS
