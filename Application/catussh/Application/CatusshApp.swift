@@ -369,6 +369,24 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     /// Asked when the app is about to quit. With terminals open or unsaved
     /// text, the answer is no for now, and the question goes to the user.
     @MainActor func mayTerminate() -> Bool {
+        let allowed = answerTermination()
+        if allowed {
+            // From here AppKit hides the windows on its way out; the watcher
+            // must not take that for "only the menu bar is left" and switch
+            // the activation policy, which UIKit reads as a relaunch to the
+            // foreground: the quit then stalled until its watchdog killed
+            // the app (seconds; with menu bar items, possibly never).
+            terminating = true
+            // A quit cancelled further on gives the watcher back.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) { self.terminating = false }
+        }
+        return allowed
+    }
+
+    /// The app is on its way out; the window watcher stands still.
+    @MainActor private var terminating = false
+
+    @MainActor private func answerTermination() -> Bool {
         // The question was answered; this is the quit that follows it.
         if quitConfirmed { return true }
         if quitAsked {
@@ -419,7 +437,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     /// Dock and stays in the menu bar.
     @objc
     func windowStatusWatcher() {
-        guard let bridge = Mac.bridge else { return }
+        guard let bridge = Mac.bridge, !terminating else { return }
         bridge.setAccessory(!bridge.hasVisibleWindow() && MenubarTool.shared.hasCat)
     }
 }
