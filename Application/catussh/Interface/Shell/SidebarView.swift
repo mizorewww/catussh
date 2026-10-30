@@ -295,8 +295,11 @@ private struct OwnerSidebarRow: View {
             switch route {
             case let .terminal(id):
                 if let context = terminals.sessionContexts.first(where: { $0.id == id }) {
-                    if context.closed { Button("Reconnect Terminal") { context.reconnect() } }
-                    Button("Close Tab") { TerminalSessionActions.close(context) }
+                    // Numbered as the tabs are, when there is more than one.
+                    let tabs = context.tabSiblings
+                    let number = tabs.count > 1 ? (tabs.firstIndex { $0.id == id }).map { " \($0 + 1)" } ?? "" : ""
+                    if context.closed { Button("Reconnect Terminal\(number)") { context.reconnect() } }
+                    Button("Close Tab\(number)") { TerminalSessionActions.close(context) }
                 }
             case let .transfer(id):
                 if let context = transfers.transfers.first(where: { $0.id == id }) {
