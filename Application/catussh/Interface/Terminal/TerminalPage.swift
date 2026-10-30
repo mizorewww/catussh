@@ -124,33 +124,43 @@ struct SessionTabs: View {
     private var siblings: [TerminalManager.Context] { current.tabSiblings }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: RX.Space.s1) {
-                let siblings = siblings
-                ForEach(Array(siblings.enumerated()), id: \.element.id) { index, context in
-                    SessionTab(context: context, selected: context.id == current.id, number: siblings.count > 1 ? index + 1 : nil)
-                }
-                Button {
-                    if current.remoteType == .machine {
-                        // "+" says what it wants: another tab, without asking.
-                        AppRouter.shared.openTerminal(machine: current.machine.id, another: true)
-                    } else if let command = current.command {
-                        AppRouter.shared.openTerminal(command: command)
+        HStack(spacing: RX.Space.s1) {
+            // The tabs scroll where the toolbar is short of room; the one in
+            // front is always scrolled into view, and "+" stays outside.
+            ScrollViewReader { reader in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: RX.Space.s1) {
+                        let siblings = siblings
+                        ForEach(Array(siblings.enumerated()), id: \.element.id) { index, context in
+                            SessionTab(context: context, selected: context.id == current.id, number: siblings.count > 1 ? index + 1 : nil)
+                                .id(context.id)
+                        }
                     }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 13))
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.rxInkSecondary)
-                .help("New Terminal")
-                .accessibilityLabel("New Terminal")
+                .onAppear { reader.scrollTo(current.id) }
+                .onChange(of: current.id) { id in withAnimation(.rxQuick) { reader.scrollTo(id) } }
+                .onChange(of: siblings.count) { _ in withAnimation(.rxQuick) { reader.scrollTo(current.id) } }
             }
-            // With the toolbar capsule's own inset, 4pt from its ends.
-            .padding(.horizontal, 2.25)
+            Button {
+                if current.remoteType == .machine {
+                    // "+" says what it wants: another tab, without asking.
+                    AppRouter.shared.openTerminal(machine: current.machine.id, another: true)
+                } else if let command = current.command {
+                    AppRouter.shared.openTerminal(command: command)
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 13))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.rxInkSecondary)
+            .help("New Terminal")
+            .accessibilityLabel("New Terminal")
         }
+        // With the toolbar capsule's own inset, 4pt from its ends.
+        .padding(.horizontal, 2.25)
         .frame(maxWidth: 520)
         .fixedSize(horizontal: false, vertical: true)
     }

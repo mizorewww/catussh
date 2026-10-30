@@ -146,6 +146,7 @@ private struct PageToolbar<Leading: View, Trailing: View>: ViewModifier {
     @State private var pageWidth: CGFloat = 0
     @State private var switcherWidth: CGFloat = 0
     @State private var trailingWidth: CGFloat = 0
+    @State private var leadingWidth: CGFloat = 0
 
     private var hasLeading: Bool { Leading.self != EmptyView.self }
     private var hasTrailing: Bool { Trailing.self != EmptyView.self || primary != nil }
@@ -164,6 +165,12 @@ private struct PageToolbar<Leading: View, Trailing: View>: ViewModifier {
                     if hasLeading {
                         ToolbarItem(placement: .navigation) {
                             RXToolbarCapsule { leading }
+                                // No wider than what the switcher and the
+                                // actions leave: past that its content (a
+                                // terminal's tabs) scrolls, instead of the
+                                // toolbar moving items into its overflow menu.
+                                .frame(maxWidth: leadingLimit)
+                                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { leadingWidth = $0 }
                                 .padding(.leading, 4)
                         }
                         .sharedBackgroundVisibility(.hidden)
@@ -235,9 +242,24 @@ private struct PageToolbar<Leading: View, Trailing: View>: ViewModifier {
 
     /// What lies between the switcher and the trailing edge of the page: the
     /// trailing items, the gap before them and what the toolbar keeps, measured.
+    private var trailingEnd: CGFloat {
+        (hasTrailing ? trailingWidth + trailingMetrics.inset + 7 : 0) + 0.75
+    }
+
+    /// Centred in the page as far as the leading items allow; never so far
+    /// that the row is wider than the window.
     private var switcherOffset: CGFloat {
-        let trailingEnd = (hasTrailing ? trailingWidth + trailingMetrics.inset + 7 : 0) + 0.75
-        return max(0, (pageWidth - switcherWidth) / 2 - trailingEnd)
+        let centred = (pageWidth - switcherWidth) / 2 - trailingEnd
+        let room = pageWidth - leadingWidth - switcherWidth - trailingEnd - 32
+        return max(0, min(centred, room))
+    }
+
+    /// What the leading items may take: the page less the switcher, the
+    /// trailing actions and the gaps between them.
+    private var leadingLimit: CGFloat? {
+        guard pageWidth > 0 else { return nil }
+        let switcher = toolSwitch == nil ? 0 : switcherWidth + 24
+        return max(120, pageWidth - switcher - trailingEnd - 40)
     }
 }
 
