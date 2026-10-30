@@ -108,12 +108,13 @@ public struct RemoteDesktopStageView: View {
         self.onClose = onClose
     }
 
+    /// The bar above the screen, never over it; the screen takes the rest.
     public var body: some View {
-        ZStack(alignment: .top) {
-            canvasLayer
+        VStack(spacing: 0) {
             controlBar
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
+            ZStack { canvasLayer }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
         }
         .background(Color.black.ignoresSafeArea())
         .overlay(alignment: .bottom) {
@@ -228,17 +229,22 @@ public struct RemoteDesktopStageView: View {
                 Image(systemName: "textformat")
             }
             .popover(isPresented: $showsTextInput) { textInputPopover }
-            Button { keyboardRequests += 1 } label: {
-                Image(systemName: "keyboard")
-            }
-            .help("Toggle the software keyboard")
+            #if !targetEnvironment(macCatalyst)
+                // A Mac has a keyboard; a touch screen shows one on request.
+                Button { keyboardRequests += 1 } label: {
+                    Image(systemName: "keyboard")
+                }
+                .help("Toggle the software keyboard")
+            #endif
             clipboardMenu
             Button { session.refresh() } label: {
                 Image(systemName: "arrow.clockwise")
             }
             .help("Ask the host for a full refresh")
-            if session.protocolType == .uuRemote { officialAppMenu }
-            Divider().frame(height: 16)
+            #if !targetEnvironment(macCatalyst)
+                if session.protocolType == .uuRemote { officialAppMenu }
+            #endif
+            Spacer(minLength: 8)
             connectButton
             if let onClose {
                 Button { onClose() } label: {
@@ -247,14 +253,14 @@ public struct RemoteDesktopStageView: View {
                 .help("Close this session")
             }
         }
-        .font(.system(size: 14))
+        .buttonStyle(.borderless)
+        .font(.system(size: 13))
         .foregroundStyle(Color.rxInk)
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.ultraThinMaterial, in: Capsule())
+        .frame(height: 34)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .fixedSize(horizontal: true, vertical: false)
-        .frame(maxWidth: .infinity)
+        .background(Color.rxSurface)
+        .overlay(alignment: .bottom) { Color.rxHairline.frame(height: 1) }
     }
 
     private var statusPill: some View {

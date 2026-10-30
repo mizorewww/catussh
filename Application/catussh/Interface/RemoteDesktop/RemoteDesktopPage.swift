@@ -2,9 +2,9 @@
 //  RemoteDesktopPage.swift
 //  catussh (macOS)
 //
-//  A server's remote desktop (a session in the sidebar): the Terminal · Files
-//  · Monitor · Desktop switcher, the page header, then the interactive stage
-//  (canvas + control bar) from CatusshModule.
+//  A server's remote desktop (a session in the sidebar): the tool switcher,
+//  then the interactive stage (canvas + control bar) from CatusshModule,
+//  filling the page.
 //
 
 import CatusshModule
@@ -14,28 +14,24 @@ struct RemoteDesktopPage: View {
     @ObservedObject var session: RemoteDesktopSession
     @EnvironmentObject var store: CatusshStore
 
+    /// Like a terminal: the remote screen takes the whole page. Its name is
+    /// in the sidebar and the tool switcher; its state on the stage's bar.
     var body: some View {
-        PageScaffold {
+        PageScaffold(scrolls: false) {
         } trailing: {
             ToolbarAction("Close Desktop", systemImage: "xmark") {
                 RemoteDesktopManager.shared.end(session.id)
             }
-        } header: {
-            VStack(alignment: .leading, spacing: RX.Space.s2) {
-                PageTitle(store.machineRedacted == .all ? "Server" : session.machine.name)
-                Text(subtitle)
-                    .font(.rxHelp)
-                    .foregroundStyle(.rxInkSecondary)
-            }
         } content: {
-            RemoteDesktopStageView(session: session) {
-                RemoteDesktopManager.shared.end(session.id)
-            }
+            // Closing is the toolbar's Close Desktop; no second one on the bar.
+            RemoteDesktopStageView(session: session)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: RX.Radius.md, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: RX.Radius.md, style: .continuous)
                     .strokeBorder(Color.rxHairline)
             )
+            .help(subtitle)
         }
         .serverToolSwitcher(machine: session.machine.id, current: .desktop)
     }
