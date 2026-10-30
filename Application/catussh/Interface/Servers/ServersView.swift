@@ -235,12 +235,18 @@ private struct ServerRow: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                RedactableText(read.isUURemoteDevice ? "UU Remote" : read.remoteAddress, redacted: store.machineRedacted != .none)
-                    .font(.rxCode)
-                    .foregroundStyle(.rxInk)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(width: columns.address, alignment: .leading)
+                Group {
+                    if read.isUURemoteDevice {
+                        UUDeviceStatus(machine: read)
+                    } else {
+                        RedactableText(read.remoteAddress, redacted: store.machineRedacted != .none)
+                            .font(.rxCode)
+                            .foregroundStyle(.rxInk)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                .frame(width: columns.address, alignment: .leading)
                 if columns.showIdentity {
                     Text(identityName(read))
                         .font(.rxBody)
@@ -312,21 +318,33 @@ private struct ServerRow: View {
     }
 }
 
-/// A UU Remote device's row actions: its desktop, or a view of it; the
-/// device's online state from the last refresh.
-private struct UUDeviceActions: View {
+/// Where a UU device is, in the Address column: on UU Remote, and whether
+/// it was online at the last refresh.
+private struct UUDeviceStatus: View {
     let machine: RDMachine
     @ObservedObject private var account = UURemoteAccountStore.shared
 
     var body: some View {
         let device = account.devices.first { $0.deviceID == machine.uuDeviceID }
         HStack(spacing: RX.Space.s2) {
-            if let device {
-                StatusDot(device.isOnline ? .success : .off, size: .small)
-                Text(device.isOnline ? "Online" : "Offline")
-                    .font(.rxHelp)
-                    .foregroundStyle(.rxInkSecondary)
-            }
+            StatusDot(device.map { $0.isOnline ? .success : .off } ?? .off, size: .small)
+            Text(device.map { $0.isOnline ? "UU Remote · Online" : "UU Remote · Offline" } ?? "UU Remote")
+                .font(.rxBody)
+                .foregroundStyle(device?.isOnline == true ? Color.rxInk : Color.rxInkSecondary)
+                .lineLimit(1)
+        }
+    }
+}
+
+/// A UU Remote device's row actions: a view of its screen, its desktop and
+/// its terminal.
+private struct UUDeviceActions: View {
+    let machine: RDMachine
+    @ObservedObject private var account = UURemoteAccountStore.shared
+
+    var body: some View {
+        let device = account.devices.first { $0.deviceID == machine.uuDeviceID }
+        HStack(spacing: RX.Space.s1) {
             Button("View") { AppRouter.shared.openDesktop(machine: machine.id, viewOnly: true) }
                 .buttonStyle(.rx(.plain, size: .small))
                 .help("Watch the screen without controlling it")
