@@ -136,7 +136,7 @@ struct FolderHeaderRow: View {
     @ViewBuilder private var linkedStatus: some View {
         let signedIn = account.isLoggedIn && folder == account.folder(store: store)
         Text("·").foregroundStyle(.rxInkSecondary)
-        Text(signedIn ? (account.nickname.isEmpty ? account.userID : account.nickname) : "Signed out")
+        Text(signedIn ? (account.nickname.isEmpty ? "Signed in" : account.nickname) : "Signed out")
             .font(.system(size: 11))
             .foregroundStyle(signedIn ? Color.rxInkSecondary : Color.rxWarning)
             .lineLimit(1)
@@ -183,7 +183,12 @@ struct FolderHeaderRow: View {
             Divider()
         }
         Button("Rename…") { FolderActions.rename(name) }
-        Button("Delete Folder…", role: .destructive) { FolderActions.delete(name) }
+        // A linked folder goes with its account: deleting it signs out.
+        if folder?.isLinked == true {
+            Button("Remove Folder and Sign Out…", role: .destructive) { FolderActions.delete(name) }
+        } else {
+            Button("Delete Folder…", role: .destructive) { FolderActions.delete(name) }
+        }
     }
 
     private func refresh() {

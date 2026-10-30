@@ -373,8 +373,15 @@ public final class UURemoteAccountStore: ObservableObject {
     }
 
     /// Desktop devices only, for the machine-binding picker.
+    /// "1 desktop device", "3 desktop devices".
+    public nonisolated static func deviceCount(_ count: Int) -> String {
+        count == 1 ? "1 desktop device" : "\(count) desktop devices"
+    }
+
+    /// Desktop devices by name, as the account's folder lists them.
     public var desktopDevices: [UUDeviceInfo] {
         devices.filter { $0.isDesktop && $0.deviceID != credentials.deviceID }
+            .sorted { $0.alias.localizedStandardCompare($1.alias) == .orderedAscending }
     }
 
     /// A server for a device, in the account's folder.

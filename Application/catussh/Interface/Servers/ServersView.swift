@@ -13,6 +13,8 @@ import SwiftUI
 struct ServersView: View {
     @EnvironmentObject var store: CatusshStore
     @ObservedObject var router = AppRouter.shared
+    /// The toolbar names the account item by whether one is signed in.
+    @ObservedObject private var account = UURemoteAccountStore.shared
 
     @State private var searchText = ""
     @State private var selection: RDMachine.ID?
@@ -51,7 +53,7 @@ struct ServersView: View {
                 systemImage: "folder.badge.plus",
                 items: [
                     RXToolbarMenuItem("New Folder…", systemImage: "folder.badge.plus", isOn: false) { FolderActions.newFolder() },
-                    RXToolbarMenuItem("Link UU Remote Account…", systemImage: "link", isOn: false) { FolderActions.linkUURemote() },
+                    RXToolbarMenuItem(account.isLoggedIn ? "UU Remote Account…" : "Link UU Remote Account…", systemImage: "link", isOn: false) { FolderActions.linkUURemote() },
                 ]
             )
             .help("Make a folder, or fill one from a UU Remote account")
@@ -246,7 +248,9 @@ private struct ServerRow: View {
                             .truncationMode(.middle)
                     }
                 }
-                .frame(width: columns.address, alignment: .leading)
+                // A long address stops short of the next column.
+                .frame(width: columns.address - RX.Space.s3, alignment: .leading)
+                .padding(.trailing, RX.Space.s3)
                 if columns.showIdentity {
                     Text(identityName(read))
                         .font(.rxBody)

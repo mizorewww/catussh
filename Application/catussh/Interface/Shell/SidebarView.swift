@@ -296,7 +296,7 @@ private struct OwnerSidebarRow: View {
             case let .terminal(id):
                 if let context = terminals.sessionContexts.first(where: { $0.id == id }) {
                     if context.closed { Button("Reconnect Terminal") { context.reconnect() } }
-                    Button("Close Terminal") { TerminalSessionActions.close(context) }
+                    Button("Close Tab") { TerminalSessionActions.close(context) }
                 }
             case let .transfer(id):
                 if let context = transfers.transfers.first(where: { $0.id == id }) {

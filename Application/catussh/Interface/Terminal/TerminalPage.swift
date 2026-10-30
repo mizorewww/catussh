@@ -55,6 +55,7 @@ struct TerminalPage: View {
                 }
                 .disabled(store.terminalFontSize <= 4)
                 .keyboardShortcut("-", modifiers: .command)
+                .accessibilityLabel("Smaller Text")
                 Button {
                     store.terminalFontSize += 1
                 } label: {
@@ -62,6 +63,7 @@ struct TerminalPage: View {
                 }
                 .disabled(store.terminalFontSize >= 30)
                 .keyboardShortcut("+", modifiers: .command)
+                .accessibilityLabel("Larger Text")
             }
             .help("Text Size")
         }

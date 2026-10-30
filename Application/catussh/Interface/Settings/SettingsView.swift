@@ -163,7 +163,7 @@ private struct SSHSettings: View {
             )
             SwitchRow(
                 "Install Ghostty's terminfo",
-                description: "The terminal is Ghostty's. On a server that does not know it yet, catussh adds its terminfo to ~/.terminfo once, so programs there draw it fully; it touches nothing else. Off, or where that cannot be done, sessions run as xterm-256color.",
+                description: "catussh's terminal is Ghostty. On a server that lacks its terminfo, catussh adds it to ~/.terminfo once, so programs there use every feature; nothing else on the server changes. When off, or where it cannot be added, sessions run as xterm-256color.",
                 isOn: Binding(
                     get: { installsTerminfo },
                     set: { installsTerminfo = $0; GhosttyTerminfo.installsAutomatically = $0 }
@@ -254,7 +254,7 @@ private struct UURemoteSettings: View {
                     description: "Desktop devices on this account; add them as servers from the account panel."
                 ) {
                     HStack(spacing: RX.Space.s3) {
-                        Text("\(account.desktopDevices.count) desktop device(s)")
+                        Text(UURemoteAccountStore.deviceCount(account.desktopDevices.count))
                             .foregroundStyle(.rxInkSecondary)
                         Button("Refresh") {
                             Task { try? await account.refreshDevices() }

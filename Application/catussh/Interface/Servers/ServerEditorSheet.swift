@@ -272,7 +272,7 @@ struct ServerEditorSheet: View {
             }
             .buttonStyle(.rx)
             if uuAccount.isLoggedIn {
-                Text("\(uuAccount.desktopDevices.count) desktop device(s)")
+                Text(UURemoteAccountStore.deviceCount(uuAccount.desktopDevices.count))
                     .font(.rxCaption)
                     .foregroundStyle(.rxInkSecondary)
             }

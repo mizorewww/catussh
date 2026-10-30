@@ -137,7 +137,7 @@ struct RemoteDesktopsView: View {
                             .foregroundStyle(.rxDanger)
                     } else {
                         Text(account.isLoggedIn
-                            ? "\(account.desktopDevices.count) desktop device(s), in the \"\(account.folder(store: store)?.name ?? "UU Remote")\" folder on Servers"
+                            ? "\(UURemoteAccountStore.deviceCount(account.desktopDevices.count)), in the \"\(account.folder(store: store)?.name ?? "UU Remote")\" folder on Servers"
                             : "Sign in, and the account's devices appear in a folder on Servers.")
                             .font(.rxHelp)
                             .foregroundStyle(.rxInkSecondary)
