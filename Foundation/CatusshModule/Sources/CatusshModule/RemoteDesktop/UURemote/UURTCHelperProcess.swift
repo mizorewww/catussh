@@ -31,12 +31,22 @@
         private var pending: [Int: CheckedContinuation<String?, Error>] = [:]
         private var nextID = 0
         private var received = Data()
+        /// Why the helper is gone, once it is; calls then fail at once.
+        private var deadReason: String?
+        /// A page call that takes longer than this has lost its answer.
+        private static let callTimeout: UInt64 = 20_000_000_000
 
         init(executable: URL) throws {
             var toHelper: [Int32] = [0, 0]
             var fromHelper: [Int32] = [0, 0]
-            guard pipe(&toHelper) == 0, pipe(&fromHelper) == 0 else {
+            guard pipe(&toHelper) == 0 else {
                 throw RemoteDesktopFailure("Could not start the WebRTC helper (\(String(cString: strerror(errno)))).")
+            }
+            guard pipe(&fromHelper) == 0 else {
+                let reason = String(cString: strerror(errno))
+                close(toHelper[0])
+                close(toHelper[1])
+                throw RemoteDesktopFailure("Could not start the WebRTC helper (\(reason)).")
             }
             var actions: posix_spawn_file_actions_t?
             posix_spawn_file_actions_init(&actions)
@@ -48,7 +58,13 @@
             let path = executable.path
             var argv: [UnsafeMutablePointer<CChar>?] = [strdup(path), nil]
             defer { argv.forEach { free($0) } }
-            let status = posix_spawn(&pid, path, &actions, nil, &argv, environ)
+            // Only its stdin, stdout and stderr: no other descriptor of the
+            // app's (sockets, another helper's pipes) is left open in it.
+            var attributes: posix_spawnattr_t?
+            posix_spawnattr_init(&attributes)
+            defer { posix_spawnattr_destroy(&attributes) }
+            posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
+            let status = posix_spawn(&pid, path, &actions, &attributes, &argv, environ)
             close(toHelper[0])
             close(fromHelper[1])
             guard status == 0 else {
@@ -89,12 +105,21 @@
         /// functions answer with strings (an SDP, "ok") or nothing.
         func evaluate(_ script: String) async throws -> String? {
             try await withCheckedThrowingContinuation { continuation in
-                let id: Int = lock.withLock {
+                let id: Int? = lock.withLock {
+                    guard deadReason == nil else { return nil }
                     nextID += 1
                     pending[nextID] = continuation
                     return nextID
                 }
+                guard let id else {
+                    continuation.resume(throwing: RemoteDesktopFailure(lock.withLock { deadReason } ?? "The WebRTC helper stopped."))
+                    return
+                }
                 write(["id": id, "js": script])
+                DispatchQueue.global().asyncAfter(deadline: .now() + .nanoseconds(Int(Self.callTimeout))) { [weak self] in
+                    guard let self, let waiting = self.lock.withLock({ self.pending.removeValue(forKey: id) }) else { return }
+                    waiting.resume(throwing: RemoteDesktopFailure("The WebRTC page did not answer \(script.prefix { $0 != "(" })."))
+                }
             }
         }
 
@@ -134,6 +159,7 @@
 
         private func failAll(_ reason: String) {
             let waiting = lock.withLock {
+                deadReason = reason
                 defer { pending.removeAll() }
                 return Array(pending.values)
             }

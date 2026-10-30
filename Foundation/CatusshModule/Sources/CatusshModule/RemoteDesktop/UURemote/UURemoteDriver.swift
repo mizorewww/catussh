@@ -441,6 +441,12 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         _ = try await peer.evaluate(
             "makePeer(\(serversJSON), \(forceRelay ? "true" : "false"))"
         ) as String?
+        // Where the page runs in a helper, the helper ending ends the session.
+        await peer.setFailureHandler { [weak self] reason in
+            guard let self, !self.closed else { return }
+            self.reportTerminal(.failed(reason))
+            self.stop()
+        }
 
         await peer.setCandidateHandler { [weak self] candidate in
             let box = UUJsonBox(candidate)
@@ -1029,6 +1035,9 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         private var helper: UURTCHelperProcess?
     #endif
     private var ready = false
+    /// The page could not load, or its helper ended.
+    private var failedReason: String?
+    private var failureHandler: ((String) -> Void)?
     private var readyContinuation: CheckedContinuation<Void, Error>?
     private var candidateHandler: (([String: Any]) -> Void)?
     private var dataChannelHandlers: [String: (Data) -> Void] = [:]
@@ -1048,7 +1057,7 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
                 self.helper = helper
                 super.init()
                 helper.onEvent = { [weak self] body in self?.handlePageMessage(body) }
-                helper.onReady = { [weak self] loaded, _ in self?.pageLoaded(loaded) }
+                helper.onReady = { [weak self] loaded, reason in self?.pageLoaded(loaded, reason: reason) }
                 loadBridge()
                 return
             }
@@ -1282,18 +1291,28 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         pageLoaded(false)
     }
 
-    private func pageLoaded(_ loaded: Bool) {
+    private func pageLoaded(_ loaded: Bool, reason: String? = nil) {
         if loaded {
             ready = true
             readyContinuation?.resume()
         } else {
-            readyContinuation?.resume(throwing: UUDriverError.webkitUnavailable)
+            let why = reason ?? "The WebRTC page could not load."
+            failedReason = why
+            readyContinuation?.resume(throwing: RemoteDesktopFailure(why))
+            // Already running: the session goes with its page.
+            if ready { failureHandler?(why) }
         }
         readyContinuation = nil
     }
 
+    func setFailureHandler(_ handler: @escaping (String) -> Void) {
+        failureHandler = handler
+        if ready, let failedReason { handler(failedReason) }
+    }
+
     func waitReady() async throws {
         if ready { return }
+        if let failedReason { throw RemoteDesktopFailure(failedReason) }
         return try await withCheckedThrowingContinuation { continuation in
             readyContinuation = continuation
         }
