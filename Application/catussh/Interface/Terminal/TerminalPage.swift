@@ -206,7 +206,7 @@ private struct SessionTab: View {
             }
             .buttonStyle(.plain)
             .opacity(selected || hovered ? 1 : 0)
-            .accessibilityLabel("Close \(context.navigationTitle)")
+            .accessibilityLabel(number.map { "Close Terminal \($0)" } ?? "Close \(context.displayName)")
         }
         .padding(.leading, 12)
         .padding(.trailing, 6)
