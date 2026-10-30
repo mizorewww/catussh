@@ -257,6 +257,22 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 let routes: [String: Route] = ["servers": .servers, "desktops": .desktops, "home": .home]
                 if let route = routes[page] { AppRouter.shared.route = route }
             }
+            // A UU session file (in the debug container) to sign in with, and
+            // "terminal:<alias>" or "desktop:<alias>" to open on that device.
+            if let path = ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_UU_SESSION"] {
+                let open = ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_OPEN"]?.split(separator: ":", maxSplits: 1).map(String.init)
+                Task { @MainActor in
+                    await UURemoteAccountStore.shared.adoptSessionForPreview(from: URL(fileURLWithPath: path))
+                    guard let open, open.count == 2,
+                          let machine = CatusshStore.shared.machineGroup.machines.first(where: { machine in
+                              machine.isUURemoteDevice && machine.name == open[1]
+                                  && UURemoteAccountStore.shared.devices.contains { $0.deviceID == machine.uuDeviceID }
+                          })
+                    else { return }
+                    if open[0] == "terminal" { AppRouter.shared.openTerminal(machine: machine.id) }
+                    if open[0] == "desktop" { AppRouter.shared.openDesktop(machine: machine.id) }
+                }
+            }
             if ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_UU_SIGNIN"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { FolderActions.linkUURemote() }
             }

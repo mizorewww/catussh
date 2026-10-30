@@ -267,6 +267,21 @@ public final class UURemoteAccountStore: ObservableObject {
         await client.updateCredentials(saved)
     }
 
+    #if DEBUG
+        /// Debug builds: takes a session a live test signed in with (a JSON
+        /// UUCredentials file), for screenshots against real devices.
+        public func adoptSessionForPreview(from url: URL) async {
+            guard let data = try? Data(contentsOf: url),
+                  let saved = try? JSONDecoder().decode(UUCredentials.self, from: data)
+            else { return }
+            // After the saved account has been handed to the client at
+            // launch, or that would replace this one.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await useForTesting(saved)
+            try? await refreshDevices()
+        }
+    #endif
+
     /// Signs out and clears the account. The device catussh registered as is
     /// kept, so signing in again does not add another one to the service.
     public func logout() {
