@@ -37,6 +37,21 @@ targets:
         INFOPLIST_KEY_NSPrincipalClass: Bridge
         SKIP_INSTALL: YES
         SWIFT_VERSION: "5.0"
+  RTCHelper:
+    # The WebRTC page for UU Remote: Mac Catalyst's WebKit has no
+    # RTCPeerConnection, macOS's does. Run by the app, sandboxed with it.
+    type: tool
+    platform: macOS
+    sources: [RTCHelper]
+    settings:
+      base:
+        PRODUCT_NAME: catussh-rtc
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_ENTITLEMENTS: RTCHelper/RTCHelper.entitlements
+        ENABLE_HARDENED_RUNTIME: YES
+        PRODUCT_BUNDLE_IDENTIFIER: me.mizorewww.rayon.rtc
+        SKIP_INSTALL: YES
+        SWIFT_VERSION: "5.0"
   catussh:
     type: application
     platform: iOS
@@ -94,6 +109,11 @@ targets:
         embed: true
         copy:
           destination: plugins
+        platformFilter: macOS
+      - target: RTCHelper
+        embed: true
+        copy:
+          destination: executables
         platformFilter: macOS
 schemes:
   catussh:

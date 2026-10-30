@@ -1011,7 +1011,12 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
 /// The WebKit RTCPeerConnection wrapper that runs inside a hidden WKWebView.
 @MainActor
 private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
-    private let webView: WKWebView
+    /// The page runs here, in process, where WebKit has WebRTC (iOS, macOS)…
+    private let webView: WKWebView?
+    #if targetEnvironment(macCatalyst)
+        /// …and in the helper on Mac Catalyst, where it does not.
+        private var helper: UURTCHelperProcess?
+    #endif
     private var ready = false
     private var readyContinuation: CheckedContinuation<Void, Error>?
     private var candidateHandler: (([String: Any]) -> Void)?
@@ -1024,6 +1029,19 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     private var iceStateHandler: ((String) -> Void)?
 
     override init() {
+        #if targetEnvironment(macCatalyst)
+            if let executable = UURTCHelperProcess.executableURL,
+               let helper = try? UURTCHelperProcess(executable: executable)
+            {
+                webView = nil
+                self.helper = helper
+                super.init()
+                helper.onEvent = { [weak self] body in self?.handlePageMessage(body) }
+                helper.onReady = { [weak self] loaded, _ in self?.pageLoaded(loaded) }
+                loadBridge()
+                return
+            }
+        #endif
         let config = WKWebViewConfiguration()
         config.userContentController = WKUserContentController()
         // The remote screen is a muted video nobody taps on: it must play
@@ -1032,7 +1050,8 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         #if os(iOS)
             config.allowsInlineMediaPlayback = true
         #endif
-        webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 16, height: 16), configuration: config)
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 16, height: 16), configuration: config)
+        self.webView = webView
         super.init()
         config.userContentController.add(self, name: "rtc")
         webView.navigationDelegate = self
@@ -1161,7 +1180,14 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         </script></body></html>
         """
         // An origin of its own, so the page may start a worker from a blob.
-        webView.loadHTMLString(html, baseURL: URL(string: "https://rtc.catussh.invalid/"))
+        let base = "https://rtc.catussh.invalid/"
+        #if targetEnvironment(macCatalyst)
+            if let helper {
+                helper.load(html: html, baseURL: base)
+                return
+            }
+        #endif
+        webView?.loadHTMLString(html, baseURL: URL(string: base))
     }
 
     private static let log = Logger(subsystem: "me.mizorewww.rayon", category: "uu-rtc")
@@ -1169,8 +1195,13 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     private var messageCounts: [String: Int] = [:]
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == "rtc",
-              let body = message.body as? [String: Any],
+        guard message.name == "rtc" else { return }
+        handlePageMessage(message.body)
+    }
+
+    /// A message the page posted, from either host.
+    private func handlePageMessage(_ message: Any) {
+        guard let body = message as? [String: Any],
               let name = body["name"] as? String,
               let data = body["data"] as? [String: Any]
         else { return }
@@ -1233,13 +1264,20 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        ready = true
-        readyContinuation?.resume()
-        readyContinuation = nil
+        pageLoaded(true)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        readyContinuation?.resume(throwing: UUDriverError.webkitUnavailable)
+        pageLoaded(false)
+    }
+
+    private func pageLoaded(_ loaded: Bool) {
+        if loaded {
+            ready = true
+            readyContinuation?.resume()
+        } else {
+            readyContinuation?.resume(throwing: UUDriverError.webkitUnavailable)
+        }
         readyContinuation = nil
     }
 
@@ -1254,8 +1292,20 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     /// functions are async, and evaluateJavaScript cannot return a Promise
     /// ("a result of an unsupported type"), nor `undefined`.
     func evaluate<T>(_ script: String) async throws -> T? {
-        let result = try await webView.callAsyncJavaScript("return await (\(script));", contentWorld: .page)
-        return result as? T
+        do {
+            #if targetEnvironment(macCatalyst)
+                if let helper { return try await helper.evaluate(script) as? T }
+            #endif
+            let result = try await webView?.callAsyncJavaScript("return await (\(script));", contentWorld: .page)
+            return result as? T
+        } catch {
+            // WebKit's own message is only "A JavaScript exception occurred".
+            let info = (error as NSError).userInfo
+            let message = info["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription
+            let call = script.prefix { $0 != "(" }
+            Self.log.error("\(call, privacy: .public) threw: \(message, privacy: .public)")
+            throw RemoteDesktopFailure("WebRTC \(call): \(message)")
+        }
     }
 
     func setCandidateHandler(_ handler: @escaping ([String: Any]) -> Void) { candidateHandler = handler }

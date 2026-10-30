@@ -10,6 +10,7 @@
 		00EA19928EFEED2755FCB704 /* PresentError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47ACDCBD613C43B1D1CAA2F4 /* PresentError.swift */; };
 		01584692327938728000048F /* StatusItem+Loop.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE3862B18A2B829943AA5A02 /* StatusItem+Loop.swift */; };
 		0487D9ACB0C7C0407E89EBB7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 88648B7475A80AEBEAB0931F /* Assets.xcassets */; };
+		0599982D053065B28A9EF315 /* RTCHelper in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 79CAF4DBA7954C5AC88A8037 /* RTCHelper */; platformFilter = maccatalyst; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		10697B47ADDEC74C31844D6C /* MacBridging.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8674B615BAE6791247180334 /* MacBridging.swift */; };
 		143AB1BC2D8836C2DC6FBFB0 /* StatusItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = D72552ECD95A4193B0A81B80 /* StatusItem.swift */; };
 		1B57A8965356C74EA79AAA01 /* SnippetsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A06001424E5811ADB847D9B /* SnippetsView.swift */; };
@@ -65,6 +66,7 @@
 		EF68136C09D6AB52B351DB67 /* Generic.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A6085FEF3BD869C3B706AF6 /* Generic.swift */; };
 		F02B0EA4860563B18179A98B /* EditorWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = E90844C566AF848CBC562AD8 /* EditorWorkspace.swift */; };
 		F203279EC5DF2195283BAC59 /* FolderActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16D39CED118800E0E3CE611C /* FolderActions.swift */; };
+		F4A158EC149C05C5130AEC28 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD247FAD2DC8CCB246CDB160 /* main.swift */; };
 		FCCFF1E12BA8219BDA494B6C /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = B6B1D7BBF2715F710EA328AA /* LICENSE */; };
 		FFEF215279D41B11CE53919E /* MacBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FE6FDBCE8A195771BC7D9B4 /* MacBridge.swift */; };
 /* End PBXBuildFile section */
@@ -77,6 +79,13 @@
 			remoteGlobalIDString = FEAA13575247751AA355BEBB;
 			remoteInfo = MacBridge;
 		};
+		E1CC4948301C9B7366D1D76C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F4AE0144AA80F0A2BC6E16BD /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 550533F36648A83D1AA532E4;
+			remoteInfo = RTCHelper;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -87,6 +96,17 @@
 			dstSubfolderSpec = 13;
 			files = (
 				C78A4A00B6E36E65FB5531D2 /* MacBridge.bundle in Embed Dependencies */,
+			);
+			name = "Embed Dependencies";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FBAEF51966123411A4C11DE0 /* Embed Dependencies */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 6;
+			files = (
+				0599982D053065B28A9EF315 /* RTCHelper in Embed Dependencies */,
 			);
 			name = "Embed Dependencies";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -121,12 +141,14 @@
 		6AFD95310BADB486846C658C /* BatchSnippetExecContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatchSnippetExecContext.swift; sourceTree = "<group>"; };
 		71073CAEF8A51076B447EB91 /* CatusshApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatusshApp.swift; sourceTree = "<group>"; };
 		7904124913BA1BC11B8E5E14 /* MenubarTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenubarTool.swift; sourceTree = "<group>"; };
+		79CAF4DBA7954C5AC88A8037 /* RTCHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = RTCHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		7B13C84D745F6F6944AAFB06 /* EditorPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPage.swift; sourceTree = "<group>"; };
 		7D9D5CEDA854BB4C9EBC2D9D /* Bridge+Windows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Bridge+Windows.swift"; sourceTree = "<group>"; };
 		7E04169F508C846596131945 /* MacBridge.bundle */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacBridge.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
 		83F860603D3E5D0C88ED7896 /* AppRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRouter.swift; sourceTree = "<group>"; };
 		8674B615BAE6791247180334 /* MacBridging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacBridging.swift; sourceTree = "<group>"; };
 		88648B7475A80AEBEAB0931F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		8CCA03011E572D79164DEEAE /* RTCHelper.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = RTCHelper.entitlements; sourceTree = "<group>"; };
 		8E574B03E87346054E4EBE46 /* BatchRunSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatchRunSheet.swift; sourceTree = "<group>"; };
 		8FE6FDBCE8A195771BC7D9B4 /* MacBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacBridge.swift; sourceTree = "<group>"; };
 		8FF51545AC1094D2033DD0BA /* MachineStatusView */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MachineStatusView; path = ../../Foundation/MachineStatusView; sourceTree = SOURCE_ROOT; };
@@ -143,6 +165,7 @@
 		B686416B9BF772E20E9141A1 /* EULA */ = {isa = PBXFileReference; path = EULA; sourceTree = "<group>"; };
 		B6B1D7BBF2715F710EA328AA /* LICENSE */ = {isa = PBXFileReference; path = LICENSE; sourceTree = "<group>"; };
 		BA4D9C1F51A23AF711D4B0A4 /* Bridge+StatusItems.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Bridge+StatusItems.swift"; sourceTree = "<group>"; };
+		CD247FAD2DC8CCB246CDB160 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		CF2FA665652EF4B465127A8B /* RemoteDesktopPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopPage.swift; sourceTree = "<group>"; };
 		D31865414647C869DB65A5EA /* IdentitiesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentitiesView.swift; sourceTree = "<group>"; };
 		D402A322C1664FF4392E0AE2 /* TerminalPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPage.swift; sourceTree = "<group>"; };
@@ -255,8 +278,18 @@
 			children = (
 				AD2E67F3F21A84676D751893 /* catussh.app */,
 				7E04169F508C846596131945 /* MacBridge.bundle */,
+				79CAF4DBA7954C5AC88A8037 /* RTCHelper */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		6994CD805F4F34BE61D4C0D3 /* RTCHelper */ = {
+			isa = PBXGroup;
+			children = (
+				CD247FAD2DC8CCB246CDB160 /* main.swift */,
+				8CCA03011E572D79164DEEAE /* RTCHelper.entitlements */,
+			);
+			path = RTCHelper;
 			sourceTree = "<group>";
 		};
 		76354A0AC27E679D6969DC1A /* Servers */ = {
@@ -360,6 +393,7 @@
 				51FB4F209B53ABDC4A364E63 /* Interface */,
 				C5BB6EF848B250BF6AB2198C /* Packages */,
 				C83047E4C0AB4EC227C8C367 /* Rayon */,
+				6994CD805F4F34BE61D4C0D3 /* RTCHelper */,
 				0E68BF71E9B4F6BDF71F9881 /* Shared */,
 				686CC492E4EE8C3A294BCED6 /* Products */,
 			);
@@ -444,6 +478,23 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		550533F36648A83D1AA532E4 /* RTCHelper */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EE714B7E7831606BF51107A5 /* Build configuration list for PBXNativeTarget "RTCHelper" */;
+			buildPhases = (
+				3B05840EF7309134FE6D99AD /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RTCHelper;
+			packageProductDependencies = (
+			);
+			productName = RTCHelper;
+			productReference = 79CAF4DBA7954C5AC88A8037 /* RTCHelper */;
+			productType = "com.apple.product-type.tool";
+		};
 		7745B0B53C43A647CAFC5B29 /* catussh */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 749A69DEF7379923FE539F71 /* Build configuration list for PBXNativeTarget "catussh" */;
@@ -452,11 +503,13 @@
 				C2D33DA54A4DA07145321406 /* Resources */,
 				F7652201EE1917C0A958BFF4 /* Frameworks */,
 				647EADBE186F870E52DFB9EC /* Embed Dependencies */,
+				FBAEF51966123411A4C11DE0 /* Embed Dependencies */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				68C1CE0069DE549EA5EA0E91 /* PBXTargetDependency */,
+				025DBA40A9A7952F647FA2C1 /* PBXTargetDependency */,
 			);
 			name = catussh;
 			packageProductDependencies = (
@@ -498,6 +551,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					550533F36648A83D1AA532E4 = {
+						DevelopmentTeam = "";
+					};
 					7745B0B53C43A647CAFC5B29 = {
 						DevelopmentTeam = "";
 					};
@@ -530,6 +586,7 @@
 			projectRoot = "";
 			targets = (
 				FEAA13575247751AA355BEBB /* MacBridge */,
+				550533F36648A83D1AA532E4 /* RTCHelper */,
 				7745B0B53C43A647CAFC5B29 /* catussh */,
 			);
 		};
@@ -550,6 +607,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		3B05840EF7309134FE6D99AD /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F4A158EC149C05C5130AEC28 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		90BDB1AADAD63C3F0C980C04 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -615,6 +680,12 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		025DBA40A9A7952F647FA2C1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			platformFilter = maccatalyst;
+			target = 550533F36648A83D1AA532E4 /* RTCHelper */;
+			targetProxy = E1CC4948301C9B7366D1D76C /* PBXContainerItemProxy */;
+		};
 		68C1CE0069DE549EA5EA0E91 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			platformFilter = maccatalyst;
@@ -624,6 +695,25 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		21AC63CA67B934333BB22740 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = RTCHelper/RTCHelper.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = me.mizorewww.rayon.rtc;
+				PRODUCT_NAME = "catussh-rtc";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 		5F0632D12446B235C8FF5BD5 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -740,6 +830,25 @@
 				TARGETED_DEVICE_FAMILY = "2,6";
 			};
 			name = Release;
+		};
+		95E9DD7836B6B3C6F1DEFCEC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = RTCHelper/RTCHelper.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = me.mizorewww.rayon.rtc;
+				PRODUCT_NAME = "catussh-rtc";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
 		};
 		9DDC5F96BDD6C5FDAAE599DA /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -877,6 +986,15 @@
 			buildConfigurations = (
 				B321B699FC979C78912695E5 /* Debug */,
 				8CFEF993D084B4050F4038A5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		EE714B7E7831606BF51107A5 /* Build configuration list for PBXNativeTarget "RTCHelper" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				95E9DD7836B6B3C6F1DEFCEC /* Debug */,
+				21AC63CA67B934333BB22740 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
