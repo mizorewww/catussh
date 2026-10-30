@@ -210,6 +210,7 @@ private struct NearbyHostRow: View {
 /// and Open / Close.
 private struct DesktopServerRow: View {
     let machine: RDMachine
+    @ObservedObject private var account = UURemoteAccountStore.shared
     /// The open session, if any; observed so the dot follows its phase.
     let session: RemoteDesktopSession?
     @EnvironmentObject var store: CatusshStore
@@ -244,6 +245,8 @@ private struct DesktopServerRow: View {
             }
             Button(session == nil ? "Connect" : "Show") { AppRouter.shared.openDesktop(machine: machine.id) }
                 .buttonStyle(.rx(size: .small))
+                // A UU device the account lists as offline has no desktop to show.
+                .disabled(session == nil && uuDevice?.isOnline == false)
         }
         .padding(.horizontal, RX.Space.s3)
         .frame(height: RX.tableRowHeight)
@@ -254,6 +257,10 @@ private struct DesktopServerRow: View {
         .contextMenu { ServerContextMenu(machine: machine.id) }
     }
 
+    private var uuDevice: UUDeviceInfo? {
+        account.devices.first { $0.deviceID == machine.uuDeviceID }
+    }
+
     private var target: String {
         switch machine.remoteDesktopProtocol {
         case .vnc:
@@ -261,9 +268,12 @@ private struct DesktopServerRow: View {
             if machine.vncOverSSH { parts.append("over SSH") }
             return parts.joined(separator: " · ")
         case .uuRemote:
+            var parts = ["UU Remote"]
             // The device's name only when the server's says something else.
-            let device = machine.uuDeviceAlias.isEmpty ? machine.uuDeviceID : machine.uuDeviceAlias
-            return device.isEmpty || device == machine.name ? "UU Remote" : "UU Remote · " + device
+            let alias = machine.uuDeviceAlias
+            if !alias.isEmpty, alias != machine.name { parts.append(alias) }
+            if let uuDevice { parts.append(uuDevice.isOnline ? "Online" : "Offline") }
+            return parts.joined(separator: " · ")
         case .none:
             return ""
         }

@@ -132,7 +132,9 @@ public actor UURemoteAPIClient {
     private func unwrap<T>(data: Data, response: URLResponse, request: UUAPIRequest) throws -> UUAPIEnvelope<T> {
         let (status, code, msg, json) = try parse(data: data, response: response, request: request)
         guard status == 200, code == 0 else {
-            throw UUAPIError.api(code, "\(request.path): http \(status) code \(code) \(msg)")
+            // The path is for the log; the person reads what the service said.
+            Self.log.error("\(request.method, privacy: .public) \(request.path, privacy: .public) refused: http \(status) code \(code)")
+            throw UUAPIError.api(code, msg.isEmpty ? "code \(code)" : "\(msg) (code \(code))")
         }
         return UUAPIEnvelope(code: code, msg: msg, data: json["data"] as? T)
     }

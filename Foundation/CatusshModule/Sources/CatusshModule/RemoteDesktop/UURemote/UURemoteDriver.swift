@@ -235,6 +235,12 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             UURemoteAccountStore.shared.devices.first(where: { $0.deviceID == deviceID })
         }) {
             targetIsWindows = device.platform != 4
+            // The account says it is not there: no room to join.
+            guard device.isOnline else {
+                let name = device.alias.isEmpty ? "The device" : device.alias
+                reportTerminal(.failed("\(name) is offline in UU Remote. Open UU Remote on it, then reconnect."), hint: "")
+                return
+            }
         }
 
         UURemotePortMappingTunnelProvider.shared.register(portMapping, for: deviceID)
@@ -316,7 +322,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
                 self.stop()
             }
         } catch {
-            reportTerminal(.failed(error.localizedDescription), hint: "UU Remote connect failed")
+            reportTerminal(.failed(error.localizedDescription), hint: "")
             stop()
         }
     }
