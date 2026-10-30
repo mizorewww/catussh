@@ -228,12 +228,6 @@ private final class FileCell: UITableViewCell {
         return formatter
     }()
 
-    private static let ownerFormatter: NumberFormatter = {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return formatter
-    }()
-
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         selectionStyle = .none
@@ -285,7 +279,8 @@ private final class FileCell: UITableViewCell {
         size.textColor = isDirectory ? Self.inkSecondary : Self.ink
         modified.text = stat.modificationDate.map { Self.dateFormatter.string(from: $0) } ?? "—"
         permissions.text = stat.permissionDescription
-        owner.text = Self.ownerFormatter.string(from: NSNumber(value: stat.ownerUID))
+        // A uid is an id, not a quantity: 1000, never "1,000".
+        owner.text = String(stat.ownerUID)
         isHovered = false
         isChosen = chosen
         refreshBackground(animated: false)
