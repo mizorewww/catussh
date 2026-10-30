@@ -93,9 +93,9 @@
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
-			dstSubfolderSpec = 6;
+			dstSubfolderSpec = 13;
 			files = (
-				0599982D053065B28A9EF315 /* RTCHelper in Embed Dependencies */,
+				C78A4A00B6E36E65FB5531D2 /* MacBridge.bundle in Embed Dependencies */,
 			);
 			name = "Embed Dependencies";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -104,9 +104,9 @@
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
-			dstSubfolderSpec = 13;
+			dstSubfolderSpec = 6;
 			files = (
-				C78A4A00B6E36E65FB5531D2 /* MacBridge.bundle in Embed Dependencies */,
+				0599982D053065B28A9EF315 /* RTCHelper in Embed Dependencies */,
 			);
 			name = "Embed Dependencies";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -500,6 +500,7 @@
 			buildConfigurationList = 749A69DEF7379923FE539F71 /* Build configuration list for PBXNativeTarget "catussh" */;
 			buildPhases = (
 				A2E5E647C39A09153C4C8F75 /* Sources */,
+				C68172B3728054D37160FDDA /* Record Git Commit */,
 				C2D33DA54A4DA07145321406 /* Resources */,
 				F7652201EE1917C0A958BFF4 /* Frameworks */,
 				647EADBE186F870E52DFB9EC /* Embed Dependencies */,
@@ -605,6 +606,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		C68172B3728054D37160FDDA /* Record Git Commit */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Record Git Commit";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "commit=\"$(git -C \"$SRCROOT\" rev-parse --short=10 HEAD 2>/dev/null || echo unknown)\"\nif [ \"$commit\" != unknown ] && ! git -C \"$SRCROOT\" diff --quiet HEAD -- 2>/dev/null; then\n  commit=\"$commit-dirty\"\nfi\nout=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/BuildInfo.plist\"\nrm -f \"$out\"\n/usr/libexec/PlistBuddy -c \"Add :GitCommit string $commit\" \"$out\" >/dev/null\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		3B05840EF7309134FE6D99AD /* Sources */ = {

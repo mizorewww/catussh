@@ -96,6 +96,20 @@ targets:
           PRODUCT_BUNDLE_IDENTIFIER: me.mizorewww.rayon.debug
         Release:
           PRODUCT_BUNDLE_IDENTIFIER: me.mizorewww.rayon
+    postCompileScripts:
+      # The commit the app was built from, for Settings › About: the short
+      # hash, "-dirty" when the tree had changes. Written as a file of its
+      # own, so it never races Xcode's Info.plist processing.
+      - name: Record Git Commit
+        basedOnDependencyAnalysis: false
+        script: |
+          commit="$(git -C "$SRCROOT" rev-parse --short=10 HEAD 2>/dev/null || echo unknown)"
+          if [ "$commit" != unknown ] && ! git -C "$SRCROOT" diff --quiet HEAD -- 2>/dev/null; then
+            commit="$commit-dirty"
+          fi
+          out="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/BuildInfo.plist"
+          rm -f "$out"
+          /usr/libexec/PlistBuddy -c "Add :GitCommit string $commit" "$out" >/dev/null
     dependencies:
       - package: CatusshModule
       - package: CatusshTerminal

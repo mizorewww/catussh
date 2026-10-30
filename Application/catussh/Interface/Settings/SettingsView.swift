@@ -290,11 +290,26 @@ private struct AboutSettings: View {
         #endif
     }
 
+    /// The commit this copy was built from, written in at build time.
+    var commit: String {
+        guard let url = Bundle.main.url(forResource: "BuildInfo", withExtension: "plist"),
+              let info = NSDictionary(contentsOf: url),
+              let commit = info["GitCommit"] as? String, !commit.isEmpty
+        else { return "Unknown" }
+        return commit
+    }
+
     var body: some View {
         RXDividedStack {
             RXFormRow("Version") {
                 Text(version)
                     .font(.rxBody.monospacedDigit())
+                    .foregroundStyle(.rxInkSecondary)
+                    .textSelection(.enabled)
+            }
+            RXFormRow("Build", description: "The git commit this copy was built from; \"-dirty\" when the source had uncommitted changes.") {
+                Text(commit)
+                    .font(.rxCode)
                     .foregroundStyle(.rxInkSecondary)
                     .textSelection(.enabled)
             }
