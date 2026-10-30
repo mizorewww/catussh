@@ -107,8 +107,10 @@ final class AppRouter: ObservableObject {
 
     // MARK: - Session actions
 
-    func openTerminal(machine: RDMachine.ID) {
-        TerminalManager.shared.createSession(withMachineID: machine) { [weak self] context in
+    /// - Parameter another: open one more terminal even when one is open,
+    ///   without asking.
+    func openTerminal(machine: RDMachine.ID, another: Bool = false) {
+        TerminalManager.shared.createSession(withMachineID: machine, force: another) { [weak self] context in
             guard let self, self.opensAutomatically else { return }
             self.route = .terminal(context.id)
         }

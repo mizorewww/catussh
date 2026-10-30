@@ -130,7 +130,8 @@ struct SessionTabs: View {
                 }
                 Button {
                     if current.remoteType == .machine {
-                        AppRouter.shared.openTerminal(machine: current.machine.id)
+                        // "+" says what it wants: another tab, without asking.
+                        AppRouter.shared.openTerminal(machine: current.machine.id, another: true)
                     } else if let command = current.command {
                         AppRouter.shared.openTerminal(command: command)
                     }
@@ -265,14 +266,18 @@ enum TerminalSessionActions {
             guard manager.sessionContexts.contains(where: { $0.id == context.id }) else { return }
             if replace, let fresh = openReplacement(for: context) {
                 AppRouter.shared.route = .terminal(fresh.id)
+            } else {
+                showNeighbour(of: context)
             }
             manager.closeSession(withContextID: context.id)
         }
         if manager.sessionAlive(forContext: context.id) {
             UIBridge.requiresConfirmation(
-                message: "Close the session on \(context.displayName)?",
-                informative: replace ? "A new terminal to the same server opens in its place." : nil,
-                confirmTitle: "Close Session",
+                message: "Close this terminal tab?",
+                informative: replace
+                    ? "Its session on \(context.displayName) ends, and a new terminal to the same server opens in its place."
+                    : "Its session on \(context.displayName) ends.",
+                confirmTitle: "Close Tab",
                 destructive: true
             ) { confirmed in
                 if confirmed { MainActor.assumeIsolated { perform() } }
@@ -300,17 +305,33 @@ enum TerminalSessionActions {
     @MainActor
     static func close(_ context: TerminalManager.Context) {
         let manager = TerminalManager.shared
-        if manager.sessionAlive(forContext: context.id) {
-            UIBridge.requiresConfirmation(
-                message: "Close the session on \(context.displayName)?",
-                confirmTitle: "Close Session",
-                destructive: true
-            ) { confirmed in
-                if confirmed { manager.closeSession(withContextID: context.id) }
-            }
-        } else {
+        let perform = {
+            showNeighbour(of: context)
             manager.closeSession(withContextID: context.id)
         }
+        if manager.sessionAlive(forContext: context.id) {
+            UIBridge.requiresConfirmation(
+                message: "Close this terminal tab?",
+                informative: "Its session on \(context.displayName) ends.",
+                confirmTitle: "Close Tab",
+                destructive: true
+            ) { confirmed in
+                if confirmed { MainActor.assumeIsolated { perform() } }
+            }
+        } else {
+            perform()
+        }
+    }
+
+    /// A tab closing in front hands the page to the tab after it (or before
+    /// it, at the end), so the server's terminals stay on screen.
+    @MainActor
+    private static func showNeighbour(of context: TerminalManager.Context) {
+        guard AppRouter.shared.route == .terminal(context.id) else { return }
+        let siblings = context.tabSiblings
+        guard let index = siblings.firstIndex(where: { $0.id == context.id }), siblings.count > 1 else { return }
+        let neighbour = index + 1 < siblings.count ? siblings[index + 1] : siblings[index - 1]
+        AppRouter.shared.route = .terminal(neighbour.id)
     }
 }
 

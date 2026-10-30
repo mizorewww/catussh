@@ -41,13 +41,13 @@ class TerminalManager: ObservableObject {
         completion(context)
     }
 
-    func createSession(withMachineID machineId: RDMachine.ID, completion: @escaping (Context) -> Void = { _ in }) {
+    func createSession(withMachineID machineId: RDMachine.ID, force: Bool = false, completion: @escaping (Context) -> Void = { _ in }) {
         let machine = CatusshStore.shared.machineGroup[machineId]
         guard machine.isNotPlaceholder() else {
             UIBridge.presentError(with: "This server's details could not be read.")
             return
         }
-        createSession(withMachineObject: machine, completion: completion)
+        createSession(withMachineObject: machine, force: force, completion: completion)
     }
 
     @discardableResult
