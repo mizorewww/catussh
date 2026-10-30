@@ -36,7 +36,12 @@ extension Bridge {
         }
         let finish: (NSApplication.ModalResponse) -> Void = { response in
             let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-            completion?(index, field?.stringValue)
+            let text = field?.stringValue
+            // After the sheet has finished ending, not inside it: an answer
+            // that quits or closes windows (Quit closes the window the sheet
+            // hangs on) would otherwise free the sheet's window while AppKit
+            // still tears it down, and the app crashed on its way out.
+            DispatchQueue.main.async { completion?(index, text) }
         }
         if let parent = sheetParent {
             alert.beginSheetModal(for: parent, completionHandler: finish)
