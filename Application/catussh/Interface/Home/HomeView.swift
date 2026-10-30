@@ -312,6 +312,8 @@ struct ServerTile: View {
     // Observed so the dot follows a terminal opening or closing, the same
     // subscription SessionTabs makes.
     @ObservedObject var terminals = TerminalManager.shared
+    /// For a UU device's online state.
+    @ObservedObject private var account = UURemoteAccountStore.shared
     @State private var hovered = false
 
     var body: some View {
@@ -324,10 +326,18 @@ struct ServerTile: View {
                             .font(.rxBodyStrong)
                             .foregroundStyle(.rxInk)
                             .lineLimit(1)
-                        RedactableText(read.remoteAddress, redacted: store.machineRedacted != .none)
-                            .font(.rxCode)
-                            .foregroundStyle(.rxInkSecondary)
-                            .lineLimit(1)
+                        if read.isUURemoteDevice {
+                            // Its address would be the device id.
+                            Text(uuStatus(read))
+                                .font(.rxBody)
+                                .foregroundStyle(.rxInkSecondary)
+                                .lineLimit(1)
+                        } else {
+                            RedactableText(read.remoteAddress, redacted: store.machineRedacted != .none)
+                                .font(.rxCode)
+                                .foregroundStyle(.rxInkSecondary)
+                                .lineLimit(1)
+                        }
                     }
                     Spacer(minLength: RX.Space.s2)
                     if connected {
@@ -348,7 +358,12 @@ struct ServerTile: View {
                     } else {
                         VStack(spacing: 6) {
                             infoRow("Last used", RXFormat.relative(read.lastConnection))
-                            infoRow("Identity", identityName(read))
+                            if read.isUURemoteDevice {
+                                // No identity: UU Remote signs in with the account.
+                                infoRow("Device", read.comment.isEmpty ? "UU Remote" : read.comment)
+                            } else {
+                                infoRow("Identity", identityName(read))
+                            }
                         }
                         .transition(.opacity)
                     }
@@ -388,10 +403,11 @@ struct ServerTile: View {
             }
             .buttonStyle(.rx(.primary, size: .small))
             .help(ServerTool.terminal.help)
-            toolButton(.files)
-            toolButton(.monitor)
-            if CatusshStore.shared.machineGroup[machine].hasRemoteDesktop {
-                toolButton(.desktop)
+            // What the server can show (a UU device: its desktop); past two,
+            // as icons, so none is cut short.
+            let others = ServerTool.available(for: store.machineGroup[machine]).filter { $0 != .terminal && $0 != .editor }
+            ForEach(others) { tool in
+                toolButton(tool, iconOnly: others.count > 2)
             }
             Spacer(minLength: 0)
             Menu {
@@ -407,14 +423,22 @@ struct ServerTile: View {
         }
     }
 
-    func toolButton(_ tool: ServerTool) -> some View {
+    func toolButton(_ tool: ServerTool, iconOnly: Bool = false) -> some View {
         Button {
             tool.show(machine)
         } label: {
             Label(tool.title, systemImage: tool.systemImage)
         }
-        .buttonStyle(.rx(size: .small))
+        .buttonStyle(.rx(size: .small, iconOnly: iconOnly))
         .help(tool.help)
+    }
+
+    /// "UU Remote · Online", from the account's last refresh.
+    func uuStatus(_ machine: RDMachine) -> String {
+        guard let device = account.devices.first(where: { $0.deviceID == machine.uuDeviceID }) else {
+            return "UU Remote"
+        }
+        return device.isOnline ? "UU Remote · Online" : "UU Remote · Offline"
     }
 
     /// Shows the server's terminal, opening one if none is open.
