@@ -188,6 +188,8 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
         }
 
         setupShellData()
+        // A reconnect starts clean: nothing typed for the old session.
+        discardPendingInput()
 
         debugPrint("\(self) \(#function) \(machine.id)")
         putInformation("[*] Creating Connection")
@@ -281,7 +283,34 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
         debugPrint("\(self) \(#function) defer \(machine.id)")
     }
 
+    /// Terminal modes a full-screen program may have left on: the alternate
+    /// screen, mouse and focus reports, bracketed paste, kitty keyboard
+    /// flags, modifyOtherKeys, application keys, a hidden cursor. A program
+    /// that exits turns them off itself; one whose connection drops cannot,
+    /// and every mouse move and key would then arrive as escape sequences.
+    /// Not a full reset (ESC c), which would also wipe the screen.
+    static let modeReset = [
+        "\u{1B}[=0;1u", // kitty keyboard flags off, on the alternate screen
+        "\u{1B}[?1049l", // back to the main screen
+        "\u{1B}[=0;1u", // and off there too
+        "\u{1B}[?1000l\u{1B}[?1002l\u{1B}[?1003l\u{1B}[?1005l\u{1B}[?1006l\u{1B}[?1015l\u{1B}[?1016l",
+        "\u{1B}[?1004l\u{1B}[?2004l\u{1B}[?2026l",
+        "\u{1B}[>4;0m", // modifyOtherKeys off
+        "\u{1B}[?1l\u{1B}>", // normal cursor keys and keypad
+        "\u{1B}[?25h\u{1B}[0m",
+    ].joined()
+
+    /// Drops what was typed and not yet sent, so it never reaches the next
+    /// session.
+    func discardPendingInput() {
+        bufferAccessLock.lock()
+        _dataBuffer = ""
+        bufferAccessLock.unlock()
+    }
+
     public func processShutdown(exitFromShell: Bool = false) {
+        surface.write(Self.modeReset)
+        discardPendingInput()
         if exitFromShell {
             putInformation("")
             putInformation("[*] Connection Closed")
