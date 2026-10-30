@@ -294,6 +294,7 @@ private struct ServerRow: View {
                         }
                         .buttonStyle(.rx(.plain, size: .small, iconOnly: others.count > 2))
                         .help(tool.help)
+                        .accessibilityLabel(tool.title)
                     }
                     Button(ServerTool.terminal.title) { ServerTool.terminal.show(machine) }
                         .buttonStyle(.rx(size: .small))
