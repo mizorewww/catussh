@@ -326,12 +326,22 @@ enum TerminalSessionActions {
     }
 
     /// A tab closing in front hands the page to the tab after it (or before
-    /// it, at the end), so the server's terminals stay on screen.
+    /// it, at the end), or the last one to the server's open desktop, so the
+    /// server stays on screen.
     @MainActor
     private static func showNeighbour(of context: TerminalManager.Context) {
         guard AppRouter.shared.route == .terminal(context.id) else { return }
         let siblings = context.tabSiblings
-        guard let index = siblings.firstIndex(where: { $0.id == context.id }), siblings.count > 1 else { return }
+        guard let index = siblings.firstIndex(where: { $0.id == context.id }), siblings.count > 1 else {
+            // The last terminal: the server's desktop, if one is open, rather
+            // than leaving its pages altogether.
+            if context.remoteType == .machine,
+               let desktop = RemoteDesktopManager.shared.sessions.first(where: { $0.machine.id == context.machine.id })
+            {
+                AppRouter.shared.route = .desktop(desktop.id)
+            }
+            return
+        }
         let neighbour = index + 1 < siblings.count ? siblings[index + 1] : siblings[index - 1]
         AppRouter.shared.route = .terminal(neighbour.id)
     }
