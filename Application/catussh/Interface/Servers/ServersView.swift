@@ -285,15 +285,15 @@ private struct ServerRow: View {
                         .frame(width: columns.actions, alignment: .trailing)
                 } else {
                 HStack(spacing: RX.Space.s1) {
-                    ForEach([ServerTool.files, .monitor]) { tool in
-                        Button(tool.title) { tool.show(machine) }
-                            .buttonStyle(.rx(.plain, size: .small))
-                            .help(tool.help)
-                    }
-                    if CatusshStore.shared.machineGroup[machine].hasRemoteDesktop {
-                        Button(ServerTool.desktop.title) { ServerTool.desktop.show(machine) }
-                            .buttonStyle(.rx(.plain, size: .small))
-                            .help(ServerTool.desktop.help)
+                    // Three beside Terminal do not fit as words: then as icons.
+                    let others: [ServerTool] = read.hasRemoteDesktop ? [.files, .monitor, .desktop] : [.files, .monitor]
+                    ForEach(others) { tool in
+                        Button { tool.show(machine) } label: {
+                            Label(tool.title, systemImage: tool.systemImage)
+                                .labelStyle(TitleOrIcon(iconOnly: others.count > 2))
+                        }
+                        .buttonStyle(.rx(.plain, size: .small, iconOnly: others.count > 2))
+                        .help(tool.help)
                     }
                     Button(ServerTool.terminal.title) { ServerTool.terminal.show(machine) }
                         .buttonStyle(.rx(size: .small))
@@ -363,3 +363,13 @@ private struct UUDeviceActions: View {
         .disabled(!account.isLoggedIn || device?.isOnline == false)
     }
 }
+
+/// A label as words, or as its icon where room is short.
+private struct TitleOrIcon: LabelStyle {
+    let iconOnly: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        if iconOnly { configuration.icon } else { configuration.title }
+    }
+}
+
