@@ -142,13 +142,22 @@ public actor UURemoteAPIClient {
     /// `0x470` and the caller needs both the code and `data`.
     private static let log = Logger(subsystem: "me.mizorewww.rayon", category: "uu-api")
 
-    /// The answer with every long string cut down, so tokens and keys never
-    /// reach the log whole.
-    static func redacted(_ value: Any) -> Any {
+    /// Values the log may show as they are: what an answer says happened,
+    /// never who or with what (tokens, ids, names, phone numbers).
+    private static let loggable: Set<String> = [
+        "code", "msg", "status", "publisher_availability_status", "platform", "controllable",
+        "support_wol", "version_name", "international_connect", "ws_connect_timeout_ms",
+        "streamer_retry_delta_ms", "max_reconnect_delta", "type", "loc",
+    ]
+
+    /// The answer's shape with only `loggable` values in it; every other
+    /// string becomes its length.
+    static func redacted(_ value: Any, key: String? = nil) -> Any {
         switch value {
-        case let dict as [String: Any]: return dict.mapValues(redacted)
-        case let array as [Any]: return array.map(redacted)
-        case let text as String where text.count > 24: return String(text.prefix(6)) + "…(\(text.count))"
+        case let dict as [String: Any]: return dict.reduce(into: [String: Any]()) { $0[$1.key] = redacted($1.value, key: $1.key) }
+        case let array as [Any]: return array.map { redacted($0, key: key) }
+        case let text as String:
+            return key.map(loggable.contains) == true ? text : "…(\(text.count))"
         default: return value
         }
     }
