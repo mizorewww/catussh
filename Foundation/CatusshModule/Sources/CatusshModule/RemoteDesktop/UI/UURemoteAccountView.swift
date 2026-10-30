@@ -25,6 +25,8 @@ public struct UURemoteAccountView: View {
     @ObservedObject private var account = UURemoteAccountStore.shared
     /// Called with the machine id to open a desktop session on.
     public var onConnectDesktop: ((RDMachine.ID) -> Void)?
+    /// Called with the machine id to open a terminal on; nil hides Terminal.
+    public var onOpenTerminal: ((RDMachine.ID) -> Void)?
 
     @State private var loginMode: LoginMode = .qr
     @State private var phoneCountry = "+86"
@@ -36,8 +38,9 @@ public struct UURemoteAccountView: View {
     @State private var busyAction = ""
     @State private var infoLine = ""
 
-    public init(onConnectDesktop: ((RDMachine.ID) -> Void)? = nil) {
+    public init(onConnectDesktop: ((RDMachine.ID) -> Void)? = nil, onOpenTerminal: ((RDMachine.ID) -> Void)? = nil) {
         self.onConnectDesktop = onConnectDesktop
+        self.onOpenTerminal = onOpenTerminal
     }
 
     enum LoginMode: String, CaseIterable {
@@ -82,7 +85,7 @@ public struct UURemoteAccountView: View {
                 Text(account.nickname.isEmpty ? "UU Remote account" : account.nickname)
                     .font(.rxBodyStrong)
                     .foregroundStyle(Color.rxInk)
-                Text(account.userID.isEmpty ? "Signed in" : "ID \(account.userID)")
+                Text("Signed in")
                     .font(.rxHelp)
                     .foregroundStyle(Color.rxInkSecondary)
             }
@@ -140,6 +143,11 @@ public struct UURemoteAccountView: View {
                     .lineLimit(1)
             }
             Spacer()
+            if let onOpenTerminal {
+                Button("Terminal") { onOpenTerminal(account.upsertMachine(for: device).id) }
+                    .buttonStyle(.rx(.plain, size: .small))
+                    .disabled(!device.isOnline)
+            }
             Button("Desktop") { connect(to: device) }
                 .buttonStyle(.rx(size: .small))
                 .disabled(!device.isOnline)

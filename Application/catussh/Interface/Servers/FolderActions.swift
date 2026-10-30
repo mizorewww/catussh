@@ -67,6 +67,9 @@ enum FolderActions {
             UURemoteAccountSheet(onConnectDesktop: { machineID in
                 dismiss()
                 AppRouter.shared.openDesktop(machine: machineID)
+            }, onOpenTerminal: { machineID in
+                dismiss()
+                ServerTool.terminal.show(machineID)
             }, close: dismiss)
         }
     }

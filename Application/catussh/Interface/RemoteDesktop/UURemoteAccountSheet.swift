@@ -14,11 +14,12 @@ struct UURemoteAccountSheet: View {
     /// Route "Connect" into the app's session navigation; nil just opens the
     /// session inside `RemoteDesktopManager`.
     var onConnectDesktop: ((RDMachine.ID) -> Void)?
+    var onOpenTerminal: ((RDMachine.ID) -> Void)?
     var close: (() -> Void)?
 
     var body: some View {
         SheetScaffold("UU Remote") {
-            UURemoteAccountView(onConnectDesktop: onConnectDesktop)
+            UURemoteAccountView(onConnectDesktop: onConnectDesktop, onOpenTerminal: onOpenTerminal)
         } footer: {
             Spacer()
             Button("Done") { close?() }
