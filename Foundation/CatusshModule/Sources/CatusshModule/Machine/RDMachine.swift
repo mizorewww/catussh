@@ -71,6 +71,8 @@ public struct RDMachine: Codable, Identifiable, Equatable, Sendable {
     }
 
     public func shortDescription(withComment: Bool = true) -> String {
+        // A UU device's address is its device id: the name says it all.
+        if isUURemoteDevice { return name }
         var build = name + " "
         if let aid = associatedIdentity,
            let uid = UUID(uuidString: aid)
