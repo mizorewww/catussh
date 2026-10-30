@@ -17,14 +17,14 @@ public struct CloudSyncSettings: View {
 
     public var body: some View {
         RXDividedStack {
-            // A build that cannot sync says so beside the switch, on or off:
-            // on, it can only be turned off.
-            RXFormRow("Sync with iCloud", description: sync.problem.map { sync.isOn ? $0 + " Turn this off; nothing is synced." : $0 } ?? """
+            // A build that cannot sync shows the switch off and out of reach,
+            // whatever was chosen in a build that could, and nothing more.
+            RXFormRow("Sync with iCloud", description: sync.problem ?? """
             Servers and identities are encrypted on this device, with a passphrase you choose, \
             before they go to iCloud. Apple cannot read them.
             """) {
                 Toggle("Sync with iCloud", isOn: Binding(
-                    get: { sync.isOn },
+                    get: { sync.isOn && sync.problem == nil },
                     set: { on in
                         if on {
                             asking = sync.hasStoredData ? .enter : .create
@@ -39,9 +39,9 @@ public struct CloudSyncSettings: View {
                 #if os(macOS) || targetEnvironment(macCatalyst)
                     .controlSize(.small)
                 #endif
-                    .disabled(sync.problem != nil && !sync.isOn)
+                    .disabled(sync.problem != nil)
             }
-            if sync.isOn {
+            if sync.isOn, sync.problem == nil {
                 RXFormRow("Status", description: statusText) {
                     HStack(spacing: RX.Space.s2) {
                         switch sync.status {
