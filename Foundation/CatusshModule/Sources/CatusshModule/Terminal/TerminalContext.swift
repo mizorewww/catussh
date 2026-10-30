@@ -258,7 +258,8 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
             }
         }
 
-        shell.begin(withTerminalType: "xterm") {
+        let terminalType = prepareTerminalType()
+        shell.begin(withTerminalType: terminalType) {
             debugPrint("channel open")
         } withTerminalSize: { [weak self] in
             var size = self?.terminalSize ?? TerminalContext.defaultTerminalSize
