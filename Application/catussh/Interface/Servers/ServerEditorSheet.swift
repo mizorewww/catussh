@@ -58,100 +58,11 @@ struct ServerEditorSheet: View {
 
     var body: some View {
         SheetScaffold(isNew ? "New Server" : "Edit Server") {
-            VStack(alignment: .leading, spacing: 14) {
-                RXField("Name") {
-                    TextField(address.isEmpty ? "prod-web-01" : address, text: $name)
-                        .textFieldStyle(.rx)
-                }
-                RXField("Connect through") {
-                    RXPicker(
-                        selection: $transport,
-                        options: [
-                            .init(.direct, "Direct (TCP)"),
-                            .init(.cloudflareAccess, "Cloudflare Access"),
-                            .init(.uuRemote, "NetEase UU Remote"),
-                        ]
-                    )
-                }
-                HStack(alignment: .top, spacing: RX.Space.s4) {
-                    RXField(transport == .cloudflareAccess ? "Access hostname" : transport == .uuRemote ? "Device ID" : "Address") {
-                        TextField(transport == .cloudflareAccess ? "ssh.example.com" : transport == .uuRemote ? "UU Remote device id" : "Host name or IP address", text: $address)
-                            .textFieldStyle(.rxMono)
-                            .disableAutocorrection(true)
-                    }
-                    RXField("Port", error: portIsValid ? nil : "1–65535") {
-                        TextField("22", text: $port)
-                            .textFieldStyle(.rxMono)
-                    }
-                    .frame(width: 96)
-                }
-                if transport == .cloudflareAccess {
-                    cloudflareFields
-                } else if transport == .uuRemote {
-                    HelpText("SSH, SFTP and Monitor on this server tunnel through the UU Remote session's port mapping — open the Desktop first so the tunnel is live.")
-                }
-                RXField("Remote Desktop") {
-                    RXPicker(
-                        selection: $remoteDesktopProtocol,
-                        options: [
-                            .init(RDMachine.RemoteDesktopProtocolType.none, "None"),
-                            .init(.vnc, "VNC"),
-                            .init(.uuRemote, "NetEase UU Remote"),
-                        ]
-                    )
-                }
-                if remoteDesktopProtocol == .vnc {
-                    vncFields
-                } else if remoteDesktopProtocol == .uuRemote {
-                    uuFields
-                }
-                HStack(alignment: .top, spacing: RX.Space.s4) {
-                    RXField("Identity") {
-                        RXPicker(
-                            selection: $identity,
-                            options: [.init(nil, "Automatic")] + store.identityGroup.identities.map { item in
-                                .init(item.id, item.group.isEmpty ? item.username : "\(item.username) · \(item.group)")
-                            }
-                        )
-                    }
-                    RXField("Group") {
-                        HStack(spacing: RX.Space.s1) {
-                            TextField("Default", text: $group)
-                                .textFieldStyle(.rx)
-                            if !existingGroups.isEmpty {
-                                Menu {
-                                    ForEach(existingGroups, id: \.self) { item in
-                                        Button(item) { group = item }
-                                    }
-                                } label: {
-                                    Label("Existing Groups", systemImage: "chevron.down")
-                                }
-                                .menuStyle(.button)
-                                .menuIndicator(.hidden)
-                                .buttonStyle(.rx(iconOnly: true))
-                                .fixedSize()
-                                .help("Choose an existing group")
-                            }
-                        }
-                    }
-                }
-                RXField("SFTP start folder") {
-                    TextField("/", text: $startFolder)
-                        .textFieldStyle(.rxMono)
-                        .disableAutocorrection(true)
-                }
-                RXField("Comment") {
-                    TextField("Optional", text: $comment)
-                        .textFieldStyle(.rx)
-                }
-                if !isNew {
-                    RXField("Last banner") {
-                        RXValueField(banner, placeholder: "None", monospaced: true)
-                    }
-                }
-                if let error {
-                    HelpText(error, isError: true)
-                }
+            // Taller than a small window with the remote desktop fields: then
+            // the fields scroll and the title and buttons stay in view.
+            ViewThatFits(in: .vertical) {
+                fields
+                ScrollView { fields.padding(.trailing, RX.Space.s2) }
             }
         } footer: {
             Button("Cancel", action: finish)
@@ -184,6 +95,104 @@ struct ServerEditorSheet: View {
         }
         .frame(width: 520)
         .onAppear(perform: load)
+    }
+
+    private var fields: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            RXField("Name") {
+                TextField(address.isEmpty ? "prod-web-01" : address, text: $name)
+                    .textFieldStyle(.rx)
+            }
+            RXField("Connect through") {
+                RXPicker(
+                    selection: $transport,
+                    options: [
+                        .init(.direct, "Direct (TCP)"),
+                        .init(.cloudflareAccess, "Cloudflare Access"),
+                        .init(.uuRemote, "NetEase UU Remote"),
+                    ]
+                )
+            }
+            HStack(alignment: .top, spacing: RX.Space.s4) {
+                RXField(transport == .cloudflareAccess ? "Access hostname" : transport == .uuRemote ? "Device ID" : "Address") {
+                    TextField(transport == .cloudflareAccess ? "ssh.example.com" : transport == .uuRemote ? "UU Remote device id" : "Host name or IP address", text: $address)
+                        .textFieldStyle(.rxMono)
+                        .disableAutocorrection(true)
+                }
+                RXField("Port", error: portIsValid ? nil : "1–65535") {
+                    TextField("22", text: $port)
+                        .textFieldStyle(.rxMono)
+                }
+                .frame(width: 96)
+            }
+            if transport == .cloudflareAccess {
+                cloudflareFields
+            } else if transport == .uuRemote {
+                HelpText("SSH, SFTP and Monitor on this server tunnel through the UU Remote session's port mapping — open the Desktop first so the tunnel is live.")
+            }
+            RXField("Remote Desktop") {
+                RXPicker(
+                    selection: $remoteDesktopProtocol,
+                    options: [
+                        .init(RDMachine.RemoteDesktopProtocolType.none, "None"),
+                        .init(.vnc, "VNC"),
+                        .init(.uuRemote, "NetEase UU Remote"),
+                    ]
+                )
+            }
+            if remoteDesktopProtocol == .vnc {
+                vncFields
+            } else if remoteDesktopProtocol == .uuRemote {
+                uuFields
+            }
+            HStack(alignment: .top, spacing: RX.Space.s4) {
+                RXField("Identity") {
+                    RXPicker(
+                        selection: $identity,
+                        options: [.init(nil, "Automatic")] + store.identityGroup.identities.map { item in
+                            .init(item.id, item.group.isEmpty ? item.username : "\(item.username) · \(item.group)")
+                        }
+                    )
+                }
+                RXField("Group") {
+                    HStack(spacing: RX.Space.s1) {
+                        TextField("Default", text: $group)
+                            .textFieldStyle(.rx)
+                        if !existingGroups.isEmpty {
+                            Menu {
+                                ForEach(existingGroups, id: \.self) { item in
+                                    Button(item) { group = item }
+                                }
+                            } label: {
+                                Label("Existing Groups", systemImage: "chevron.down")
+                            }
+                            .menuStyle(.button)
+                            .menuIndicator(.hidden)
+                            .buttonStyle(.rx(iconOnly: true))
+                            .fixedSize()
+                            .help("Choose an existing group")
+                        }
+                    }
+                }
+            }
+            RXField("SFTP start folder") {
+                TextField("/", text: $startFolder)
+                    .textFieldStyle(.rxMono)
+                    .disableAutocorrection(true)
+            }
+            RXField("Comment") {
+                TextField("Optional", text: $comment)
+                    .textFieldStyle(.rx)
+            }
+            if !isNew {
+                RXField("Last banner") {
+                    RXValueField(banner, placeholder: "None", monospaced: true)
+                }
+            }
+            if let error {
+                HelpText(error, isError: true)
+            }
+        }
     }
 
     /// The VNC listener details; reach it over an SSH local forward when
