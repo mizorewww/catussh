@@ -259,9 +259,9 @@ public final class UURemoteAccountStore: ObservableObject {
     /// The device name registration reports, mirroring how the official
     /// client names the host machine.
     nonisolated static var localDeviceName: String {
-        ProcessInfo.processInfo.hostName.components(separatedBy: ".").first.flatMap {
-            $0.isEmpty ? nil : $0
-        } ?? "catussh"
+        let host = ProcessInfo.processInfo.hostName.components(separatedBy: ".").first ?? ""
+        // "catussh…" marks it as catussh's sign-in, not a computer.
+        return host.isEmpty ? "catussh" : "catussh · \(host)"
     }
 
     /// Takes a session made elsewhere (a live test's sign-in), without

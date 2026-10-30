@@ -82,7 +82,15 @@ public struct UUDeviceInfo: Equatable, Sendable {
     public init() {}
 
     public var isOnline: Bool { status == "CONNECTED" || status == "READY" }
-    public var isDesktop: Bool { platform == 1 || platform == 4 }
+    /// A desktop to connect to: a computer, and not a sign-in of catussh.
+    public var isDesktop: Bool { (platform == 1 || platform == 4) && !isCatusshRegistration }
+
+    /// catussh signs in as a device of its own (the service wants one), with
+    /// the PC client's version and a name that starts with "catussh"; it is
+    /// no computer to connect to.
+    public var isCatusshRegistration: Bool {
+        platform == 1 && versionName == UUConstants.versionName && alias.lowercased().hasPrefix("catussh")
+    }
 
     public static func platformName(_ platform: Int) -> String {
         switch platform {

@@ -70,4 +70,16 @@ final class UURemoteFolderSyncTests: XCTestCase {
         XCTAssertFalse(ssh.isUURemoteDevice)
         XCTAssertTrue(UURemoteFolderSync.makeMachine(for: device("d1", "Mac"), folder: "UU").isUURemoteDevice)
     }
+
+    /// A sign-in of catussh is no computer: it never becomes a server.
+    func testCatusshSignInsAreNotDesktops() {
+        var signIn = device("c1", "catussh", platform: 1)
+        signIn.versionName = UUConstants.versionName
+        var pc = device("d1", "catussh-lab-pc", platform: 1)
+        pc.versionName = "4.44.0.3919"
+        var group = RDMachineGroup()
+        UURemoteFolderSync.apply(devices: [signIn, pc], folder: "UU", to: &group)
+        XCTAssertEqual(group.machines.map(\.uuDeviceID), ["d1"])
+    }
 }
+
