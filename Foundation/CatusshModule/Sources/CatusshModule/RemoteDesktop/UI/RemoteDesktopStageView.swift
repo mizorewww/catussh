@@ -226,19 +226,19 @@ public struct RemoteDesktopStageView: View {
             viewOnlyButton
             specialKeysMenu
             Button { showsTextInput = true } label: {
-                Image(systemName: "textformat")
+                Label("Type Text", systemImage: "textformat").labelStyle(.iconOnly)
             }
             .popover(isPresented: $showsTextInput) { textInputPopover }
             #if !targetEnvironment(macCatalyst)
                 // A Mac has a keyboard; a touch screen shows one on request.
                 Button { keyboardRequests += 1 } label: {
-                    Image(systemName: "keyboard")
+                    Label("Software Keyboard", systemImage: "keyboard").labelStyle(.iconOnly)
                 }
                 .help("Toggle the software keyboard")
             #endif
             clipboardMenu
             Button { session.refresh() } label: {
-                Image(systemName: "arrow.clockwise")
+                Label("Refresh Screen", systemImage: "arrow.clockwise").labelStyle(.iconOnly)
             }
             .help("Ask the host for a full refresh")
             #if !targetEnvironment(macCatalyst)
@@ -248,7 +248,7 @@ public struct RemoteDesktopStageView: View {
             connectButton
             if let onClose {
                 Button { onClose() } label: {
-                    Image(systemName: "xmark.circle")
+                    Label("Close Session", systemImage: "xmark.circle").labelStyle(.iconOnly)
                 }
                 .help("Close this session")
             }
@@ -318,7 +318,7 @@ public struct RemoteDesktopStageView: View {
                 }
             }
         } label: {
-            Image(systemName: "rectangle.on.rectangle")
+            Label("Display", systemImage: "rectangle.on.rectangle").labelStyle(.iconOnly)
         }
         .help("Switch display")
     }
@@ -352,7 +352,7 @@ public struct RemoteDesktopStageView: View {
                 }
             }
         } label: {
-            Image(systemName: "slider.horizontal.3")
+            Label("Quality", systemImage: "slider.horizontal.3").labelStyle(.iconOnly)
         }
         .help("Frame rate and image quality")
     }
@@ -407,7 +407,7 @@ public struct RemoteDesktopStageView: View {
                 Button("Backspace") { send(RemoteDesktopSpecialKeys.click(RemoteDesktopSpecialKeys.backspace)) }
             }
         } label: {
-            Image(systemName: "command")
+            Label("Send Keys", systemImage: "command").labelStyle(.iconOnly)
         }
         .help("Send a special key the local keyboard can not reach")
     }
@@ -418,7 +418,7 @@ public struct RemoteDesktopStageView: View {
 
     private var viewOnlyButton: some View {
         Button { session.viewOnly.toggle() } label: {
-            Image(systemName: session.viewOnly ? "eye" : "cursorarrow.motionlines")
+            Label(session.viewOnly ? "View Only" : "Control", systemImage: session.viewOnly ? "eye" : "cursorarrow.motionlines").labelStyle(.iconOnly)
                 .foregroundStyle(session.viewOnly ? Color.rxAccent : Color.rxInk)
         }
         .help(session.viewOnly ? "View only: input stays local. Click to take control" : "Watch without sending mouse or keys")
@@ -449,7 +449,7 @@ public struct RemoteDesktopStageView: View {
                 Label("Pull remote clipboard", systemImage: "clipboard")
             }
         } label: {
-            Image(systemName: "clipboard")
+            Label("Clipboard", systemImage: "clipboard").labelStyle(.iconOnly)
         }
         .help("Clipboard sync")
     }
@@ -484,7 +484,7 @@ public struct RemoteDesktopStageView: View {
             }
             #endif
         } label: {
-            Image(systemName: "pip")
+            Label("Official App", systemImage: "pip").labelStyle(.iconOnly)
         }
         .help("Hand off to the official UU Remote app")
     }
@@ -493,12 +493,12 @@ public struct RemoteDesktopStageView: View {
         Group {
             if session.phase.isTerminal || session.phase == .idle {
                 Button { session.connect() } label: {
-                    Image(systemName: "play.circle")
+                    Label("Connect", systemImage: "play.circle").labelStyle(.iconOnly)
                 }
                 .help("Connect")
             } else {
                 Button { session.disconnect() } label: {
-                    Image(systemName: "stop.circle")
+                    Label("Disconnect", systemImage: "stop.circle").labelStyle(.iconOnly)
                 }
                 .help("Disconnect")
             }
