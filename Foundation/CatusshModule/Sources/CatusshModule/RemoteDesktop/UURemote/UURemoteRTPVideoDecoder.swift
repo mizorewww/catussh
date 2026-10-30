@@ -325,7 +325,12 @@ public final class UURemoteRTPVideoDecoder: @unchecked Sendable {
             imageBuffer = imageBufferOut
         }
         VTDecompressionSessionWaitForAsynchronousFrames(decompressionSession!)
-        guard status == noErr, let pixelBuffer = imageBuffer else { return nil }
+        guard status == noErr, let pixelBuffer = imageBuffer else {
+            // A session that failed (the GPU reset it, say) is not used again:
+            // the next key frame builds a new one.
+            if status != noErr { reset() }
+            return nil
+        }
         outputWidth = CVPixelBufferGetWidth(pixelBuffer)
         outputHeight = CVPixelBufferGetHeight(pixelBuffer)
         return Self.makeCGImage(from: pixelBuffer)
@@ -411,6 +416,12 @@ public final class UURemoteRTPVideoDecoder: @unchecked Sendable {
         guard status == noErr, let session else { return false }
         decompressionSession = session
         return true
+    }
+
+    /// Starts over: no session and no format until the next parameter sets.
+    public func reset() {
+        teardownSession()
+        formatDescription = nil
     }
 
     private func teardownSession() {
@@ -519,5 +530,18 @@ public extension UUVideoAccessUnit {
         }
         if let start, start < bytes.count { units.append(Data(bytes[start...])) }
         return units
+    }
+}
+
+public extension UUVideoAccessUnit {
+    /// "H265" or "H264" when the units hold that codec's parameter sets
+    /// (VPS/SPS/PPS 32-34, or SPS/PPS 7-8); nil otherwise.
+    static func codec(ofParameterSetsIn units: [Data]) -> String? {
+        for nal in units where !nal.isEmpty {
+            let first = nal[nal.startIndex]
+            if (32 ... 34).contains((first >> 1) & 0x3F), first & 0x81 == 0 { return "H265" }
+            if [7, 8].contains(first & 0x1F), first & 0x80 == 0 { return "H264" }
+        }
+        return nil
     }
 }

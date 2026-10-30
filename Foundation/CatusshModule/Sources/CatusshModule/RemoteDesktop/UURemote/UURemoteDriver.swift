@@ -833,14 +833,20 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
 
     /// One encoded frame from the WebRTC receiver, Annex-B. On decodeQueue.
     private func decodeEncodedFrame(_ bytes: Data, timestamp: UInt32) {
-        let unit = UUVideoAccessUnit(
-            nalUnits: UUVideoAccessUnit.nalUnits(annexB: bytes),
-            sequence: 0,
-            timestamp: timestamp,
-            codecName: encodedCodec
-        )
+        let nalUnits = UUVideoAccessUnit.nalUnits(annexB: bytes)
+        // The stream says its codec in a key frame's parameter sets, before
+        // the receiver's stats do.
+        if let codec = UUVideoAccessUnit.codec(ofParameterSetsIn: nalUnits) { encodedCodec = codec }
+        let unit = UUVideoAccessUnit(nalUnits: nalUnits, sequence: 0, timestamp: timestamp, codecName: encodedCodec)
         let image = encodedDecoder.decode(accessUnit: unit)
         encodedCount += 1
+        // Undecodable frames in a row: the decoder starts over at the next
+        // key frame, which the host is asked for.
+        failedDecodes = image == nil ? failedDecodes + 1 : 0
+        if failedDecodes == 30 {
+            encodedDecoder.reset()
+            requestKeyframeOrRefresh()
+        }
         if encodedCount <= 3 || (image == nil && encodedCount.isMultiple(of: 200)) {
             let types = unit.nalUnits.prefix(8).map { nal in nal.isEmpty ? -1 : Int((nal[nal.startIndex] >> 1) & 0x3F) }
             Self.log.info("encoded frame \(self.encodedCount): \(bytes.count) bytes, \(self.encodedCodec, privacy: .public) NAL types \(types, privacy: .public), decoded \(image != nil)")
@@ -849,6 +855,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         session.reportFrame(image, size: encodedDecoder.outputSize)
     }
     private var encodedCount = 0
+    private var failedDecodes = 0
     private static let log = Logger(subsystem: "me.mizorewww.rayon", category: "uu-driver")
 
     private func handleTextChannel(_ data: Data) {
