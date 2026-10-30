@@ -27,7 +27,21 @@ if [[ ! -d "$APP_PATH" ]]; then
     exit 1
 fi
 
-# 2. Replace any existing installation. Prefer the Trash when possible.
+# 2. A catussh still running from the old copy would keep running it from
+#    the Trash, and a later `open` could bring that copy back. Ask it to quit
+#    (it asks about open terminals, as for any quit) and wait for it.
+running() { pgrep -f "^$DEST/Contents/MacOS/catussh\$" >/dev/null 2>&1; }
+if running; then
+    printf 'Quitting the running catussh…\n'
+    osascript -e 'tell application id "me.mizorewww.rayon" to quit' >/dev/null 2>&1 || true
+    for _ in $(seq 1 60); do running || break; sleep 1; done
+    if running; then
+        printf 'error: catussh is still running (answer its quit question, or quit it), then run this again.\n' >&2
+        exit 1
+    fi
+fi
+
+# 3. Replace any existing installation. Prefer the Trash when possible.
 if [[ -d "$DEST" ]]; then
     printf 'Replacing existing %s\n' "$DEST"
     if command -v trash >/dev/null 2>&1; then
@@ -37,7 +51,7 @@ if [[ -d "$DEST" ]]; then
     fi
 fi
 
-# 3. Install. ditto preserves bundle metadata better than cp -R.
+# 4. Install. ditto preserves bundle metadata better than cp -R.
 ditto "$APP_PATH" "$DEST"
 
 # Locally built apps carry no quarantine attribute, but clear it in case
