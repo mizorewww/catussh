@@ -187,7 +187,7 @@ private struct NearbyHostRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if let saved {
-                Text("Saved as \(saved.name)")
+                Text(saved.name == host.displayName ? "Saved" : "Saved as \(saved.name)")
                     .font(.rxHelp)
                     .foregroundStyle(.rxInkSecondary)
                 Button("Connect") { AppRouter.shared.openDesktop(machine: saved.id) }

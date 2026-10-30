@@ -17,7 +17,9 @@ public struct CloudSyncSettings: View {
 
     public var body: some View {
         RXDividedStack {
-            RXFormRow("Sync with iCloud", description: (sync.isOn ? nil : sync.problem) ?? """
+            // A build that cannot sync says so beside the switch, on or off:
+            // on, it can only be turned off.
+            RXFormRow("Sync with iCloud", description: sync.problem.map { sync.isOn ? $0 + " Turn this off; nothing is synced." : $0 } ?? """
             Servers and identities are encrypted on this device, with a passphrase you choose, \
             before they go to iCloud. Apple cannot read them.
             """) {

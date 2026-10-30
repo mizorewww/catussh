@@ -64,7 +64,8 @@ struct ServerEditorSheet: View {
             // scrolling version the one that fits.
             ViewThatFits(in: .vertical) {
                 fields
-                ScrollView { fields.padding(.trailing, RX.Space.s2) }
+                // Clear of the scroller, which sits over the right edge.
+                ScrollView { fields.padding(.trailing, RX.Space.s4) }
             }
             .frame(maxHeight: 440)
         } footer: {
