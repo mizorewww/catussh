@@ -239,6 +239,8 @@ private struct TerminalStatusBar: View {
 
     var endpoint: String {
         if let command = context.command { return command.command }
+        // Its address would be the device id; it is reached by name.
+        if context.machine.isUURemoteDevice { return "UU Remote · " + context.machine.name }
         return context.machine.getCommand(insertLeadingSSH: false)
     }
 
