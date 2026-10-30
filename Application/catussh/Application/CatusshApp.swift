@@ -6,6 +6,7 @@
 //
 
 import CodeEditorUI
+import Combine
 import CatusshModule
 import os
 import CatusshTerminal
@@ -126,31 +127,72 @@ struct CatusshCommands: Commands {
 /// The Desktop menu, while a remote desktop is in front: the stage's controls
 /// with keys to them.
 private struct DesktopCommands: View {
-    @ObservedObject var session: RemoteDesktopSession
+    let session: RemoteDesktopSession
+    /// Not the session itself: it changes with every frame, and each change
+    /// rebuilds the whole menu bar, which kept the main thread too busy to
+    /// finish quitting.
+    @StateObject private var state: DesktopMenuState
+
+    init(session: RemoteDesktopSession) {
+        self.session = session
+        _state = StateObject(wrappedValue: DesktopMenuState(session))
+    }
 
     var body: some View {
-        let connected = session.phase == .connected
+        let connected = state.connected
         Button("Send Ctrl+Alt+Delete") { session.sendKeys(RemoteDesktopSpecialKeys.ctrlAltDelete) }
-            .disabled(!connected || session.viewOnly)
+            .disabled(!connected || state.viewOnly)
         Button("Paste Clipboard to Remote") {
             if let text = UIPasteboard.general.string, !text.isEmpty { session.pushClipboard(text) }
         }
         .keyboardShortcut("v", modifiers: [.command, .shift])
         .disabled(!connected)
         Button("Copy Remote Clipboard") { UIPasteboard.general.string = session.remoteClipboard }
-            .disabled(session.remoteClipboard.isEmpty)
+            .disabled(!state.hasRemoteClipboard)
         Divider()
-        Toggle("View Only", isOn: $session.viewOnly)
+        Toggle("View Only", isOn: Binding(get: { state.viewOnly }, set: { session.viewOnly = $0 }))
         Button("Refresh Screen") { session.refresh() }
             .keyboardShortcut("r", modifiers: .command)
             .disabled(!connected)
         Divider()
-        if session.phase.isTerminal || session.phase == .idle {
+        if state.ended {
             Button("Reconnect") { session.connect() }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
         } else {
             Button("Disconnect") { session.disconnect() }
         }
+    }
+}
+
+/// The few things the Desktop menu shows, published only when one changes.
+@MainActor
+private final class DesktopMenuState: ObservableObject {
+    @Published private(set) var connected = false
+    @Published private(set) var ended = false
+    @Published private(set) var viewOnly = false
+    @Published private(set) var hasRemoteClipboard = false
+    private var watchers: Set<AnyCancellable> = []
+
+    init(_ session: RemoteDesktopSession) {
+        session.$phase
+            .map { $0 == .connected }
+            .removeDuplicates()
+            .sink { [weak self] in self?.connected = $0 }
+            .store(in: &watchers)
+        session.$phase
+            .map { $0.isTerminal || $0 == .idle }
+            .removeDuplicates()
+            .sink { [weak self] in self?.ended = $0 }
+            .store(in: &watchers)
+        session.$viewOnly
+            .removeDuplicates()
+            .sink { [weak self] in self?.viewOnly = $0 }
+            .store(in: &watchers)
+        session.$remoteClipboard
+            .map { !$0.isEmpty }
+            .removeDuplicates()
+            .sink { [weak self] in self?.hasRemoteClipboard = $0 }
+            .store(in: &watchers)
     }
 }
 

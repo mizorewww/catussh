@@ -9,6 +9,7 @@
 
 import AppKit
 import ObjectiveC
+import os
 
 @objc(Bridge) final class Bridge: NSObject, MacBridging {
     var statusItems: [String: StatusItem] = [:]
@@ -43,8 +44,14 @@ import ObjectiveC
 
     /// UIKit owns the application delegate; its answer to "should terminate"
     /// is wrapped rather than replaced.
+    static let quitLog = Logger(subsystem: "me.mizorewww.rayon", category: "quit")
+
     private func installTerminationGuard() {
-        guard let delegate = NSApp.delegate else { return }
+        guard let delegate = NSApp.delegate else {
+            Bridge.quitLog.error("no application delegate yet; the termination guard is not installed")
+            return
+        }
+        Bridge.quitLog.info("termination guard on \(String(describing: type(of: delegate)), privacy: .public)")
         let selector = #selector(NSApplicationDelegate.applicationShouldTerminate(_:))
         let cls: AnyClass = type(of: delegate)
         typealias Original = @convention(c) (AnyObject, Selector, NSApplication) -> NSApplication.TerminateReply
@@ -52,8 +59,13 @@ import ObjectiveC
             unsafeBitCast(method_getImplementation($0), to: Original.self)
         }
         let block: @convention(block) (AnyObject, NSApplication) -> NSApplication.TerminateReply = { [weak self] receiver, app in
-            if let mayTerminate = self?.mayTerminate, !mayTerminate() { return .terminateCancel }
-            return original?(receiver, selector, app) ?? .terminateNow
+            if let mayTerminate = self?.mayTerminate, !mayTerminate() {
+                Bridge.quitLog.info("should terminate: no, the app asks first")
+                return .terminateCancel
+            }
+            let reply = original?(receiver, selector, app) ?? .terminateNow
+            Bridge.quitLog.info("should terminate: UIKit answers \(reply.rawValue)")
+            return reply
         }
         let implementation = imp_implementationWithBlock(block)
         if !class_addMethod(cls, selector, implementation, "Q@:@"),
