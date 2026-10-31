@@ -382,11 +382,16 @@ enum TerminalSessionActions {
 }
 
 extension TerminalManager.Context {
-    /// The terminals shown as tabs beside this one: the server's terminals, or
-    /// only this one for Quick Connect.
+    /// The terminals shown as tabs beside this one: the server's terminals,
+    /// or for Quick Connect the ones opened with the same command (⌘T and
+    /// "+" open another of those).
     @MainActor var tabSiblings: [TerminalManager.Context] {
-        guard remoteType == .machine else { return [self] }
-        return TerminalManager.shared.sessionContexts.filter { $0.remoteType == .machine && $0.machine.id == machine.id }
+        let all = TerminalManager.shared.sessionContexts
+        if remoteType == .machine {
+            return all.filter { $0.remoteType == .machine && $0.machine.id == machine.id }
+        }
+        guard let command = command?.command else { return [self] }
+        return all.filter { $0.remoteType == .command && $0.command?.command == command }
     }
 
     /// The server's name, or `user@host` for a Quick Connect session.
