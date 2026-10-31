@@ -7,6 +7,8 @@
 
 #import "GenericNetworking.h"
 
+#import <netinet/tcp.h>
+
 /*
  waits for a non-blocking connect() to settle on a socket
  select is retried on EINTR against an absolute deadline so a signal
@@ -189,6 +191,7 @@ static BOOL NSRWaitForSocketWritable(int sock, double timeoutSeconds) {
                 close(forwardsock);
                 continue;
             }
+            NSRConfigureLiveness(forwardsock);
             NSRLog(@"created socket %d to address %s", forwardsock, str);
             return forwardsock;
         } else if ([candidateHostData length] == sizeof(struct sockaddr_in6)) {
@@ -226,6 +229,7 @@ static BOOL NSRWaitForSocketWritable(int sock, double timeoutSeconds) {
                 close(forwardsock);
                 continue;
             }
+            NSRConfigureLiveness(forwardsock);
             NSRLog(@"created socket %d to address %s", forwardsock, str);
             return forwardsock;
         } else {
@@ -234,6 +238,22 @@ static BOOL NSRWaitForSocketWritable(int sock, double timeoutSeconds) {
         }
     }
     return 0;
+}
+
+/*
+ A connection whose network went away (sleep, a new Wi-Fi, a NAT that
+ forgot it) must end rather than hang: probe an idle link after 30 s, and
+ drop one that stops acknowledging for 30 s, instead of the minutes TCP
+ would otherwise retransmit for.
+ */
+static void NSRConfigureLiveness(int socketDescriptor) {
+    setsockopt(socketDescriptor, SOL_SOCKET, SO_KEEPALIVE, &(int){1}, sizeof(int));
+    setsockopt(socketDescriptor, IPPROTO_TCP, TCP_KEEPALIVE, &(int){30}, sizeof(int));
+    setsockopt(socketDescriptor, IPPROTO_TCP, TCP_KEEPINTVL, &(int){10}, sizeof(int));
+    setsockopt(socketDescriptor, IPPROTO_TCP, TCP_KEEPCNT, &(int){3}, sizeof(int));
+#ifdef TCP_RXT_CONNDROPTIME
+    setsockopt(socketDescriptor, IPPROTO_TCP, TCP_RXT_CONNDROPTIME, &(int){30}, sizeof(int));
+#endif
 }
 
 + (void)destroyNativeSocket:(int)socketDescriptor {
