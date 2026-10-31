@@ -18,6 +18,8 @@
 @property (nonatomic, nullable, strong) NSRemoteChannelTerminalSizeBlock requestTerminalSizeBlock;
 
 @property (nonatomic) CGSize currentTerminalSize;
+// what was typed and the channel has not taken yet
+@property (nonatomic, nonnull, strong) NSMutableData *pendingWrite;
 
 @property (nonatomic, nullable, strong) NSDate *scheduledTermination;
 @property (nonatomic, nullable, strong) dispatch_block_t terminationBlock;
@@ -40,6 +42,7 @@
         _representedChannel = representedChannel;
         _channelCompleted = NO;
         _currentTerminalSize = CGSizeMake(0, 0);
+        _pendingWrite = [[NSMutableData alloc] init];
         _exitStatus = 0;
     }
     return self;
@@ -134,39 +137,38 @@
     }
 }
 
+/*
+ Writes what the channel takes now and keeps the rest for the next tick.
+ It must never wait here for the remote to take more: a remote whose
+ input window is full may itself be waiting for us to read its output,
+ and reading happens on this same tick; waiting would freeze both sides
+ for good (pasting into a busy full-screen program did it). A partial
+ write keeps the remainder instead of dropping it.
+ */
 - (void)unsafeChannelWrite {
-    if (!self.requestDataBlock) {
-        return;
+    if (self.requestDataBlock) {
+        NSString *requestedBuffer = self.requestDataBlock();
+        if (requestedBuffer.length > 0) {
+            NSData *data = [requestedBuffer dataUsingEncoding:NSUTF8StringEncoding];
+            if (data.length > 0) { [self.pendingWrite appendData:data]; }
+        }
     }
-    NSString *requestedBuffer = self.requestDataBlock();
-    if (!requestedBuffer || [requestedBuffer length] < 1) {
-        return;
-    }
-    NSData *data = [requestedBuffer dataUsingEncoding:NSUTF8StringEncoding];
-    if (!data || [data length] < 1) {
-        NSRLog(@"error occurred during message encode, ignoring empty data");
-        return;
-    }
-    while (true) {
+    while (self.pendingWrite.length > 0) {
         if ([self unsafeChannelShouldTerminate]) {
-            break;
+            [self.pendingWrite setLength:0];
+            return;
         }
         // Actual number of bytes written or negative on failure.
-        long rc = libssh2_channel_write(self.representedChannel, [data bytes], [data length]);
-        if (rc == LIBSSH2_ERROR_EAGAIN) {
-            usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
-            continue;
+        long rc = libssh2_channel_write(self.representedChannel, self.pendingWrite.bytes, self.pendingWrite.length);
+        if (rc == LIBSSH2_ERROR_EAGAIN || rc == 0) {
+            return; // the channel is full: the next tick, after reading
         }
         if (rc < 0) {
             NSRLog(@"error occurred during message write, consider terminated channel");
-            break;
+            [self.pendingWrite setLength:0];
+            return;
         }
-        if (rc != [data length]) {
-            NSRLog(@"written data was smaller than giving, data might broke");
-            break;
-        }
-        // do not deal with error?
-        break;
+        [self.pendingWrite replaceBytesInRange:NSMakeRange(0, (NSUInteger)rc) withBytes:NULL length:0];
     }
 }
 
