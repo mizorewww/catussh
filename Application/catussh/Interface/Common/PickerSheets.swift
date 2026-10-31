@@ -17,6 +17,7 @@ struct ServerPickerSheet: View {
     let onComplete: ([RDMachine.ID]?) -> Void
 
     @EnvironmentObject var store: CatusshStore
+    @ObservedObject private var uuAccount = UURemoteAccountStore.shared
     @State private var selection: Set<RDMachine.ID>
     @State private var searchText = ""
 
@@ -50,13 +51,13 @@ struct ServerPickerSheet: View {
                     if allowsMany {
                         Button(allSelected ? "Deselect All" : "Select All") {
                             if allSelected {
-                                selection.subtract(machines.map(\.id))
+                                selection.subtract(selectable.map(\.id))
                             } else {
-                                selection.formUnion(machines.map(\.id))
+                                selection.formUnion(selectable.map(\.id))
                             }
                         }
                         .buttonStyle(.rx)
-                        .disabled(machines.isEmpty)
+                        .disabled(selectable.isEmpty)
                     }
                 }
                 ScrollView {
@@ -104,12 +105,22 @@ struct ServerPickerSheet: View {
         .frame(width: 520)
     }
 
+    private var selectable: [RDMachine] { machines.filter { uuOnline($0) != false } }
+
     var allSelected: Bool {
-        !machines.isEmpty && machines.allSatisfy { selection.contains($0.id) }
+        !selectable.isEmpty && selectable.allSatisfy { selection.contains($0.id) }
+    }
+
+    /// A UU Remote device has no address worth showing, only whether it is
+    /// online; an offline one can't be reached for anything picked here.
+    private func uuOnline(_ machine: RDMachine) -> Bool? {
+        guard machine.isUURemoteDevice else { return nil }
+        return uuAccount.devices.first { $0.deviceID == machine.uuDeviceID }?.isOnline ?? false
     }
 
     func row(_ machine: RDMachine) -> some View {
         let isSelected = selection.contains(machine.id)
+        let online = uuOnline(machine)
         return Button {
             if allowsMany {
                 if isSelected { selection.remove(machine.id) } else { selection.insert(machine.id) }
@@ -127,9 +138,15 @@ struct ServerPickerSheet: View {
                     RedactableText(machine.name, redacted: store.machineRedacted == .all)
                         .font(.rxBody)
                         .foregroundStyle(.rxInk)
-                    RedactableText("\(machine.remoteAddress):\(machine.remotePort)", redacted: store.machineRedacted != .none)
-                        .font(.rxCode)
-                        .foregroundStyle(.rxInkSecondary)
+                    if let online {
+                        Text(online ? "UU Remote · Online" : "UU Remote · Offline")
+                            .font(.rxCaption)
+                            .foregroundStyle(.rxInkSecondary)
+                    } else {
+                        RedactableText("\(machine.remoteAddress):\(machine.remotePort)", redacted: store.machineRedacted != .none)
+                            .font(.rxCode)
+                            .foregroundStyle(.rxInkSecondary)
+                    }
                 }
                 Spacer()
                 if !machine.group.isEmpty {
@@ -142,6 +159,8 @@ struct ServerPickerSheet: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(online == false)
+        .opacity(online == false ? 0.5 : 1)
     }
 }
 
