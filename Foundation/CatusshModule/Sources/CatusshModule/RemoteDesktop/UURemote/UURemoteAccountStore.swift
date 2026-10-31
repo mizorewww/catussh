@@ -54,6 +54,8 @@ public final class UURemoteAccountStore: ObservableObject {
     // MARK: - Persistence
 
     private static let persistedKey = "me.mizorewww.rayon.uuremote.account"
+    /// The name the login answered with; no request returns it later.
+    private static let nicknameKey = "me.mizorewww.rayon.uuremote.nickname"
 
     private func loadPersisted() {
         guard let encrypted = UserDefaults.standard.data(forKey: Self.persistedKey),
@@ -62,6 +64,7 @@ public final class UURemoteAccountStore: ObservableObject {
         else { return }
         credentials = saved
         userID = saved.userID
+        nickname = UserDefaults.standard.string(forKey: Self.nicknameKey) ?? ""
         isLoggedIn = saved.isComplete
         loading = Task {
             await client.updateCredentials(saved)
@@ -88,6 +91,7 @@ public final class UURemoteAccountStore: ObservableObject {
               let encrypted = AES.shared.encrypt(data: data)
         else { return }
         UserDefaults.standard.set(encrypted, forKey: Self.persistedKey)
+        UserDefaults.standard.set(nickname, forKey: Self.nicknameKey)
     }
 
     // MARK: - Login
