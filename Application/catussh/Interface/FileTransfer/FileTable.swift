@@ -280,7 +280,8 @@ private final class FileCell: UITableViewCell {
         modified.text = stat.modificationDate.map { Self.dateFormatter.string(from: $0) } ?? "—"
         permissions.text = stat.permissionDescription
         // A uid is an id, not a quantity: 1000, never "1,000".
-        owner.text = String(stat.ownerUID)
+        // SFTP gives the uid only; 0 is root everywhere
+        owner.text = stat.ownerUID == 0 ? "root" : String(stat.ownerUID)
         isHovered = false
         isChosen = chosen
         refreshBackground(animated: false)
