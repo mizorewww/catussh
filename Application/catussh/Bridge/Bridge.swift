@@ -19,6 +19,7 @@ import os
     var windowsBeforePopover: Set<ObjectIdentifier>?
     var updateObserver: NSObjectProtocol?
     var closeShortcut: (() -> Bool)?
+    var newTerminalShortcut: (() -> Bool)?
     var shortcutMonitor: Any?
 
     override required init() {
@@ -79,6 +80,10 @@ import os
         NSApp.terminate(nil)
     }
 
+    func setNewTerminalShortcutHandler(_ handler: @escaping () -> Bool) {
+        newTerminalShortcut = handler
+    }
+
     func setCloseShortcutHandler(_ handler: @escaping () -> Bool) {
         closeShortcut = handler
         guard shortcutMonitor == nil else { return }
@@ -103,6 +108,7 @@ import os
         switch (event.keyCode, event.charactersIgnoringModifiers?.lowercased()) {
         case (12, _), (_, "q"): key = "q"
         case (13, _), (_, "w"): key = "w"
+        case (17, _), (_, "t"): key = "t"
         default: return false
         }
         switch key {
@@ -112,6 +118,13 @@ import os
             // must not keep catussh from quitting.
             NSApp.terminate(nil)
             return true
+        case "t":
+            // Ghostty takes ⌘T for a tab of its own, which catussh has none of.
+            if isShowingSheet() { return true }
+            let window = event.window ?? NSApp.keyWindow
+            guard let window, ordinaryWindows.contains(window) else { return false }
+            if event.isARepeat { return true }
+            return newTerminalShortcut?() ?? false
         case "w":
             if isShowingSheet() { return true }
             let window = event.window ?? NSApp.keyWindow

@@ -281,6 +281,25 @@ final class AppRouter: ObservableObject {
         }
     }
 
+    /// ⌘T: another terminal to the server in front (from any of its pages),
+    /// or to the same Quick Connect command; elsewhere, the picker.
+    @MainActor
+    func newTerminal() {
+        guard CatusshUtil.topViewController()?.presentingViewController == nil,
+              Mac.bridge?.isShowingSheet() != true
+        else { return }
+        switch owner(of: route) {
+        case let .server(id):
+            openTerminal(machine: id, another: true)
+        case let .command(id):
+            if let command = TerminalManager.shared.sessionContexts.first(where: { $0.id == id })?.command {
+                openTerminal(command: command)
+            }
+        case nil:
+            openTerminals()
+        }
+    }
+
     /// ⌘W: closes the session page in front, as a browser closes its tab.
     /// The window itself never closes from here (it is the whole app); on a
     /// place, or with a sheet or alert up, the key does nothing.

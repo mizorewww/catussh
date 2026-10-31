@@ -71,6 +71,9 @@ struct CatusshCommands: Commands {
         CommandGroup(after: .newItem) {
             Button("New Server…") { AppRouter.shared.presentNewServer = true }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
+            // The key itself is caught by MacBridge (Ghostty binds ⌘T).
+            Button("New Terminal") { AppRouter.shared.newTerminal() }
+                .keyboardShortcut("t", modifiers: .command)
             Button("Open Terminals…") { AppRouter.shared.openTerminals() }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
         }
@@ -258,6 +261,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // window, closing it looks like the app quitting.
         Mac.bridge?.setCloseShortcutHandler {
             MainActor.assumeIsolated { AppRouter.shared.closeTabInFront() }
+            return true
+        }
+        Mac.bridge?.setNewTerminalShortcutHandler {
+            MainActor.assumeIsolated { AppRouter.shared.newTerminal() }
             return true
         }
         TraySceneDelegate.discardLeftovers()

@@ -40,6 +40,8 @@ import Foundation
     /// window's content sees them. `handler` answers ⌘W: true when the app
     /// closed something (or wants the key dropped), false to let it through.
     func setCloseShortcutHandler(_ handler: @escaping () -> Bool)
+    /// ⌘T, caught before the terminal (Ghostty binds it) and the menu.
+    func setNewTerminalShortcutHandler(_ handler: @escaping () -> Bool)
     /// Whether a main window has an alert sheet up.
     func isShowingSheet() -> Bool
     /// Whether an app-modal alert or panel is running.
