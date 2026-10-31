@@ -70,9 +70,19 @@ import os
                 // UIKit then waits for every background task, including
                 // ones frameworks hold (the UU page's WebKit): 16 s to never
                 // in acceptance. Its scenes have had their say by then.
+                // UIKit also drops the quit on its own when the app comes to
+                // the front meanwhile (a click, a Dock activation): it takes
+                // that for a relaunch and replies NO, and a late YES is
+                // ignored. The user has agreed to quit by now (the guard
+                // above asks first), so the process goes regardless.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                     Bridge.quitLog.info("termination still pending after 3 s; finishing it")
                     NSApp.reply(toApplicationShouldTerminate: true)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        Bridge.quitLog.error("UIKit dropped the quit; exiting")
+                        UserDefaults.standard.synchronize()
+                        exit(0)
+                    }
                 }
             }
             return reply
