@@ -199,13 +199,17 @@ struct ServerColumns {
     let identity: CGFloat = 110
     let cpu: CGFloat = 110
     let lastUsed: CGFloat = 120
-    let actions: CGFloat = 220
+    /// Room for Files, Monitor, Desktop and Terminal as words when the
+    /// table is wide enough; narrower, the extra tools fall back to icons.
+    let actions: CGFloat
     let showIdentity: Bool
     let showCPU: Bool
     let showLastUsed: Bool
 
     init(width: CGFloat) {
-        let base: CGFloat = 180 + 150 + 220 + 24
+        let narrow: CGFloat = 180 + 150 + 220 + 24
+        actions = width > narrow + 110 + 80 ? 300 : 220
+        let base = narrow + actions - 220
         showCPU = width > base + 110
         showIdentity = width > base + 110 + 110
         showLastUsed = width > base + 110 + 110 + 120
@@ -284,21 +288,10 @@ private struct ServerRow: View {
                     UUDeviceActions(machine: read)
                         .frame(width: columns.actions, alignment: .trailing)
                 } else {
-                HStack(spacing: RX.Space.s1) {
-                    // Three beside Terminal do not fit as words: then as icons.
-                    let others: [ServerTool] = read.hasRemoteDesktop ? [.files, .monitor, .desktop] : [.files, .monitor]
-                    ForEach(others) { tool in
-                        Button { tool.show(machine) } label: {
-                            Label(tool.title, systemImage: tool.systemImage)
-                                .labelStyle(TitleOrIcon(iconOnly: others.count > 2))
-                        }
-                        .buttonStyle(.rx(.plain, size: .small, iconOnly: others.count > 2))
-                        .help(tool.help)
-                        .accessibilityLabel(tool.title)
-                    }
-                    Button(ServerTool.terminal.title) { ServerTool.terminal.show(machine) }
-                        .buttonStyle(.rx(size: .small))
-                        .help(ServerTool.terminal.help)
+                // Words where they fit beside Terminal, icons where not.
+                ViewThatFits(in: .horizontal) {
+                    toolButtons(read, iconOnly: false)
+                    toolButtons(read, iconOnly: true)
                 }
                 .frame(width: columns.actions, alignment: .trailing)
                 }
@@ -314,6 +307,25 @@ private struct ServerRow: View {
         })
         .simultaneousGesture(TapGesture(count: 1).onEnded { selection = machine })
         .contextMenu { ServerContextMenu(machine: machine) }
+    }
+
+    func toolButtons(_ read: RDMachine, iconOnly: Bool) -> some View {
+        HStack(spacing: RX.Space.s1) {
+            let others: [ServerTool] = read.hasRemoteDesktop ? [.files, .monitor, .desktop] : [.files, .monitor]
+            ForEach(others) { tool in
+                Button { tool.show(machine) } label: {
+                    Label(tool.title, systemImage: tool.systemImage)
+                        .labelStyle(TitleOrIcon(iconOnly: iconOnly))
+                }
+                .buttonStyle(.rx(.plain, size: .small, iconOnly: iconOnly))
+                .help(tool.help)
+                .accessibilityLabel(tool.title)
+            }
+            Button(ServerTool.terminal.title) { ServerTool.terminal.show(machine) }
+                .buttonStyle(.rx(size: .small))
+                .help(ServerTool.terminal.help)
+        }
+        .fixedSize()
     }
 
     func identityName(_ machine: RDMachine) -> String {
