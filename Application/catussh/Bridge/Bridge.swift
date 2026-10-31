@@ -66,6 +66,15 @@ import os
             }
             let reply = original?(receiver, selector, app) ?? .terminateNow
             Bridge.quitLog.info("should terminate: UIKit answers \(reply.rawValue)")
+            if reply == .terminateLater {
+                // UIKit then waits for every background task, including
+                // ones frameworks hold (the UU page's WebKit): 16 s to never
+                // in acceptance. Its scenes have had their say by then.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    Bridge.quitLog.info("termination still pending after 3 s; finishing it")
+                    NSApp.reply(toApplicationShouldTerminate: true)
+                }
+            }
             return reply
         }
         let implementation = imp_implementationWithBlock(block)
