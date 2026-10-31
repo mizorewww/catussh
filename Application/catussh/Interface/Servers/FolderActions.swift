@@ -168,14 +168,13 @@ struct FolderHeaderRow: View {
         Menu {
             menuItems
         } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.rxInkSecondary)
-                .frame(width: 22, height: 18)
-                .contentShape(Rectangle())
+            Label("Folder Actions", systemImage: "ellipsis")
         }
-        .menuStyle(.borderlessButton)
+        // As the server cards' menu: a borderless menu here opened far to
+        // the left of its button.
+        .menuStyle(.button)
         .menuIndicator(.hidden)
+        .buttonStyle(.rx(.plain, size: .small, iconOnly: true))
         .fixedSize()
         .help("Folder actions")
     }
