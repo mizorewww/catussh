@@ -132,7 +132,12 @@ struct SessionTabs: View {
                     HStack(spacing: RX.Space.s1) {
                         let siblings = siblings
                         ForEach(Array(siblings.enumerated()), id: \.element.id) { index, context in
-                            SessionTab(context: context, selected: context.id == current.id, number: siblings.count > 1 ? index + 1 : nil)
+                            SessionTab(
+                                context: context,
+                                selected: context.id == current.id,
+                                number: siblings.count > 1 ? index + 1 : nil,
+                                shortcut: siblings.count > 1 ? Self.shortcut(index: index, count: siblings.count) : nil
+                            )
                                 .id(context.id)
                         }
                     }
@@ -156,13 +161,22 @@ struct SessionTabs: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.rxInkSecondary)
-            .help("New Terminal")
+            .help("New Terminal (⌘T)")
             .accessibilityLabel("New Terminal")
         }
         // With the toolbar capsule's own inset, 4pt from its ends.
         .padding(.horizontal, 2.25)
         .frame(maxWidth: 520)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+extension SessionTabs {
+    /// The key that shows a tab, as the menu binds them: ⌘1–⌘8 the first
+    /// eight, ⌘9 the last.
+    static func shortcut(index: Int, count: Int) -> String? {
+        if index < 8 { return "⌘\(index + 1)" }
+        return index == count - 1 ? "⌘9" : nil
     }
 }
 
@@ -178,6 +192,8 @@ private struct SessionTab: View {
     let selected: Bool
     /// Position among the server's terminals, when there is more than one.
     let number: Int?
+    /// The key that shows it (⌘1…), when it has one.
+    var shortcut: String?
 
     /// The server is already named in the sidebar and title; the tab names the
     /// shell (its title, usually user@host: path), else its number.
@@ -195,6 +211,12 @@ private struct SessionTab: View {
                 .foregroundStyle(selected ? Color.rxInk : Color.rxInkSecondary)
                 .lineLimit(1)
                 .frame(maxWidth: 160)
+            if let shortcut {
+                Text(shortcut)
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.rxInkTertiary)
+                    .accessibilityHidden(true)
+            }
             Button {
                 TerminalSessionActions.close(context)
             } label: {
