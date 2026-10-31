@@ -378,14 +378,15 @@ public enum UUControlProtocol {
             var height = 0
             for item in sub {
                 switch (item.number, item.value) {
-                case (1, let .varint(v)): id = Int(v)
-                case (2, let .varint(v)): fps = Int(v)
+                case (1, let .varint(v)): id = v.int32Value
+                case (2, let .varint(v)): fps = v.int32Value
                 case (4, let .varint(v)): isPrimary = v != 0
                 case (7, let .varint(v)): isPrimary = v != 0
                 case (8, let .fixed64(b)):
                     if b.count == 8 {
                         let raw = b.withUnsafeBytes { $0.load(as: Double.self) }
-                        width = Int(raw)
+                        // a NaN or huge value would trap in Int(_:)
+                        if raw.isFinite, raw >= 0, raw < 1_000_000 { width = Int(raw) }
                     }
                 case (10, let .bytes(b)): name = String(data: b, encoding: .utf8) ?? ""
                 case (3, let .bytes(b)):
@@ -393,10 +394,10 @@ public enum UUControlProtocol {
                     if let rectFields = try? UUWire.decode(b) {
                         for rect in rectFields {
                             switch (rect.number, rect.value) {
-                            case (3, let .varint(v)): width = Int(v)
-                            case (4, let .varint(v)): height = Int(v)
-                            case (5, let .varint(v)): width = Int(v)
-                            case (6, let .varint(v)): height = Int(v)
+                            case (3, let .varint(v)): width = v.int32Value
+                            case (4, let .varint(v)): height = v.int32Value
+                            case (5, let .varint(v)): width = v.int32Value
+                            case (6, let .varint(v)): height = v.int32Value
                             default: break
                             }
                         }
@@ -445,13 +446,13 @@ public enum UUControlProtocol {
                 var visible = false
                 for item in sub {
                     switch (item.number, item.value) {
-                    case (1, let .varint(v)): x = Double(v)
-                    case (2, let .varint(v)): y = Double(v)
-                    case (3, let .varint(v)): w = Int(v)
-                    case (4, let .varint(v)): h = Int(v)
+                    case (1, let .varint(v)): x = Double(v.int32Value)
+                    case (2, let .varint(v)): y = Double(v.int32Value)
+                    case (3, let .varint(v)): w = v.int32Value
+                    case (4, let .varint(v)): h = v.int32Value
                     case (5, let .bytes(b)):
                         image = Self.rgbaToCGImage(b, width: w, height: h)
-                    case (6, let .varint(v)): cursorType = Int(v)
+                    case (6, let .varint(v)): cursorType = v.int32Value
                     case (7, let .fixed64(b)):
                         if b.count == 8 { xScale = b.withUnsafeBytes { $0.load(as: Double.self) } }
                     case (8, let .fixed64(b)):
@@ -469,7 +470,9 @@ public enum UUControlProtocol {
 
     /// Converts raw RGBA bytes into a CGImage for cursor rendering.
     static func rgbaToCGImage(_ rgba: Data, width: Int, height: Int) -> CGImage? {
-        guard width > 0, height > 0, rgba.count >= width * height * 4 else { return nil }
+        // a cursor is small; the bound also keeps width * height * 4 from overflowing
+        guard (1 ... 4096).contains(width), (1 ... 4096).contains(height),
+              rgba.count >= width * height * 4 else { return nil }
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
         guard let provider = CGDataProvider(data: rgba as CFData),

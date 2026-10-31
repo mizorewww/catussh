@@ -7,6 +7,22 @@
 import XCTest
 
 final class UURemoteStreamTests: XCTestCase {
+    /// A negative int32 arrives as a ten-byte varint; reading it with Int(_:)
+    /// crashed the app as soon as a remote cursor changed shape.
+    func testNegativeAndHugeCursorFieldsDecodeWithoutTrapping() {
+        var cursor = Data()
+        UUProtobufWriter.pushInt32Field(1, -5, into: &cursor)
+        UUProtobufWriter.pushInt32Field(3, Int32.max, into: &cursor)
+        UUProtobufWriter.pushInt32Field(4, Int32.max, into: &cursor)
+        UUProtobufWriter.pushBytesField(5, Data(repeating: 0, count: 16), into: &cursor)
+        UUProtobufWriter.pushInt32Field(6, -1, into: &cursor)
+        var state = Data()
+        UUProtobufWriter.pushMessageField(2, cursor, into: &state)
+        let decoded = UUControlProtocol.decodeSystemStateChange(state)
+        XCTAssertEqual(decoded?.cursor?.x, -5)
+        XCTAssertNil(decoded?.cursor?.image)
+    }
+
     /// An empty output frame used to crash on the range 1...0.
     func testEmptyTerminalFramesDecodeToNothing() {
         let decoder = UTF8StreamDecoder()

@@ -52,16 +52,16 @@ public struct UUConnectOptions: Equatable, Sendable {
         guard let fields = try? UUWire.decode(data) else { return }
         for field in fields {
             switch (field.number, field.value) {
-            case (1, let .varint(v)): captureType = Int(v)
+            case (1, let .varint(v)): captureType = v.int32Value
             case (2, let .varint(v)): typeValue = v
             case (3, let .bytes(b)): captureParams = UUCaptureParams(decoding: b)
             case (4, let .bytes(b)): decoderCapList.append(UUDecoderCap(decoding: b))
             case (5, let .varint(v)): forceVirtualDisplay = v != 0
             case (6, let .bytes(b)): virtualDisplayModes.append(UUVirtualDisplayMode(decoding: b))
             case (7, let .bytes(b)): virtualDisplayInitResolution = UUScreenResolution(decoding: b)
-            case (8, let .varint(v)): clientType = Int(v)
+            case (8, let .varint(v)): clientType = v.int32Value
             case (9, let .bytes(b)): deviceID = String(data: b, encoding: .utf8) ?? ""
-            case (10, let .varint(v)): controlConnectType = Int(v)
+            case (10, let .varint(v)): controlConnectType = v.int32Value
             case (11, let .bytes(b)): featureFlags = UUFeatureFlags(decoding: b)
             case (12, let .bytes(b)): clientVersion = String(data: b, encoding: .utf8) ?? ""
             default: break
@@ -190,16 +190,16 @@ public struct UUCaptureParams: Equatable, Sendable {
         guard let fields = try? UUWire.decode(data) else { return }
         for field in fields {
             switch (field.number, field.value) {
-            case (1, let .varint(v)): fpsTier = Int(v)
-            case (2, let .varint(v)): videoQuality = Int(v)
+            case (1, let .varint(v)): fpsTier = v.int32Value
+            case (2, let .varint(v)): videoQuality = v.int32Value
             case (3, let .varint(v)): cursorCapture = v != 0
-            case (4, let .varint(v)): chooseResolutionType = Int(v)
+            case (4, let .varint(v)): chooseResolutionType = v.int32Value
             case (5, let .bytes(b)): localResolution = UUScreenResolution(decoding: b)
             case (6, let .bytes(b)): chooseResolution = UUScreenResolution(decoding: b)
-            case (7, let .varint(v)): chromaFormat = Int(v)
+            case (7, let .varint(v)): chromaFormat = v.int32Value
             case (8, let .varint(v)): maxCustomBitrate = Int32(bitPattern: UInt32(truncatingIfNeeded: v))
             case (9, let .varint(v)): enableHDR = v != 0
-            case (10, let .varint(v)): autoFrameQuality = Int(v)
+            case (10, let .varint(v)): autoFrameQuality = v.int32Value
             case (11, let .varint(v)): fpsCount = Int32(bitPattern: UInt32(truncatingIfNeeded: v))
             default: break
             }

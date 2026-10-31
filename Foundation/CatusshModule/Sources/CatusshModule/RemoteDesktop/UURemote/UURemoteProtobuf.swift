@@ -23,6 +23,12 @@ public enum UUWireValue: Equatable, Sendable {
     case fixed32(Data)
 }
 
+public extension UInt64 {
+    /// A varint read as protobuf `int32`: a negative value arrives as ten
+    /// bytes of two's complement, which `Int(_:)` would trap on.
+    var int32Value: Int { Int(Int32(truncatingIfNeeded: self)) }
+}
+
 public struct UUWireField: Equatable, Sendable {
     public var number: UInt32
     public var value: UUWireValue
