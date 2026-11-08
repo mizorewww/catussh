@@ -135,7 +135,12 @@ private struct PageToolbar<Leading: View, Trailing: View>: ViewModifier {
                 }
                 ToolbarItemGroup(placement: .automatic) {
                     trailing
-                    if let primary { primary }
+                }
+                if let primary {
+                    ToolbarItem(placement: .primaryAction) {
+                        primary
+                            .padding(.leading, 6)
+                    }
                 }
             }
         }

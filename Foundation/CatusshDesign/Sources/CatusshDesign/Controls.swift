@@ -417,6 +417,8 @@ private struct RXGroupedButtonBody: View {
 // MARK: - Pop-up field
 
 /// A pop-up drawn as a 28pt field with a chevron, for choices inside forms and sheets.
+/// On macOS, `NSPopUpButton` inside SwiftUI `Menu` discards custom frame/background modifiers
+/// inside its `label`, so we draw the full-width field chrome underneath and overlay the menu.
 public struct RXPicker<Value: Hashable>: View {
     public struct Option {
         let value: Value
@@ -431,6 +433,7 @@ public struct RXPicker<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [Option]
     let placeholder: String
+    @State private var isOpen = false
 
     public init(selection: Binding<Value>, options: [Option], placeholder: String = "Choose…") {
         _selection = selection
@@ -443,19 +446,8 @@ public struct RXPicker<Value: Hashable>: View {
     }
 
     public var body: some View {
-        Menu {
-            ForEach(options.indices, id: \.self) { index in
-                let option = options[index]
-                Button {
-                    selection = option.value
-                } label: {
-                    if option.value == selection {
-                        Label(option.title, systemImage: "checkmark")
-                    } else {
-                        Text(option.title)
-                    }
-                }
-            }
+        Button {
+            isOpen.toggle()
         } label: {
             HStack(spacing: 6) {
                 Text(title)
@@ -474,9 +466,108 @@ public struct RXPicker<Value: Hashable>: View {
             .rxFieldBackground()
             .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
         .accessibilityLabel(title)
+        .popover(isPresented: $isOpen, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(options.indices, id: \.self) { index in
+                    let option = options[index]
+                    let isSelected = option.value == selection
+                    Button {
+                        selection = option.value
+                        isOpen = false
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.rxAccent)
+                                .opacity(isSelected ? 1 : 0)
+                            Text(option.title)
+                                .font(.rxBody)
+                                .foregroundStyle(.rxInk)
+                            Spacer(minLength: 16)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(isSelected ? Color.rxRowSelected : Color.clear)
+                        )
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(6)
+            .frame(minWidth: 180)
+        }
+    }
+}
+
+/// An icon-only or label-based menu button that works reliably with Accessibility (`AXPress`) on macOS.
+public struct RXMenuButton<MenuContent: View>: View {
+    let title: String
+    let systemImage: String
+    let kind: RXButtonStyle.Kind
+    let size: RXButtonStyle.Size
+    let iconOnly: Bool
+    let content: MenuContent
+    @State private var isOpen = false
+
+    public init(
+        _ title: String,
+        systemImage: String = "ellipsis",
+        kind: RXButtonStyle.Kind = .plain,
+        size: RXButtonStyle.Size = .small,
+        iconOnly: Bool = true,
+        @ViewBuilder content: () -> MenuContent
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.kind = kind
+        self.size = size
+        self.iconOnly = iconOnly
+        self.content = content()
+    }
+
+    public var body: some View {
+        Button {
+            isOpen.toggle()
+        } label: {
+            Label(title, systemImage: systemImage)
+        }
+        .buttonStyle(RXButtonStyle(kind, size: size, iconOnly: iconOnly))
+        .help(title)
+        .accessibilityLabel(title)
+        .popover(isPresented: $isOpen, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 2) {
+                content
+            }
+            .buttonStyle(RXPopoverMenuItemStyle(dismiss: { isOpen = false }))
+            .padding(6)
+            .frame(minWidth: 160)
+        }
+    }
+}
+
+private struct RXPopoverMenuItemStyle: ButtonStyle {
+    let dismiss: () -> Void
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.rxBody)
+            .foregroundStyle(configuration.role == .destructive ? Color.rxDanger : Color.rxInk)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(hovered || configuration.isPressed ? Color.rxRowHover : Color.clear)
+            )
+            .contentShape(Rectangle())
+            .onHover { hovered = $0 }
+            .simultaneousGesture(TapGesture().onEnded { dismiss() })
     }
 }
 

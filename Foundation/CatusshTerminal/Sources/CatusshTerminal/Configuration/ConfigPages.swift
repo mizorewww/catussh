@@ -143,10 +143,9 @@ struct ConfigCategoryContent: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, RX.Space.s6)
+                .padding(.horizontal, RX.Space.s4)
                 .padding(.top, RX.Space.s3)
                 .padding(.bottom, RX.Space.s6)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .task(id: state.jump) {
                 guard let jump = state.jump, jump.category == category.id else { return }
@@ -264,8 +263,8 @@ struct ConfigCategoryContent: View {
                         .rxCard(padding: 0)
                         .padding(.bottom, RX.Space.s6)
                 }
-                .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
-                .padding(.trailing, RX.Space.s6)
+                .frame(minWidth: 220, idealWidth: 240, maxWidth: 280)
+                .padding(.trailing, RX.Space.s4)
                 .padding(.top, RX.Space.s3)
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             }

@@ -60,10 +60,10 @@ struct ServerEditorSheet: View {
 
     var body: some View {
         SheetScaffold(isNew ? "New Server" : "Edit Server") {
-            ScrollView(.vertical, showsIndicators: false) {
+            ScrollView(.vertical, showsIndicators: true) {
                 fields
             }
-            .frame(maxHeight: 540)
+            .frame(maxHeight: 420)
             .fixedSize(horizontal: false, vertical: true)
         } footer: {
             Button("Cancel", action: finish)
@@ -160,18 +160,11 @@ struct ServerEditorSheet: View {
                         TextField("Default", text: $group)
                             .textFieldStyle(.rx)
                         if !existingGroups.isEmpty {
-                            Menu {
+                            RXMenuButton("Existing Groups", systemImage: "chevron.down", kind: .bordered, size: .regular, iconOnly: true) {
                                 ForEach(existingGroups, id: \.self) { item in
                                     Button(item) { group = item }
                                 }
-                            } label: {
-                                Label("Existing Groups", systemImage: "chevron.down")
                             }
-                            .menuStyle(.button)
-                            .menuIndicator(.hidden)
-                            .buttonStyle(.rx(iconOnly: true))
-                            .fixedSize()
-                            .help("Choose an existing group")
                         }
                     }
                 }

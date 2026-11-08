@@ -286,15 +286,10 @@ private struct EditorStatusLine: View {
 
     var body: some View {
         HStack(spacing: RX.Space.s3) {
-            Menu {
-                Picker("Syntax", selection: $document.language) {
-                    ForEach(EditorLanguage.allCases) { Text($0.title).tag($0) }
-                }
-            } label: {
-                Text(document.language.title)
+            Picker("Syntax", selection: $document.language) {
+                ForEach(EditorLanguage.allCases) { Text($0.title).tag($0) }
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
+            .labelsHidden()
             .fixedSize()
             .help("Syntax highlighting")
             Text("Ln \(caret.value.line), Col \(caret.value.column)")

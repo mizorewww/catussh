@@ -404,16 +404,9 @@ struct ServerTile: View {
                 toolButton(tool, iconOnly: others.count > 2)
             }
             Spacer(minLength: 0)
-            Menu {
+            RXMenuButton("More", systemImage: "ellipsis", kind: .plain, size: .small, iconOnly: true) {
                 ServerContextMenu(machine: machine, includesTools: false)
-            } label: {
-                Label("More", systemImage: "ellipsis")
             }
-            .menuStyle(.button)
-            .menuIndicator(.hidden)
-            .buttonStyle(.rx(.plain, size: .small, iconOnly: true))
-            .fixedSize()
-            .help("More actions")
         }
     }
 

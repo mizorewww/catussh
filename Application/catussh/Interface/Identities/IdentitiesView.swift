@@ -190,38 +190,26 @@ private struct IdentityDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                // The username is the first field below; the header says
-                // where the identity is used.
+            HStack(alignment: .center) {
                 HelpText(usageLine.isEmpty ? "Not used by any server" : usageLine)
                 Spacer()
-                Menu {
-                    Button("Duplicate") { IdentityActions.duplicate(identity) }
-                    Divider()
-                    Button("Delete…", role: .destructive) { IdentityActions.delete(identity) }
-                } label: {
-                    Label("More", systemImage: "ellipsis")
-                }
-                .menuStyle(.button)
-                .menuIndicator(.hidden)
-                .buttonStyle(.rx(.plain, iconOnly: true))
-                .fixedSize()
-            }
-            IdentityForm(draft: $draft)
-                .padding(.top, RX.Space.s5)
-            HStack(spacing: RX.Space.s2) {
-                Spacer()
                 Button("Revert") { draft = IdentityDraft(original) }
-                    .buttonStyle(.rx)
+                    .buttonStyle(.rx(size: .small))
                     .disabled(!draft.differs(from: original))
                 Button("Save") {
                     store.identityGroup.insert(draft.apply(to: original))
                 }
-                .buttonStyle(.rxPrimary)
+                .buttonStyle(.rx(.primary, size: .small))
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!draft.differs(from: original) || !draft.isValid)
+                RXMenuButton("More", systemImage: "ellipsis", kind: .plain, size: .small, iconOnly: true) {
+                    Button("Duplicate") { IdentityActions.duplicate(identity) }
+                    Divider()
+                    Button("Delete…", role: .destructive) { IdentityActions.delete(identity) }
+                }
             }
-            .padding(.top, RX.Space.s4)
+            IdentityForm(draft: $draft)
+                .padding(.top, RX.Space.s3)
         }
         .rxCard()
         .frame(maxWidth: .infinity)
@@ -271,23 +259,25 @@ struct IdentityForm: View {
                 ], caps: false, fullWidth: true)
             }
             if draft.method == .keyPair {
-                RXField("Private key") {
-                    KeyField(
-                        text: $draft.privateKey,
-                        masked: true,
-                        placeholder: "No private key loaded",
-                        loadTitle: "Load…",
-                        matches: RDIdentity.looksLikePrivateKey
-                    )
-                }
-                RXField("Public key", help: "Optional") {
-                    KeyField(
-                        text: $draft.publicKey,
-                        masked: false,
-                        placeholder: "No public key loaded",
-                        loadTitle: "Load…",
-                        matches: RDIdentity.looksLikePublicKey
-                    )
+                HStack(alignment: .top, spacing: RX.Space.s4) {
+                    RXField("Private key") {
+                        KeyField(
+                            text: $draft.privateKey,
+                            masked: true,
+                            placeholder: "No private key",
+                            loadTitle: "Load…",
+                            matches: RDIdentity.looksLikePrivateKey
+                        )
+                    }
+                    RXField("Public key", help: "Optional") {
+                        KeyField(
+                            text: $draft.publicKey,
+                            masked: false,
+                            placeholder: "No public key",
+                            loadTitle: "Load…",
+                            matches: RDIdentity.looksLikePublicKey
+                        )
+                    }
                 }
                 RXField("Passphrase") {
                     SecureField("None", text: $draft.passphrase)

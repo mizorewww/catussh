@@ -180,18 +180,9 @@ struct FolderHeaderRow: View {
     }
 
     private var menu: some View {
-        Menu {
+        RXMenuButton("Folder Actions", systemImage: "ellipsis", kind: .plain, size: .small, iconOnly: true) {
             menuItems
-        } label: {
-            Label("Folder Actions", systemImage: "ellipsis")
         }
-        // As the server cards' menu: a borderless menu here opened far to
-        // the left of its button.
-        .menuStyle(.button)
-        .menuIndicator(.hidden)
-        .buttonStyle(.rx(.plain, size: .small, iconOnly: true))
-        .fixedSize()
-        .help("Folder actions")
     }
 
     @ViewBuilder private var menuItems: some View {

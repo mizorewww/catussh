@@ -72,7 +72,7 @@ struct ConfigSettingRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: RX.Space.s3) {
-            HStack(alignment: stacked ? .top : .center, spacing: RX.Space.s6) {
+            HStack(alignment: stacked ? .top : .center, spacing: RX.Space.s3) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(highlightedName)
@@ -88,10 +88,10 @@ struct ConfigSettingRow: View {
                             .lineLimit(2)
                     }
                 }
-                .frame(minWidth: 150, maxWidth: .infinity, alignment: .leading)
+                .frame(minWidth: 110, maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
                 .help("Ghostty setting: \(setting.key)")
-                HStack(spacing: RX.Space.s2) {
+                HStack(spacing: RX.Space.s1) {
                     if !widgetBelow {
                         ConfigWidgetView(model: model, setting: setting)
                             .disabled(setting.disabled == true)
@@ -128,15 +128,14 @@ struct ConfigSettingRow: View {
                         .frame(minWidth: 320, idealWidth: 430, minHeight: 240, idealHeight: 420)
                         #endif
                     }
-                    // Only a changed setting can be reset; the slot stays so controls don't shift.
-                    Button { model.reset(setting.key) } label: {
-                        Label("Reset to Default", systemImage: "arrow.counterclockwise")
+                    if isModified {
+                        Button { model.reset(setting.key) } label: {
+                            Label("Reset to Default", systemImage: "arrow.counterclockwise")
+                        }
+                        .buttonStyle(.rx(.plain, size: .small, iconOnly: true))
+                        .help("Reset \(setting.name) to its default")
+                        .transition(.opacity)
                     }
-                    .buttonStyle(.rx(.plain, size: .small, iconOnly: true))
-                    .opacity(isModified ? 1 : 0)
-                    .disabled(!isModified)
-                    .help("Reset \(setting.name) to its default")
-                    .animation(.easeOut(duration: 0.15), value: isModified)
                 }
             }
             if widgetBelow {
@@ -251,7 +250,7 @@ struct ConfigWidgetView: View {
                 } else {
                     TextField(widget?.placeholder ?? "Not set", text: value)
                         .textFieldStyle(.rx)
-                        .frame(width: 240)
+                        .frame(width: 140)
                 }
             }
     }
@@ -299,19 +298,15 @@ struct ConfigWidgetView: View {
     }
 
     private var colorInput: some View {
-        HStack(spacing: RX.Space.s2) {
-            Text(model.document.overrides[setting.key] != nil ? "Custom" : model.document.effectiveTheme(dark: scheme == .dark) != nil ? "Theme" : "Default")
-                .font(.rxHelp)
-                .foregroundStyle(.rxInkSecondary)
-                .fixedSize()
+        HStack(spacing: RX.Space.s1) {
             ColorPicker(setting.name, selection: Binding(get: { Color(configHex: model.document.effectiveColor(setting.key, dark: scheme == .dark)) }, set: { value.wrappedValue = $0.configHex }), supportsOpacity: false)
                 .labelsHidden()
-                .frame(width: 44)
+                .frame(width: 32)
             TextField("#RRGGBB", text: Binding(get: {
                 widget?.type == "color" ? model.document.effectiveColor(setting.key, dark: scheme == .dark) : value.wrappedValue
             }, set: { value.wrappedValue = $0 }))
                 .textFieldStyle(.rxMono)
-                .frame(width: 96)
+                .frame(width: 80)
         }
     }
 
