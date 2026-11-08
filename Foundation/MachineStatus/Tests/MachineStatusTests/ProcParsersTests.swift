@@ -38,6 +38,30 @@ final class ProcParsersTests: XCTestCase {
         XCTAssertNil(info["HUGEPAGES_TOTAL"])
     }
 
+    func testMeminfoUsesMemAvailableWhenPresent() {
+        let memory = ServerStatus.MemoryInfo(meminfo: meminfoFixture)
+        XCTAssertEqual(memory.memAvailable, 8_192_000)
+        XCTAssertEqual(memory.phyUsed, 0.5, accuracy: 0.001)
+    }
+
+    func testNvidiaSmiCSVParser() {
+        let csv = """
+        550.54.14, GPU-1234-5678, NVIDIA GeForce RTX 4090, 24564, 4096, 20468, 95.02.3C.00.01, 35, 72, 18
+        550.54.14, GPU-8765-4321, NVIDIA GeForce RTX 4090, 24564, 1024, 23540, 95.02.3C.00.01, [N/A], 10, 4
+        """
+        let graphics = ServerStatus.GraphicsInfo.parseCSV(csv)
+        XCTAssertEqual(graphics?.version, "550.54.14")
+        XCTAssertEqual(graphics?.units.count, 2)
+        XCTAssertEqual(graphics?.units.first?.uuid, "GPU-1234-5678")
+        XCTAssertEqual(graphics?.units.first?.name, "NVIDIA GeForce RTX 4090")
+        XCTAssertEqual(graphics?.units.first?.memory.total, 24564)
+        XCTAssertEqual(graphics?.units.first?.memory.used, 4096)
+        XCTAssertEqual(graphics?.units.first?.fan_speed, "35 %")
+        XCTAssertEqual(graphics?.units.first?.utilization.gpu_util, 72)
+        XCTAssertEqual(graphics?.units.last?.fan_speed, "[N/A]")
+        XCTAssertNil(ServerStatus.GraphicsInfo.parseCSV("no nvidia gpu available"))
+    }
+
     func testSwapUsageIsRelativeToSwapTotal() {
         // Regression: swap usage was divided by physical memory total,
         // making the reported swap percentage always wrong.

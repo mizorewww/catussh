@@ -19,12 +19,11 @@ let package = Package(
     ],
     dependencies: [
         .package(name: "NSRemoteShell", path: "../../External/NSRemoteShell"),
-        .package(name: "XMLCoder", path: "../XMLCoder"),
     ],
     targets: [
         .target(
             name: "MachineStatus",
-            dependencies: ["NSRemoteShell", "XMLCoder"]
+            dependencies: ["NSRemoteShell"]
         ),
         .testTarget(
             name: "MachineStatusTests",

@@ -9,9 +9,10 @@ import Foundation
 
 public extension ServerStatus {
     /// 服务器 RAM 信息
-    struct MemoryInfo: Codable, Equatable {
+    struct MemoryInfo: Codable, Equatable, Sendable {
         public let memTotal: Double
         public let memFree: Double
+        public let memAvailable: Double?
         public let memBuffers: Double
         public let memCached: Double
         public let swapTotal: Double
@@ -21,6 +22,7 @@ public extension ServerStatus {
         public init() {
             memTotal = 0
             memFree = 0
+            memAvailable = nil
             memBuffers = 0
             memCached = 0
             swapTotal = 0
@@ -29,17 +31,28 @@ public extension ServerStatus {
             swapUsed = 0
         }
 
-        public init(total: Double, free: Double, buffers: Double, cached: Double, swapTotal: Double, swapFree: Double) {
+        public init(
+            total: Double,
+            free: Double,
+            available: Double? = nil,
+            buffers: Double,
+            cached: Double,
+            swapTotal: Double,
+            swapFree: Double
+        ) {
             memTotal = total
             memFree = free
+            memAvailable = available
             memBuffers = buffers
             memCached = cached
             self.swapTotal = swapTotal
             self.swapFree = swapFree
             if total != 0 {
-                phyUsed = (
-                    (total - free - memCached - memBuffers) / total
-                )
+                if let available, available > 0, available <= total {
+                    phyUsed = max(0, min(1, (total - available) / total))
+                } else {
+                    phyUsed = max(0, min(1, (total - free - memCached - memBuffers) / total))
+                }
             } else {
                 phyUsed = 0
             }
@@ -56,11 +69,13 @@ public extension ServerStatus {
 
         public init(meminfo: String) {
             let info = ProcParsers.parseMeminfo(meminfo)
+            let cached = (info["Cached".uppercased()] ?? 0) + (info["SReclaimable".uppercased()] ?? 0)
             self.init(
                 total: info["MemTotal".uppercased()] ?? 0,
                 free: info["MemFree".uppercased()] ?? 0,
+                available: info["MemAvailable".uppercased()],
                 buffers: info["Buffers".uppercased()] ?? 0,
-                cached: info["Cached".uppercased()] ?? 0,
+                cached: cached,
                 swapTotal: info["SwapTotal".uppercased()] ?? 0,
                 swapFree: info["SwapFree".uppercased()] ?? 0
             )

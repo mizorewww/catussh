@@ -119,3 +119,5 @@ yarn-error.log*
 
 # Generated from Application/mCatusshUITests/project.yml by xcodegen
 Application/mCatusshUITests/mCatusshUITests.xcodeproj/
+.pi/
+

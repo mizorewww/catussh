@@ -7,12 +7,11 @@
 
 import Foundation
 import NSRemoteShell
-import XMLCoder
 
 public extension ServerStatus {
     /// 服务器 GPU 信息
-    struct GraphicsInfo: Codable, Equatable {
-        public let version: String // CUDA version, like '11.2'
+    struct GraphicsInfo: Codable, Equatable, Sendable {
+        public let version: String // Driver / CUDA version
         public let units: [SingleGraphicsInfo]
 
         enum CodingKeys: String, CodingKey {
@@ -25,22 +24,79 @@ public extension ServerStatus {
             units = []
         }
 
+        public init(version: String, units: [SingleGraphicsInfo]) {
+            self.version = version
+            self.units = units
+        }
+
         public init?(withRemote shell: NSRemoteShell, timeout: Double) {
             let downloadResult = downloadResultFrom(shell: shell, command: ServerStatus.graphicsScript, timeout: timeout)
-            do {
-                self = try XMLDecoder().decode(
-                    GraphicsInfo.self,
-                    from: Data(downloadResult.utf8)
-                )
-            } catch {
-                debugPrint("[GraphicsInfo] nvidia-smi XML decode failed: \(error)")
+            guard let parsed = Self.parseCSV(downloadResult) else {
                 return nil
             }
+            self = parsed
+        }
+
+        /// Parses `nvidia-smi --query-gpu=driver_version,uuid,name,memory.total,memory.used,memory.free,vbios_version,fan.speed,utilization.gpu,utilization.memory --format=csv,noheader,nounits`
+        public static func parseCSV(_ raw: String) -> GraphicsInfo? {
+            var units: [SingleGraphicsInfo] = []
+            var driverVersion = "unknown"
+            for line in raw.components(separatedBy: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty,
+                      !trimmed.hasPrefix("no nvidia gpu"),
+                      !trimmed.lowercased().contains("nvidia-smi has failed"),
+                      !trimmed.lowercased().contains("command not found")
+                else {
+                    continue
+                }
+                let fields = trimmed.split(separator: ",", omittingEmptySubsequences: false)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                guard fields.count >= 10, !fields[1].isEmpty else {
+                    continue
+                }
+                if driverVersion == "unknown", !fields[0].isEmpty {
+                    driverVersion = fields[0]
+                }
+                let uuid = fields[1]
+                let name = fields[2]
+                let memTotal = SingleGraphicsInfo.s2f(fields[3])
+                let memUsed = SingleGraphicsInfo.s2f(fields[4])
+                let memFree = SingleGraphicsInfo.s2f(fields[5])
+                let vbios = fields[6]
+                let fanRaw = fields[7]
+                let fanSpeed: String
+                if fanRaw.contains("%") || fanRaw.contains("N/A") || fanRaw.isEmpty {
+                    fanSpeed = fanRaw
+                } else {
+                    fanSpeed = "\(fanRaw) %"
+                }
+                let gpuUtil = SingleGraphicsInfo.s2f(fields[8])
+                let memUtil = SingleGraphicsInfo.s2f(fields[9])
+                let encUtil = fields.count > 10 ? SingleGraphicsInfo.s2f(fields[10]) : 0
+                let decUtil = fields.count > 11 ? SingleGraphicsInfo.s2f(fields[11]) : 0
+
+                units.append(SingleGraphicsInfo(
+                    uuid: uuid,
+                    name: name,
+                    memory: .init(total: memTotal, used: memUsed, free: memFree),
+                    vbios_version: vbios,
+                    fan_speed: fanSpeed,
+                    utilization: .init(
+                        gpu_util: gpuUtil,
+                        memory_util: memUtil,
+                        encoder_util: encUtil,
+                        decoder_util: decUtil
+                    )
+                ))
+            }
+            guard !units.isEmpty else { return nil }
+            return GraphicsInfo(version: driverVersion, units: units)
         }
     }
 
     /// 单块 GPU 信息
-    struct SingleGraphicsInfo: Codable, Equatable, Identifiable {
+    struct SingleGraphicsInfo: Codable, Equatable, Identifiable, Sendable {
         /// Stable across refreshes: nvidia-smi reports the GPU's own uuid.
         public var id: String { uuid }
 
@@ -53,12 +109,11 @@ public extension ServerStatus {
 
         static func s2f(_ status: String) -> Float {
             // 11019 MiB -> 11019
-            let tmp = status.components(separatedBy: " ")[0]
-            let num = Float(tmp) ?? 0
-            return num
+            let tmp = status.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: " ")[0]
+            return Float(tmp) ?? 0
         }
 
-        public struct Memory: Codable {
+        public struct Memory: Codable, Equatable, Sendable {
             public let total: Float
             public let used: Float
             public let free: Float
@@ -68,18 +123,9 @@ public extension ServerStatus {
                 self.used = used
                 self.free = free
             }
-
-            public init(from decoder: Decoder) throws {
-                // decode
-                let container = try decoder.container(keyedBy: CodingKeys.self)
-                let t = try container.decode(String.self, forKey: .total)
-                let u = try container.decode(String.self, forKey: .used)
-                let f = try container.decode(String.self, forKey: .free)
-                self.init(total: s2f(t), used: s2f(u), free: s2f(f))
-            }
         }
 
-        public struct Utilization: Codable {
+        public struct Utilization: Codable, Equatable, Sendable {
             public let gpu_util: Float
             public let memory_util: Float
             public let encoder_util: Float
@@ -90,16 +136,6 @@ public extension ServerStatus {
                 self.memory_util = memory_util
                 self.encoder_util = encoder_util
                 self.decoder_util = decoder_util
-            }
-
-            public init(from decoder: Decoder) throws {
-                // decode
-                let container = try decoder.container(keyedBy: CodingKeys.self)
-                let g = try container.decode(String.self, forKey: .gpu_util)
-                let m = try container.decode(String.self, forKey: .memory_util)
-                let e = try container.decode(String.self, forKey: .encoder_util)
-                let d = try container.decode(String.self, forKey: .decoder_util)
-                self.init(gpu_util: s2f(g), memory_util: s2f(m), encoder_util: s2f(e), decoder_util: s2f(d))
             }
         }
 
@@ -119,10 +155,6 @@ public extension ServerStatus {
             self.vbios_version = vbios_version
             self.fan_speed = fan_speed
             self.utilization = utilization
-        }
-
-        public static func == (lhs: SingleGraphicsInfo, rhs: SingleGraphicsInfo) -> Bool {
-            lhs.id == rhs.id
         }
 
         public func description() -> String {

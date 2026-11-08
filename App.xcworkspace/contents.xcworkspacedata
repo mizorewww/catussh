@@ -17,28 +17,13 @@
       location = "group:Foundation/MachineStatusView">
    </FileRef>
    <FileRef
-      location = "group:External/CodeMirrorUI">
-   </FileRef>
-   <FileRef
       location = "group:Foundation/Keychain">
-   </FileRef>
-   <FileRef
-      location = "group:Foundation/PropertyWrapper">
    </FileRef>
    <FileRef
       location = "group:External/NSRemoteShell">
    </FileRef>
    <FileRef
-      location = "group:Foundation/SPIndicator">
-   </FileRef>
-   <FileRef
-      location = "group:Foundation/StripedTextTable">
-   </FileRef>
-   <FileRef
       location = "group:Foundation/SymbolPicker">
-   </FileRef>
-   <FileRef
-      location = "group:Foundation/XMLCoder">
    </FileRef>
    <FileRef
       location = "group:Foundation/CatusshTerminal">

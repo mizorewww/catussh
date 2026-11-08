@@ -162,13 +162,13 @@ public enum RXFormat {
         return String(format: "%.1f", value)
     }
 
-    /// Splits a byte count into a number and a unit (`1.4`, `MB`).
+    /// Splits a byte count into a number and a unit (`1.4`, `MB`) using 1024-base (KiB/MiB/GiB scale).
     public static func bytes(_ bytes: Double) -> (value: String, unit: String) {
         let units = ["B", "KB", "MB", "GB", "TB", "PB"]
         var value = max(0, bytes.isFinite ? bytes : 0)
         var index = 0
-        while value >= 1000, index < units.count - 1 {
-            value /= 1000
+        while value >= 1024, index < units.count - 1 {
+            value /= 1024
             index += 1
         }
         if index == 0 || value >= 100 {

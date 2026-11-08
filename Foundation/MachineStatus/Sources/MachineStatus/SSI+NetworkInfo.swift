@@ -42,11 +42,11 @@ public extension ServerStatus {
             self.elements = elements
         }
 
-        /// Builds from two `/proc/net/dev` payloads sampled about a second
-        /// apart; rates are the counter deltas, so the sampling gap is
-        /// exactly the script's sleep.
-        public init?(netDevBefore: String?, netDevAfter: String?) {
+        /// Builds from two `/proc/net/dev` payloads sampled about `interval` seconds
+        /// apart; rates are the counter deltas divided by `interval`.
+        public init?(netDevBefore: String?, netDevAfter: String?, interval: Double = 1.0) {
             guard let netDevBefore, let netDevAfter else { return nil }
+            let duration = max(0.1, interval)
 
             typealias RxTxPair = (Int, Int)
 
@@ -95,7 +95,9 @@ public extension ServerStatus {
                     if rxIncrease < 0 || txIncrease < 0 {
                         continue
                     }
-                    result.append(NetworkInfoElement(device: item.key, rxBytesPerSec: rxIncrease, txBytesPerSec: txIncrease))
+                    let rxRate = Int((Double(rxIncrease) / duration).rounded())
+                    let txRate = Int((Double(txIncrease) / duration).rounded())
+                    result.append(NetworkInfoElement(device: item.key, rxBytesPerSec: rxRate, txBytesPerSec: txRate))
                 }
             }
 
@@ -107,8 +109,9 @@ public extension ServerStatus {
         /// Builds from two macOS `netstat -ibn` samples. Only link-level
         /// rows are used so each interface appears once, without its IPv4 and
         /// IPv6 aliases duplicating the same counters.
-        public init?(netstatBefore: String?, netstatAfter: String?) {
+        public init?(netstatBefore: String?, netstatAfter: String?, interval: Double = 1.0) {
             guard let netstatBefore, let netstatAfter else { return nil }
+            let duration = max(0.1, interval)
             let before = ProcParsers.parseDarwinNetstat(netstatBefore)
             let after = ProcParsers.parseDarwinNetstat(netstatAfter)
             let result = before.compactMap { device, previous -> NetworkInfoElement? in
@@ -116,7 +119,9 @@ public extension ServerStatus {
                 let rxIncrease = current.rx - previous.rx
                 let txIncrease = current.tx - previous.tx
                 guard rxIncrease >= 0, txIncrease >= 0 else { return nil }
-                return NetworkInfoElement(device: device, rxBytesPerSec: rxIncrease, txBytesPerSec: txIncrease)
+                let rxRate = Int((Double(rxIncrease) / duration).rounded())
+                let txRate = Int((Double(txIncrease) / duration).rounded())
+                return NetworkInfoElement(device: device, rxBytesPerSec: rxRate, txBytesPerSec: txRate)
             }
             self.init(elements: result.sorted { $0.device < $1.device })
         }

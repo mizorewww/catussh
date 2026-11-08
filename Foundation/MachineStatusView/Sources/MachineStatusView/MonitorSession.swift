@@ -45,9 +45,12 @@ public extension ServerStatus {
         network.elements.map(\.txBytesPerSec).reduce(0, &+)
     }
 
-    /// Memory readings are stored in kB on every platform.
+    /// Memory readings are stored in kB (1024-byte blocks) on every platform.
     var memoryUsedKB: Double {
-        Double(max(0, memory.memTotal - memory.memFree - memory.memCached - memory.memBuffers))
+        if let available = memory.memAvailable, available > 0, available <= memory.memTotal {
+            return Double(max(0, memory.memTotal - available))
+        }
+        return Double(max(0, memory.memTotal - memory.memFree - memory.memCached - memory.memBuffers))
     }
 
     var memoryCacheKB: Double {
@@ -56,7 +59,7 @@ public extension ServerStatus {
 
     var memoryUsedPercent: Double {
         guard memory.memTotal > 0 else { return 0 }
-        return memoryUsedKB / Double(memory.memTotal) * 100
+        return memory.phyUsed * 100
     }
 
     var hasData: Bool {
