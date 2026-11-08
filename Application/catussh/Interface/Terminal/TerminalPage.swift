@@ -292,11 +292,14 @@ private struct TerminalStatusBar: View {
 
 enum TerminalSessionActions {
     /// ⌘W on a terminal: closes the tab. The server's last tab is replaced by
-    /// a fresh terminal to the same server, so the page stays open.
+    /// a fresh terminal to the same server, so the page stays open. A UU
+    /// Remote device's tab only detaches from its session, which stays on the
+    /// device to resume: nothing to confirm, and nothing to replace it with.
     @MainActor
     static func closeTab(_ context: TerminalManager.Context) {
         let manager = TerminalManager.shared
-        let replace = context.tabSiblings.count == 1
+        let keepsSession = context.machine.isUURemoteDevice
+        let replace = context.tabSiblings.count == 1 && !keepsSession
         let perform = {
             // Asked twice, answered twice: only the first closes anything.
             guard manager.sessionContexts.contains(where: { $0.id == context.id }) else { return }
@@ -307,7 +310,7 @@ enum TerminalSessionActions {
             }
             manager.closeSession(withContextID: context.id)
         }
-        if manager.sessionAlive(forContext: context.id) {
+        if manager.sessionAlive(forContext: context.id), !keepsSession {
             UIBridge.requiresConfirmation(
                 message: "Close this terminal tab?",
                 informative: replace
@@ -345,7 +348,7 @@ enum TerminalSessionActions {
             showNeighbour(of: context)
             manager.closeSession(withContextID: context.id)
         }
-        if manager.sessionAlive(forContext: context.id) {
+        if manager.sessionAlive(forContext: context.id), !context.machine.isUURemoteDevice {
             UIBridge.requiresConfirmation(
                 message: "Close this terminal tab?",
                 informative: "Its session on \(context.displayName) ends.",

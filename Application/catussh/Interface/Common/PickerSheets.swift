@@ -253,7 +253,8 @@ struct IdentityPickerSheet: View {
 }
 
 /// A UU Remote device keeps its terminal sessions after their tab is gone
-/// (catussh quit, or the connection dropped): one of them, or a new one.
+/// (closed, catussh quit, or the connection dropped): one of them, or a new
+/// one. Ending a session is done here and nowhere else.
 struct UURemoteSessionPickerSheet: View {
     enum Choice { case new, resume(UInt32) }
 
@@ -272,7 +273,7 @@ struct UURemoteSessionPickerSheet: View {
     var body: some View {
         SheetScaffold(
             "Terminal on \(machine.name)",
-            lead: "Sessions keep running on the device after catussh quits or the connection drops. Resume one, or start a new one."
+            lead: "A session keeps running on the device after its tab closes, until you end it here. Resume one, or start a new one."
         ) {
             content
                 .frame(height: 240)

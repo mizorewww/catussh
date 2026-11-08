@@ -89,15 +89,11 @@ class TerminalManager: ObservableObject {
             let context = sessionContexts.remove(at: index)
             context.processShutdown()
             context.shell.destroyPermanently()
-            context.endLeftUURemoteSession()
         }
     }
 
-    /// catussh is quitting: a UU Remote device keeps its sessions, to resume
-    /// next time.
     func closeAll() {
         for context in sessionContexts {
-            context.keepsRemoteSession = true
             context.processShutdown()
             context.shell.destroyPermanently()
         }
