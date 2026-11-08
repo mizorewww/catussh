@@ -137,13 +137,14 @@ public struct FactsRow: View {
                 VStack(alignment: .leading, spacing: RX.Space.s1) {
                     CapsLabel(fact.label)
                     RedactableText(fact.value, redacted: fact.redacted)
-                        .font(fact.monospaced ? .system(size: 14, weight: .medium, design: .monospaced) : .rxMetricMD)
+                        .font(fact.monospaced ? .system(size: 13, weight: .medium, design: .monospaced) : .rxMetricMD)
                         .foregroundStyle(.rxInk)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: RX.Space.s2)
             }
         }
     }

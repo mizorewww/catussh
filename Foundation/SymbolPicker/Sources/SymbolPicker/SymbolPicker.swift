@@ -123,15 +123,15 @@ public struct SymbolPicker: View {
 
     var systemBackground: Color {
         dynamicColor(
-            light: .init(red: 1, green: 1, blue: 1, alpha: 1.0),
-            dark: .init(red: 0, green: 0, blue: 0, alpha: 1.0)
+            light: .init(red: 0.94, green: 0.95, blue: 0.97, alpha: 1.0),
+            dark: .init(red: 0.20, green: 0.21, blue: 0.24, alpha: 1.0)
         )
     }
 
     var secondarySystemBackground: Color {
         dynamicColor(
             light: .init(red: 0.95, green: 0.95, blue: 1, alpha: 1.0),
-            dark: .init(red: 0, green: 0, blue: 0, alpha: 1.0)
+            dark: .init(red: 0.14, green: 0.15, blue: 0.17, alpha: 1.0)
         )
     }
 
@@ -179,7 +179,6 @@ public struct SymbolPicker: View {
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
                         Button(LocalizedString("cancel")) {
-                            symbol = ""
                             presentationMode.wrappedValue.dismiss()
                         }
                     }
@@ -196,7 +195,6 @@ public struct SymbolPicker: View {
                 Divider()
                 HStack {
                     Button {
-                        symbol = ""
                         presentationMode.wrappedValue.dismiss()
                     } label: {
                         Text(LocalizedString("cancel"))
@@ -208,6 +206,8 @@ public struct SymbolPicker: View {
                     } label: {
                         Text(LocalizedString("done"))
                     }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
                 }
             }
             .padding()

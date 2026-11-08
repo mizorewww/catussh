@@ -63,7 +63,7 @@ private struct RXButtonBody: View {
             .frame(width: iconOnly ? height : nil, height: height)
             .background(background)
             .contentShape(Capsule())
-            .opacity(isEnabled ? 1 : 0.4)
+            .opacity(isEnabled ? 1 : 0.65)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.rxQuick, value: configuration.isPressed)
             .animation(.rxQuick, value: hovered)
@@ -78,9 +78,9 @@ private struct RXButtonBody: View {
 
     var foreground: Color {
         switch kind {
-        case .bordered: return .rxInk
-        case .primary: return .rxOnAccent
-        case .danger: return .white
+        case .bordered: return isEnabled ? .rxInk : .rxInkTertiary
+        case .primary: return isEnabled ? .white : .rxInkSecondary
+        case .danger: return isEnabled ? .white : .rxInkSecondary
         case .plain: return hovered && isEnabled ? .rxInk : .rxInkSecondary
         }
     }
@@ -90,12 +90,20 @@ private struct RXButtonBody: View {
         let shape = Capsule()
         switch kind {
         case .bordered:
-            shape.fill(Color.primary.opacity(configuration.isPressed ? 0.16 : (hovered && isEnabled ? 0.11 : 0.07)))
+            shape.fill(Color.primary.opacity(isEnabled ? (configuration.isPressed ? 0.16 : (hovered ? 0.11 : 0.07)) : 0.05))
         case .primary:
-            shape.fill(Color.rxAccent.opacity(configuration.isPressed ? 0.85 : 1))
-                .shadow(color: Color.rxAccent.opacity(0.25), radius: 6, y: 2)
+            if isEnabled {
+                shape.fill(Color.rxAccent.opacity(configuration.isPressed ? 0.85 : 1))
+                    .shadow(color: Color.rxAccent.opacity(0.25), radius: 6, y: 2)
+            } else {
+                shape.fill(Color.primary.opacity(0.10))
+            }
         case .danger:
-            shape.fill(Color.rxDanger.opacity(configuration.isPressed ? 0.85 : 1))
+            if isEnabled {
+                shape.fill(Color.rxDanger.opacity(configuration.isPressed ? 0.85 : 1))
+            } else {
+                shape.fill(Color.primary.opacity(0.10))
+            }
         case .plain:
             shape.fill(Color.primary.opacity(configuration.isPressed ? 0.12 : (hovered && isEnabled ? 0.07 : 0)))
         }
@@ -192,21 +200,54 @@ public struct RXSegmented<Value: Hashable>: View {
         self.fullWidth = fullWidth
     }
 
+    @Environment(\.rxControlsAtRest) private var atRest
+    @Namespace private var pill
+
     public var body: some View {
-        Picker("", selection: $selection) {
+        HStack(spacing: 0) {
             ForEach(options.indices, id: \.self) { index in
-                let option = options[index]
-                if let systemImage = option.systemImage {
-                    Label(option.title, systemImage: systemImage).tag(option.value)
-                } else {
-                    Text(option.title).tag(option.value)
-                }
+                segment(index)
             }
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
+        .padding(2)
         .frame(maxWidth: fullWidth ? .infinity : nil)
-        .fixedSize(horizontal: !fullWidth, vertical: false)
+        .fixedSize(horizontal: !fullWidth, vertical: true)
+        .background(
+            RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous)
+                .fill(Color.primary.opacity(atRest ? 0.088 : 0.07))
+        )
+        .animation(.rxMove, value: selection)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func segment(_ index: Int) -> some View {
+        let option = options[index]
+        let isSelected = option.value == selection
+        return Button {
+            selection = option.value
+        } label: {
+            HStack(spacing: 4) {
+                if let systemImage = option.systemImage {
+                    Image(systemName: systemImage)
+                }
+                Text(option.title)
+                    .lineLimit(1)
+            }
+            .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
+            .foregroundStyle(isSelected && !atRest ? Color.white : Color.rxInk.opacity(isSelected ? 1 : 0.85))
+            .padding(.horizontal, 12)
+            .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: 24, maxHeight: 24)
+            .background {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: RX.Radius.md, style: .continuous)
+                        .fill(atRest ? Color.primary.opacity(0.16) : Color.rxAccent)
+                        .matchedGeometryEffect(id: "selection", in: pill)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -403,13 +444,18 @@ public struct RXPicker<Value: Hashable>: View {
 
     public var body: some View {
         Menu {
-            Picker(placeholder, selection: $selection) {
-                ForEach(options.indices, id: \.self) { index in
-                    Text(options[index].title).tag(options[index].value)
+            ForEach(options.indices, id: \.self) { index in
+                let option = options[index]
+                Button {
+                    selection = option.value
+                } label: {
+                    if option.value == selection {
+                        Label(option.title, systemImage: "checkmark")
+                    } else {
+                        Text(option.title)
+                    }
                 }
             }
-            .pickerStyle(.inline)
-            .labelsHidden()
         } label: {
             HStack(spacing: 6) {
                 Text(title)
@@ -420,16 +466,17 @@ public struct RXPicker<Value: Hashable>: View {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.rxInkSecondary)
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 8)
             .frame(height: RX.controlHeight)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .rxFieldBackground()
             .contentShape(Rectangle())
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        .accessibilityLabel(title)
     }
 }
 

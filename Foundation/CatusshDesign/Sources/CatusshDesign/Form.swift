@@ -172,7 +172,7 @@ public struct RXSlider: View {
             }
             .labelsHidden()
             .tint(.rxAccent)
-            .frame(width: 180)
+            .frame(width: 136)
             #if os(macOS) || targetEnvironment(macCatalyst)
             .controlSize(.small)
             #endif
@@ -181,7 +181,7 @@ public struct RXSlider: View {
                 .multilineTextAlignment(.trailing)
                 .font(.rxBody.monospacedDigit())
                 .textFieldStyle(.rx)
-                .frame(width: 64)
+                .frame(width: 56)
                 .focused($fieldFocused)
                 .onSubmit(commitText)
                 .onChange(of: fieldFocused) { focused in

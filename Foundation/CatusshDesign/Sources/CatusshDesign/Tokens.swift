@@ -152,7 +152,7 @@ enum RXPalette {
     static let inkSecondary = Color(rxLight: 0x5F61_68FF, dark: 0xA1A3_AAFF)
     static let inkTertiary = Color(rxLight: 0x7073_80FF, dark: 0x8A8D_96FF)
     static let accent = Color(rxLight: 0x4B49_C8FF, dark: 0x8583_FFFF)
-    static let onAccent = Color(rxLight: 0xFFFF_FFFF, dark: 0x1212_2EFF)
+    static let onAccent = Color(rxLight: 0xFFFF_FFFF, dark: 0xFFFF_FFFF)
     static let series2 = Color(rxLight: 0x3B94_D6FF, dark: 0x6CBC_F2FF)
     static let series2Fill = Color(rxLight: 0x3B94_D633, dark: 0x6CBC_F229)
     static let accentFill = Color(rxLight: 0x4B49_C826, dark: 0x8583_FF2E)

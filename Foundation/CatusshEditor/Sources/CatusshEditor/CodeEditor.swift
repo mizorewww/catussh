@@ -202,7 +202,7 @@ private final class WeakBox<Value: AnyObject> {
 #elseif os(macOS)
 import AppKit
 
-/// Native AppKit code editor with monospaced typography, syntax highlighting,
+/// Native AppKit code editor with line numbers gutter, language-aware syntax highlighting,
 /// line wrapping toggle, find bar (⌘F), and live caret line/column tracking.
 public struct CodeEditor: NSViewRepresentable {
     @Binding var text: String
@@ -250,7 +250,7 @@ public struct CodeEditor: NSViewRepresentable {
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.isContinuousSpellCheckingEnabled = false
         textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 10, height: 10)
+        textView.textContainerInset = NSSize(width: 6, height: 10)
         textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
         textView.textColor = NSColor(Color.rxInk)
         textView.insertionPointColor = NSColor(Color.rxAccent)
@@ -267,7 +267,14 @@ public struct CodeEditor: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = wrapsLines
 
         scrollView.documentView = textView
+
+        let ruler = LineNumberRulerView(textView: textView, fontSize: fontSize)
+        scrollView.verticalRulerView = ruler
+        scrollView.hasVerticalRuler = true
+        scrollView.rulersVisible = true
+
         context.coordinator.textView = textView
+        context.coordinator.rulerView = ruler
         context.coordinator.applyContent(text, language: language, fontSize: fontSize, to: textView)
         return scrollView
     }
@@ -298,6 +305,7 @@ public struct CodeEditor: NSViewRepresentable {
     public final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: CodeEditor
         weak var textView: NSTextView?
+        weak var rulerView: LineNumberRulerView?
         var lastText = ""
         var lastLanguage: EditorLanguage = .plain
         var lastFontSize: CGFloat = 13
@@ -338,10 +346,12 @@ public struct CodeEditor: NSViewRepresentable {
             lastFontSize = fontSize
             let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
             textView.font = font
+            rulerView?.fontSize = fontSize
             highlight(textView: textView, language: language, font: font)
             if let first = selectedRanges.first?.rangeValue, first.location + first.length <= (newText as NSString).length {
                 textView.selectedRanges = selectedRanges
             }
+            rulerView?.needsDisplay = true
         }
 
         public func textDidChange(_ notification: Notification) {
@@ -351,6 +361,7 @@ public struct CodeEditor: NSViewRepresentable {
             parent.text = current
             let font = NSFont.monospacedSystemFont(ofSize: parent.fontSize, weight: .regular)
             highlight(textView: textView, language: parent.language, font: font)
+            rulerView?.needsDisplay = true
         }
 
         public func textViewDidChangeSelection(_ notification: Notification) {
@@ -367,6 +378,7 @@ public struct CodeEditor: NSViewRepresentable {
             }
             let column = max(1, prefix.utf16.count - lastNewlineIndex + 1)
             parent.onCaretChange(EditorCaret(line: line, column: column))
+            rulerView?.needsDisplay = true
         }
 
         private func highlight(textView: NSTextView, language: EditorLanguage, font: NSFont) {
@@ -383,24 +395,114 @@ public struct CodeEditor: NSViewRepresentable {
             ], range: fullRange)
 
             if language != .plain {
-                for rule in MacSyntaxHighlighter.rules(for: language) {
-                    rule.regex.enumerateMatches(in: fullText, options: [], range: fullRange) { match, _, _ in
-                        guard let range = match?.range else { return }
-                        storage.addAttribute(.foregroundColor, value: rule.color, range: range)
-                    }
-                }
+                MacSyntaxHighlighter.apply(to: storage, text: fullText, language: language)
             }
             storage.endEditing()
         }
     }
 }
 
-private enum MacSyntaxHighlighter {
-    struct Rule {
-        let regex: NSRegularExpression
-        let color: NSColor
+/// Draws line numbers in the left gutter of the code editor.
+final class LineNumberRulerView: NSRulerView {
+    weak var textView: NSTextView?
+    var fontSize: CGFloat {
+        didSet {
+            if fontSize != oldValue { needsDisplay = true }
+        }
     }
 
+    init(textView: NSTextView, fontSize: CGFloat) {
+        self.textView = textView
+        self.fontSize = fontSize
+        super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
+        clientView = textView
+        ruleThickness = 40
+        if let clipView = textView.enclosingScrollView?.contentView {
+            clipView.postsBoundsChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(boundsDidChange),
+                name: NSView.boundsDidChangeNotification,
+                object: clipView
+            )
+        }
+    }
+
+    @available(*, unavailable)
+    required init(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func boundsDidChange(_: Notification) {
+        needsDisplay = true
+    }
+
+    override func drawHashMarksAndLabels(in _: NSRect) {
+        guard let textView,
+              let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer
+        else { return }
+
+        let visibleRect = textView.visibleRect
+        let nsString = textView.string as NSString
+        let font = NSFont.monospacedDigitSystemFont(ofSize: max(10, fontSize * 0.85), weight: .regular)
+        let color = NSColor(Color.rxInkTertiary)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: color,
+        ]
+
+        let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
+        let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+
+        // Count lines before charRange.location
+        var lineNumber = 1
+        if charRange.location > 0 {
+            let prefix = nsString.substring(to: charRange.location)
+            for ch in prefix.utf16 where ch == 0x0A {
+                lineNumber += 1
+            }
+        }
+
+        var index = charRange.location
+        let end = NSMaxRange(charRange)
+        let insetY = textView.textContainerInset.height
+
+        while index <= end {
+            let lineRange = nsString.lineRange(for: NSRange(location: min(index, nsString.length), length: 0))
+            let glyphIndex = layoutManager.glyphIndexForCharacter(at: lineRange.location)
+            var lineRect: NSRect
+            if glyphIndex < layoutManager.numberOfGlyphs {
+                lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+            } else {
+                lineRect = layoutManager.extraLineFragmentRect
+            }
+            if lineRect.height == 0 {
+                lineRect = NSRect(x: 0, y: 0, width: bounds.width, height: fontSize * 1.3)
+            }
+            let y = lineRect.minY + insetY - visibleRect.minY
+            let label = "\(lineNumber)" as NSString
+            let size = label.size(withAttributes: attributes)
+            let drawPoint = NSPoint(
+                x: ruleThickness - size.width - 8,
+                y: y + (lineRect.height - size.height) / 2
+            )
+            label.draw(at: drawPoint, withAttributes: attributes)
+
+            lineNumber += 1
+            let nextIndex = NSMaxRange(lineRange)
+            if nextIndex <= index { break }
+            index = nextIndex
+            if index == nsString.length { break }
+        }
+    }
+}
+
+private enum MacSyntaxHighlighter {
     private static let keywordColor = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(srgbRed: 0.99, green: 0.37, blue: 0.64, alpha: 1)
@@ -411,6 +513,12 @@ private enum MacSyntaxHighlighter {
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(srgbRed: 0.99, green: 0.42, blue: 0.36, alpha: 1)
             : NSColor(srgbRed: 0.77, green: 0.10, blue: 0.09, alpha: 1)
+    }
+
+    private static let keyColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.62, green: 0.95, blue: 0.87, alpha: 1)
+            : NSColor(srgbRed: 0.24, green: 0.50, blue: 0.53, alpha: 1)
     }
 
     private static let numberColor = NSColor(name: nil) { appearance in
@@ -425,25 +533,60 @@ private enum MacSyntaxHighlighter {
             : NSColor(srgbRed: 0.36, green: 0.42, blue: 0.47, alpha: 1)
     }
 
-    private static let cachedRules: [Rule] = {
-        var list: [Rule] = []
-        if let num = try? NSRegularExpression(pattern: #"\b\d+(?:\.\d+)?\b"#) {
-            list.append(Rule(regex: num, color: numberColor))
-        }
-        if let kw = try? NSRegularExpression(pattern: #"\b(?:if|then|else|elif|fi|for|while|do|done|case|esac|function|return|in|export|local|sudo|set|unset|true|false|null|nil|let|var|func|struct|class|enum|import|from|def|async|await|try|catch|throw|pub|fn|impl|use|mod|package|interface|type|const)\b"#) {
-            list.append(Rule(regex: kw, color: keywordColor))
-        }
-        if let str = try? NSRegularExpression(pattern: #""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'"#) {
-            list.append(Rule(regex: str, color: stringColor))
-        }
-        if let cmt = try? NSRegularExpression(pattern: #"(?m)(?:#|//).*$"#) {
-            list.append(Rule(regex: cmt, color: commentColor))
-        }
-        return list
-    }()
+    private static let numberRegex = try! NSRegularExpression(pattern: #"\b\d+(?:\.\d+)?\b"#)
+    private static let keywordRegex = try! NSRegularExpression(pattern: #"\b(?:if|then|else|elif|fi|for|while|do|done|case|esac|function|return|in|export|local|sudo|set|unset|true|false|null|nil|let|var|func|struct|class|enum|import|from|def|async|await|try|catch|throw|pub|fn|impl|use|mod|package|interface|type|const)\b"#)
+    private static let jsonKeyRegex = try! NSRegularExpression(pattern: #""(?:\\.|[^"\\])*"(?=\s*:)"#)
 
-    static func rules(for _: EditorLanguage) -> [Rule] {
-        cachedRules
+    /// Combined token regex that matches strings and comments in a single pass so `//` or `#` inside a string literal is never mistaken for a comment!
+    private static func tokenRegex(for language: EditorLanguage) -> NSRegularExpression? {
+        switch language {
+        case .json:
+            return try? NSRegularExpression(pattern: #"("(?:\\.|[^"\\])*")"#)
+        case .bash, .python, .ruby, .perl, .yaml, .toml:
+            return try? NSRegularExpression(pattern: #"("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|((?m)#.*$)"#)
+        case .lua:
+            return try? NSRegularExpression(pattern: #"("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|((?m)--.*$)"#)
+        case .sql:
+            return try? NSRegularExpression(pattern: #"("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|((?m)--.*$)"#)
+        case .html, .markdown:
+            return try? NSRegularExpression(pattern: #"("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(<!--[\s\S]*?-->)"#)
+        default:
+            return try? NSRegularExpression(pattern: #"("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|((?m)//.*$|/\*[\s\S]*?\*/)"#)
+        }
+    }
+
+    static func apply(to storage: NSTextStorage, text: String, language: EditorLanguage) {
+        let fullRange = NSRange(location: 0, length: (text as NSString).length)
+
+        numberRegex.enumerateMatches(in: text, options: [], range: fullRange) { match, _, _ in
+            guard let range = match?.range else { return }
+            storage.addAttribute(.foregroundColor, value: numberColor, range: range)
+        }
+
+        if language != .json {
+            keywordRegex.enumerateMatches(in: text, options: [], range: fullRange) { match, _, _ in
+                guard let range = match?.range else { return }
+                storage.addAttribute(.foregroundColor, value: keywordColor, range: range)
+            }
+        }
+
+        if let tokenRx = tokenRegex(for: language) {
+            tokenRx.enumerateMatches(in: text, options: [], range: fullRange) { match, _, _ in
+                guard let match else { return }
+                if match.numberOfRanges > 1, match.range(at: 1).location != NSNotFound {
+                    storage.addAttribute(.foregroundColor, value: stringColor, range: match.range(at: 1))
+                } else if match.numberOfRanges > 2, match.range(at: 2).location != NSNotFound {
+                    storage.addAttribute(.foregroundColor, value: commentColor, range: match.range(at: 2))
+                }
+            }
+        }
+
+        if language == .json {
+            jsonKeyRegex.enumerateMatches(in: text, options: [], range: fullRange) { match, _, _ in
+                guard let range = match?.range else { return }
+                storage.addAttribute(.foregroundColor, value: keyColor, range: range)
+            }
+        }
     }
 }
 #endif

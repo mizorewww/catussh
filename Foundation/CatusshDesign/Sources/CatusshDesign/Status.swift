@@ -106,7 +106,7 @@ public struct RXTag: View {
     }
 }
 
-/// Screen-sharing redaction: the text becomes a `surface-sunken` bar its own length.
+/// Screen-sharing redaction: the text becomes a clearly visible pill bar its own length.
 public struct RedactableText: View {
     let text: String
     let redacted: Bool
@@ -121,13 +121,13 @@ public struct RedactableText: View {
             .opacity(redacted ? 0 : 1)
             .overlay(alignment: .leading) {
                 if redacted {
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(Color.rxSurfaceSunken)
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Color.rxInkTertiary.opacity(0.28))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .strokeBorder(Color.rxHairline, lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .strokeBorder(Color.rxInkTertiary.opacity(0.45), lineWidth: 1)
                         )
-                        .frame(height: 10)
+                        .frame(height: 11)
                         .accessibilityLabel("Hidden")
                 }
             }

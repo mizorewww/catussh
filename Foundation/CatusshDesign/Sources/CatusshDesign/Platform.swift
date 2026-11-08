@@ -12,15 +12,15 @@ public extension View {
     /// A checkbox on the Mac; iOS has no checkbox, so a switch there.
     func rxCheckboxToggle() -> some View {
         #if os(macOS)
-            toggleStyle(.checkbox)
+            toggleStyle(.checkbox).tint(.rxAccent)
         #else
-            toggleStyle(.switch)
+            toggleStyle(.switch).tint(.rxAccent)
         #endif
     }
 
     /// A switch.
     func rxSwitchToggle() -> some View {
-        toggleStyle(.switch)
+        toggleStyle(.switch).tint(.rxAccent)
     }
 
     /// An indeterminate spinner at AppKit's regular size.
@@ -39,11 +39,7 @@ public extension View {
 
     /// An inline text link.
     func rxLinkButton() -> some View {
-        #if os(macOS)
-            buttonStyle(.link)
-        #else
-            buttonStyle(.borderless)
-        #endif
+        buttonStyle(.plain).foregroundStyle(Color.rxAccent)
     }
 
     /// Lets the window toolbar float over the page instead of drawing its own background.
