@@ -708,4 +708,23 @@ final class UURemoteProtocolTests: XCTestCase {
         XCTAssertEqual(a.count, 16)
         XCTAssertTrue(a.allSatisfy { "0123456789abcdefghijklmnopqrstuvwxyz".contains($0) })
     }
+
+    func testSessionListDecodesMostRecentFirst() throws {
+        let payload = Data(#"[{"created_at_ms":1793628515455,"shell":"zsh","name":"session1","session_id":1521292032,"state":"detached","last_active_ms":1794144951722},{"name":"session5","state":"running","created_at_ms":1794146900832,"last_active_ms":1794146964536,"session_id":1,"shell":"zsh"}]"#.utf8)
+        let sessions = try XCTUnwrap(UUTerminalSession.decodeList(payload))
+        XCTAssertEqual(sessions.map(\.id), [1, 1_521_292_032])
+        XCTAssertEqual(sessions.map(\.isDetached), [false, true])
+        XCTAssertEqual(sessions[1].name, "session1")
+        XCTAssertEqual(sessions[1].lastActive.timeIntervalSince1970, 1_794_144_951.722, accuracy: 0.001)
+        XCTAssertNil(UUTerminalSession.decodeList(Data("{}".utf8)))
+    }
+
+    func testNewSessionIDAvoidsTakenOnes() {
+        let taken: Set<UInt32> = Set(1 ... 1000)
+        for _ in 0 ..< 200 {
+            let id = UURemoteDriver.newSessionID(avoiding: taken)
+            XCTAssertFalse(taken.contains(id))
+            XCTAssertLessThanOrEqual(id, UInt32(Int32.max))
+        }
+    }
 }

@@ -809,10 +809,20 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
 
     private func handleBinaryChannel(_ data: Data) {
         guard UUTerminalFrame.isFrame(data), let frame = UUTerminalFrame.decode(data) else { return }
-        // A terminal's frames go to it; with one open, frames whose id the
-        // host renumbered go to that one too.
+        if frame.kind != .stdout {
+            Self.log.info("TERM in \(frame.kind.rawValue) sid \(frame.sessionID) flags \(frame.flags) \(String(decoding: frame.payload.prefix(600), as: UTF8.self), privacy: .public)")
+        }
+        if frame.kind == .listResp {
+            let sessions = UUTerminalSession.decodeList(frame.payload)
+            if let sessions { knownSessionIDs.formUnion(sessions.map(\.id)) }
+            let waiters = listWaiters.values
+            listWaiters.removeAll()
+            for waiter in waiters { waiter.resume(returning: sessions) }
+            return
+        }
+        // A terminal's frames go to it.
         if closedTerminalIDs.contains(frame.sessionID) { return }
-        if let sink = terminalSinks[frame.sessionID] ?? (terminalSinks.count == 1 ? terminalSinks.values.first : nil) {
+        if let sink = terminalSinks[frame.sessionID] {
             sink(frame)
             return
         }
@@ -893,26 +903,73 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         sendBinaryChannel(frame.encode())
     }
 
-    /// Opens a terminal of its own and returns its TERM session id; its
-    /// frames (output, exit, errors) go to `onFrame`. Main thread.
-    public func openTerminal(cols: Int, rows: Int, onFrame: @escaping (UUTerminalFrame) -> Void) -> UInt32 {
-        let id = nextTerminalID
-        nextTerminalID += 1
+    /// Opens a terminal and returns its TERM session id; its frames (output,
+    /// exit, errors) go to `onFrame`. Main thread.
+    ///
+    /// The host keeps a session until it is closed, through disconnects, by
+    /// the id the client gave it: OPEN with the id of a detached session
+    /// attaches to it, so a new one takes an id no session has (counting up
+    /// from 1 would land on a session an earlier launch left).
+    /// - Parameter sessionID: a detached session to attach to.
+    public func openTerminal(sessionID: UInt32? = nil, cols: Int, rows: Int, onFrame: @escaping (UUTerminalFrame) -> Void) -> UInt32 {
+        let id = sessionID ?? Self.newSessionID(avoiding: knownSessionIDs)
+        closedTerminalIDs.remove(id)
         terminalSinks[id] = onFrame
         // The host's own default shell on Windows; the login shell on a Mac.
         let shell = targetIsWindows ? "powershell.exe" : "/bin/zsh"
-        sendBinaryChannel(UUTerminalFrame(kind: .open, sessionID: id, payload: UUTerminalJSON.open(cols: cols, rows: rows, shell: shell)).encode())
+        sendTerminalFrame(UUTerminalFrame(kind: .open, sessionID: id, payload: UUTerminalJSON.open(cols: cols, rows: rows, shell: shell)))
         return id
     }
 
-    /// Ends a terminal and stops delivering its frames. Main thread.
+    static func newSessionID(avoiding taken: Set<UInt32>) -> UInt32 {
+        while true {
+            let id = UInt32.random(in: 1 ... UInt32(Int32.max))
+            if !taken.contains(id) { return id }
+        }
+    }
+
+    /// Ends a terminal's session on the host and stops delivering its
+    /// frames. Main thread.
     public func closeTerminal(_ id: UInt32) {
+        terminalSinks.removeValue(forKey: id)
+        closedTerminalIDs.insert(id)
+        sendTerminalFrame(UUTerminalFrame(kind: .close, sessionID: id))
+    }
+
+    /// Leaves a terminal's session running on the host, to attach to later.
+    public func detachTerminal(_ id: UInt32) {
         guard terminalSinks.removeValue(forKey: id) != nil else { return }
         closedTerminalIDs.insert(id)
-        sendBinaryChannel(UUTerminalFrame(kind: .close, sessionID: id).encode())
+        sendTerminalFrame(UUTerminalFrame(kind: .detach, sessionID: id))
     }
 
     public var openTerminalCount: Int { terminalSinks.count }
+
+    /// The host's terminal sessions, attached or not; nil when it does not
+    /// answer. Main thread.
+    @MainActor public func listTerminalSessions(timeout: TimeInterval = 8) async -> [UUTerminalSession]? {
+        let waiter = UUID()
+        sendTerminalFrame(UUTerminalFrame(kind: .listReq, sessionID: 0))
+        return await withCheckedContinuation { continuation in
+            listWaiters[waiter] = continuation
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                self?.listWaiters.removeValue(forKey: waiter)?.resume(returning: nil)
+            }
+        }
+    }
+
+    private var listWaiters: [UUID: CheckedContinuation<[UUTerminalSession]?, Never>] = [:]
+    /// Every session id the host has listed, so a new one takes none of them.
+    private var knownSessionIDs: Set<UInt32> = []
+
+    /// Sends a TERM frame as it is.
+    public func sendTerminalFrame(_ frame: UUTerminalFrame) {
+        if frame.kind != .stdin {
+            Self.log.info("TERM out \(frame.kind.rawValue) sid \(frame.sessionID) \(String(decoding: frame.payload, as: UTF8.self), privacy: .public)")
+        }
+        sendBinaryChannel(frame.encode())
+    }
 
     /// Sends stdin bytes to the host's terminal session.
     public func sendTerminalStdin(_ data: Data, sessionID: UInt32 = 1) {

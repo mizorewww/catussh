@@ -5,7 +5,7 @@
 //  UU Remote as a way to reach a device, as Cloudflare Access is for SSH: one
 //  connection per device (room, signaling, control, WebRTC data channels)
 //  carries that device's terminals, shared by every terminal tab on it and
-//  closed with the last one. The desktop keeps a connection of its own,
+//  closed a little after the last one. The desktop keeps a connection of its own,
 //  which streams the screen.
 //
 
@@ -56,7 +56,10 @@ public final class UURemoteConnections {
         return driver
     }
 
-    /// One user fewer of `driver`; the connection closes with the last. A
+    /// One user fewer of `driver`; the connection closes a few seconds
+    /// after the last: what the last one sent (closing or detaching its
+    /// session) goes out first, and a terminal opened meanwhile (from the
+    /// session list, or the tab replacing a closed one) takes it over. A
     /// driver the device's entry no longer holds (it dropped and was
     /// replaced) leaves the new one alone.
     public func release(_ machine: RDMachine, driver: UURemoteDriver) {
@@ -71,9 +74,17 @@ public final class UURemoteConnections {
             entries[deviceID] = entry
             return
         }
-        entries.removeValue(forKey: deviceID)
-        entry.driver.stop()
+        entry.users = 0
+        entries[deviceID] = entry
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.linger * 1_000_000_000))
+            guard let self, let current = self.entries[deviceID], current.driver === driver, current.users == 0 else { return }
+            self.entries.removeValue(forKey: deviceID)
+            driver.stop()
+        }
     }
+
+    static let linger: TimeInterval = 3
 
     private func waitUntilReady(_ entry: Entry, timeout: TimeInterval) async throws {
         let deadline = Date().addingTimeInterval(timeout)
@@ -89,6 +100,23 @@ public final class UURemoteConnections {
             }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
+    }
+
+    /// The device's terminal sessions, most recently used first.
+    public func sessions(for machine: RDMachine) async throws -> [UUTerminalSession] {
+        let driver = try await acquire(for: machine)
+        defer { release(machine, driver: driver) }
+        guard let sessions = await driver.listTerminalSessions() else {
+            throw RemoteDesktopFailure("\(machine.name) did not list its terminal sessions.")
+        }
+        return sessions
+    }
+
+    /// Ends a session no terminal here is attached to.
+    public func endSession(_ id: UInt32, on machine: RDMachine) async throws {
+        let driver = try await acquire(for: machine)
+        defer { release(machine, driver: driver) }
+        driver.closeTerminal(id)
     }
 
     /// What the connection is doing now, for a terminal to show while it waits.

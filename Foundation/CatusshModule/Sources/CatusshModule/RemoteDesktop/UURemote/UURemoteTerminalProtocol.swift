@@ -122,3 +122,45 @@ public enum UUTerminalJSON {
         return code
     }
 }
+
+/// A terminal session the host keeps, from LIST_RESP(10).
+public struct UUTerminalSession: Identifiable, Equatable, Sendable {
+    public var id: UInt32
+    public var name: String
+    public var shell: String
+    /// "running" while a client is attached, "detached" otherwise.
+    public var state: String
+    public var createdAt: Date
+    public var lastActive: Date
+
+    public var isDetached: Bool { state == "detached" }
+
+    public init(id: UInt32, name: String, shell: String = "zsh", state: String, createdAt: Date, lastActive: Date) {
+        self.id = id
+        self.name = name
+        self.shell = shell
+        self.state = state
+        self.createdAt = createdAt
+        self.lastActive = lastActive
+    }
+
+    /// Most recently used first; nil on malformed input.
+    public static func decodeList(_ payload: Data) -> [UUTerminalSession]? {
+        guard let entries = UUTerminalJSON.decodeListResponse(payload) else { return nil }
+        return entries.compactMap { entry -> UUTerminalSession? in
+            guard let id = (entry["session_id"] as? NSNumber)?.uint32Value else { return nil }
+            func date(_ key: String) -> Date {
+                Date(timeIntervalSince1970: ((entry[key] as? NSNumber)?.doubleValue ?? 0) / 1000)
+            }
+            return UUTerminalSession(
+                id: id,
+                name: entry["name"] as? String ?? "session",
+                shell: entry["shell"] as? String ?? "",
+                state: entry["state"] as? String ?? "",
+                createdAt: date("created_at_ms"),
+                lastActive: date("last_active_ms")
+            )
+        }
+        .sorted { $0.lastActive > $1.lastActive }
+    }
+}

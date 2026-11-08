@@ -46,12 +46,27 @@ extension TerminalContext {
         let done = DispatchSemaphore(value: 0)
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
-                context.uuTerminalLink?.end()
+                // Still open: the connection or the shell ended, not the tab.
+                context.uuTerminalLink?.end(keepingSession: !context.closed || context.keepsRemoteSession)
                 context.uuTerminalLink = nil
             }
             done.signal()
         }
         done.wait()
+    }
+}
+
+extension TerminalContext {
+    /// The tab closed after its connection dropped: the host kept the
+    /// session (detached), and it ends now, as with a tab closed while
+    /// connected. Main thread.
+    @MainActor public func endLeftUURemoteSession() {
+        guard machine.isUURemoteDevice, !keepsRemoteSession, uuTerminalLink == nil, let id = uuSessionID else { return }
+        uuSessionID = nil
+        let machine = machine
+        Task { @MainActor in
+            try? await UURemoteConnections.shared.endSession(id, on: machine)
+        }
     }
 }
 
@@ -94,12 +109,26 @@ private final class UUTerminalLink {
                 }
                 driver = connection
                 sentSize = size
-                openedAt = Date()
-                terminalID = connection.openTerminal(
+                let attaching = context.uuSessionID
+                // Attaching: the shell is already up, and its screen is
+                // redrawn from the size change below.
+                openedAt = attaching == nil ? Date() : .distantPast
+                let id = connection.openTerminal(
+                    sessionID: attaching,
                     cols: Int(max(size.width, 8)), rows: Int(max(size.height, 8))
                 ) { [weak self, weak context] frame in
                     guard let self, let context else { return }
                     self.handle(frame, context: context)
+                }
+                terminalID = id
+                context.uuSessionID = id
+                if attaching != nil {
+                    context.putInformation("[*] Resumed the session on \(machine.name)")
+                    // A full-screen program repaints on SIGWINCH; the size
+                    // has to change for the host to send one.
+                    let cols = Int(max(size.width, 8)), rows = Int(max(size.height, 8))
+                    connection.sendTerminalResize(cols: cols, rows: max(rows - 1, 8), sessionID: id)
+                    connection.sendTerminalResize(cols: cols, rows: rows, sessionID: id)
                 }
             } catch {
                 context.putInformation("[!] " + error.localizedDescription)
@@ -116,11 +145,14 @@ private final class UUTerminalLink {
         case .openResp:
             if let reply = UUTerminalJSON.decodeOpenResponse(frame.payload), reply.code != 0 {
                 context.putInformation("[!] The device refused the terminal: \(reply.message) (\(reply.code))")
+                context.uuSessionID = nil
                 finished.signal()
             }
         case .exit:
             let code = UUTerminalJSON.decodeExit(frame.payload).map { " (exit \($0))" } ?? ""
             context.putInformation("\r\n[*] Shell ended\(code)")
+            // Gone from the host: a reconnect starts a new one.
+            context.uuSessionID = nil
             finished.signal()
         case .close:
             finished.signal()
@@ -148,11 +180,16 @@ private final class UUTerminalLink {
 
     static let startupReplyWindow: TimeInterval = 3
 
-    func end() {
+    /// The tab closed: its session ends with it, unless catussh is quitting,
+    /// which leaves it on the host to resume. A dropped connection sends
+    /// nothing, so the host detaches the session itself.
+    func end(keepingSession: Bool) {
         guard !ended else { return }
         ended = true
         guard let driver else { return }
-        if let id = terminalID { driver.closeTerminal(id) }
+        if let id = terminalID, !driver.isClosed {
+            if keepingSession { driver.detachTerminal(id) } else { driver.closeTerminal(id) }
+        }
         UURemoteConnections.shared.release(machine, driver: driver)
     }
 }

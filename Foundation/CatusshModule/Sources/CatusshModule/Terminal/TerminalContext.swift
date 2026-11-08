@@ -62,6 +62,14 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
     public let command: SSHCommandReader?
     public var shell: NSRemoteShell = .init()
 
+    /// On a UU Remote device: the host's session this tab shows. Set before
+    /// the tab connects to attach to a detached one; kept across
+    /// reconnects, which attach to it again. Main thread.
+    public var uuSessionID: UInt32?
+    /// Leave the UU Remote session running on the host when this tab
+    /// closes (catussh is quitting), rather than ending it.
+    public var keepsRemoteSession = false
+
     /// The renderer this session writes output to and takes input from.
     public let surface: TerminalSessionSurface
 
