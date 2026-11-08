@@ -240,10 +240,8 @@ struct ConfigCategoryContent: View {
                 .padding(.horizontal, RX.Space.s3)
                 .frame(height: 30)
                 .background(
-                    // Only the mark fades; text that changes weight over
-                    // several frames is drawn again on each of them.
-                    Capsule()
-                        .fill(selected ? Color.primary.opacity(0.09) : .clear)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(selected ? Color.primary.opacity(0.14) : .clear)
                         .animation(.easeOut(duration: 0.18), value: selected)
                 )
                 .contentShape(Rectangle())
@@ -266,7 +264,7 @@ struct ConfigCategoryContent: View {
                         .rxCard(padding: 0)
                         .padding(.bottom, RX.Space.s6)
                 }
-                .frame(minWidth: 300, idealWidth: 340, maxWidth: 400)
+                .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
                 .padding(.trailing, RX.Space.s6)
                 .padding(.top, RX.Space.s3)
                 .transition(.move(edge: .trailing).combined(with: .opacity))

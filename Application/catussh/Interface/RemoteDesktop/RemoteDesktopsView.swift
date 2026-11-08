@@ -149,7 +149,7 @@ struct RemoteDesktopsView: View {
                         .buttonStyle(.rx(.plain))
                 }
                 Button(account.isLoggedIn ? "Account…" : "Sign In…") { FolderActions.linkUURemote() }
-                    .buttonStyle(account.isLoggedIn ? .rx : .rxPrimary)
+                    .buttonStyle(.rx)
             }
             .padding(.horizontal, RX.Space.s3)
             .padding(.vertical, RX.Space.s2)

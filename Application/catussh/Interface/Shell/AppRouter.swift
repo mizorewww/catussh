@@ -87,8 +87,8 @@ final class AppRouter: ObservableObject {
         }
     }
 
-    /// Returns to the last non-session place once the open session page's id
-    /// leaves the published list, meaning its session has closed.
+    /// Returns to another open session of the same server if one exists,
+    /// otherwise to the last non-session place.
     private func leaveWhenSessionEnds<Element: Identifiable>(
         _ publisher: Published<[Element]>.Publisher,
         id routeID: @escaping (Route) -> UUID?
@@ -96,7 +96,13 @@ final class AppRouter: ObservableObject {
         publisher
             .sink { [weak self] sessions in
                 guard let self, let id = routeID(self.route) else { return }
-                if !sessions.contains(where: { $0.id == id }) { self.route = self.lastPlace }
+                guard !sessions.contains(where: { $0.id == id }) else { return }
+                let remaining = self.sessionRoutes.filter { $0 != self.route }
+                if let fallback = remaining.first {
+                    self.route = fallback
+                } else {
+                    self.route = self.lastPlace
+                }
             }
             .store(in: &cancellables)
     }

@@ -220,6 +220,14 @@ public final class MonitorSession: ObservableObject, Identifiable, Equatable {
         )
     }
 
+    public func reconnect() {
+        updateTask?.cancel()
+        phase = .connecting
+        updateTask = Task.detached { [weak self] in
+            await self?.updateLoop()
+        }
+    }
+
     public func shutdown() {
         updateTask?.cancel()
         let shell = shell

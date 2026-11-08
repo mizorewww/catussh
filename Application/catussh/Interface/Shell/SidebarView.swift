@@ -157,20 +157,21 @@ private struct SidebarRow<Label: View>: View {
     @Environment(\.sidebarMetrics) private var metrics
 
     var body: some View {
-        label
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: metrics.rowHeight)
-            .background {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.primary.opacity(0.155))
+        Button(action: select) {
+            label
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: metrics.rowHeight)
+                .background {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.primary.opacity(0.155))
+                    }
                 }
-            }
-            .contentShape(Rectangle())
-            .environment(\.isSidebarRowSelected, isSelected)
-            .onTapGesture(perform: select)
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .environment(\.isSidebarRowSelected, isSelected)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -227,8 +228,8 @@ private struct SidebarHeader: View {
     var body: some View {
         Text(title)
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(Color.primary.opacity(0.26))
-            .padding(.leading, 4)
+            .foregroundStyle(Color.primary.opacity(0.42))
+            .padding(.leading, 10)
             .padding(.bottom, 3)
             .frame(maxWidth: .infinity, minHeight: 32, maxHeight: 32, alignment: .bottomLeading)
             .accessibilityAddTraits(.isHeader)

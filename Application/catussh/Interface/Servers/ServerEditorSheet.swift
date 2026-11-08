@@ -53,21 +53,18 @@ struct ServerEditorSheet: View {
     var canSave: Bool { !address.trimmingCharacters(in: .whitespaces).isEmpty && portIsValid }
 
     var existingGroups: [String] {
-        Set(store.machineGroup.machines.map(\.group)).filter { !$0.isEmpty }.sorted()
+        Set(store.machineGroup.machines.map(\.group) + store.folders.map(\.name))
+            .filter { !$0.isEmpty }
+            .sorted()
     }
 
     var body: some View {
         SheetScaffold(isNew ? "New Server" : "Edit Server") {
-            // Taller than a small window with the remote desktop fields: then
-            // the fields scroll and the title and buttons stay in view.
-            // A sheet offers any height, so the cap is what makes the
-            // scrolling version the one that fits.
-            ViewThatFits(in: .vertical) {
+            ScrollView(.vertical, showsIndicators: false) {
                 fields
-                // Clear of the scroller, which sits over the right edge.
-                ScrollView { fields.padding(.trailing, RX.Space.s4) }
             }
-            .frame(maxHeight: 440)
+            .frame(maxHeight: 540)
+            .fixedSize(horizontal: false, vertical: true)
         } footer: {
             Button("Cancel", action: finish)
                 .buttonStyle(.rx)

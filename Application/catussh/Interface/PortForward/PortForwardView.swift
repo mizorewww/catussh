@@ -10,9 +10,9 @@ import SwiftUI
 
 /// Header and rows share these, so the columns line up.
 private enum ForwardColumns {
-    static let orientation: CGFloat = 120
-    static let bind: CGFloat = 90
-    static let status: CGFloat = 200
+    static let orientation: CGFloat = 115
+    static let bind: CGFloat = 80
+    static let status: CGFloat = 95
     static let toggle: CGFloat = 52
 }
 
@@ -92,21 +92,27 @@ struct PortForwardView: View {
         }
     }
 
-    var table: some View {
-        VStack(spacing: 0) {
+            var table: some View {
+        let hasDanger = filtered.contains {
+            let running = backend.sessionExists(withPortForwardID: $0.id)
+            return PortForwardPresentation(state: backend.lastStatus[$0.id], running: running).status == .danger
+        }
+        return VStack(spacing: 0) {
             HStack(spacing: 0) {
                 TableHeaderLabel("Orientation").frame(width: ForwardColumns.orientation)
                 TableHeaderLabel("Bind").frame(width: ForwardColumns.bind)
                 TableHeaderLabel("Through").frame(maxWidth: .infinity)
                 TableHeaderLabel("Target").frame(maxWidth: .infinity)
-                Color.clear.frame(width: ForwardColumns.status, height: 1)
+                if hasDanger {
+                    Color.clear.frame(width: ForwardColumns.status, height: 1)
+                }
                 Color.clear.frame(width: ForwardColumns.toggle, height: 1)
             }
             .padding(.horizontal, RX.Space.s3)
             .frame(height: RX.tableHeaderHeight)
             Hairline()
             ForEach(Array(filtered.enumerated()), id: \.element.id) { index, forward in
-                PortForwardRow(forward: forward, selected: selection == forward.id) {
+                PortForwardRow(forward: forward, showStatusColumn: hasDanger, selected: selection == forward.id) {
                     selection = forward.id
                 } edit: {
                     editor = EditorTarget(forward: forward.id)
@@ -122,6 +128,7 @@ struct PortForwardView: View {
 
 private struct PortForwardRow: View {
     let forward: RDPortForward
+    let showStatusColumn: Bool
     let selected: Bool
     let select: () -> Void
     let edit: () -> Void
@@ -152,11 +159,13 @@ private struct PortForwardRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text(status.status == .danger ? status.text : "")
-                .font(.rxBody)
-                .foregroundStyle(.rxDanger)
-                .lineLimit(1)
-                .frame(width: ForwardColumns.status, alignment: .leading)
+            if showStatusColumn {
+                Text(status.status == .danger ? status.text : "")
+                    .font(.rxBody)
+                    .foregroundStyle(.rxDanger)
+                    .lineLimit(1)
+                    .frame(width: ForwardColumns.status, alignment: .leading)
+            }
             Toggle("Running", isOn: Binding(get: { running }, set: { on in
                 if on {
                     backend.createSession(withPortForwardID: forward.id)
@@ -272,17 +281,16 @@ struct PortForwardEditorSheet: View {
                     }
                     .frame(width: 120)
                 }
-                if let command = draft.getCommand(), draft.isValid() {
-                    RXField("Equivalent command") {
-                        CodeBlock(command)
-                    }
+                RXField("Equivalent command") {
+                    CodeBlock(draft.getCommand() ?? "ssh \(orientation == .listenLocal ? "-L" : "-R") \(bindPort.isEmpty ? "port" : bindPort):\(targetHost.isEmpty ? "127.0.0.1" : targetHost):\(targetPort.isEmpty ? "port" : targetPort) <server>")
+                        .opacity(draft.isValid() ? 1 : 0.5)
                 }
             }
         } footer: {
-            Spacer()
             Button("Cancel", action: onClose)
                 .buttonStyle(.rx)
                 .keyboardShortcut(.cancelAction)
+            Spacer()
             Button("Save") {
                 store.portForwardGroup.insert(draft)
                 onClose()

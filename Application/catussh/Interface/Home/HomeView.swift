@@ -102,14 +102,13 @@ struct QuickConnectHero: View {
                 Button(action: connect) {
                     Image(systemName: "arrow.right")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.rxOnAccent)
+                        .foregroundStyle(parsed == nil ? Color.rxInkTertiary : Color.white)
                         .frame(width: 40, height: 40)
-                        .background(Circle().fill(Color.rxAccent))
+                        .background(Circle().fill(parsed == nil ? Color.primary.opacity(0.08) : Color.rxAccent))
                 }
                 .buttonStyle(.plain)
                 .disabled(parsed == nil)
-                .opacity(parsed == nil ? 0.35 : 1)
-                .scaleEffect(parsed == nil ? 0.9 : 1)
+                .scaleEffect(parsed == nil ? 0.94 : 1)
                 .animation(.spring(response: 0.3, dampingFraction: 0.7), value: parsed == nil)
                 .help("Connect (↩)")
                 .accessibilityLabel("Connect")

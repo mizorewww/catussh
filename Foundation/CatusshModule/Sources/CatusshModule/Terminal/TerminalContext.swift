@@ -185,7 +185,11 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable, @unchecke
     }
 
     public func putInformation(_ str: String) {
-        surface.write(str + "\r\n")
+        if str.isEmpty {
+            surface.write("\r\n")
+        } else {
+            surface.write("\r\n" + str + "\r\n")
+        }
     }
 
     public func processBootstrap() {

@@ -57,16 +57,19 @@ public struct ProcessorCard: View {
 
     public var body: some View {
         let summary = processor.summary
+        let hasCores = !processor.cores.isEmpty
         VStack(alignment: .leading, spacing: 0) {
             CardHead(title) {
-                RXSegmented(selection: $showCores, options: [
-                    .init(false, "Summary"),
-                    .init(true, "Cores"),
-                ], caps: false)
+                if hasCores {
+                    RXSegmented(selection: $showCores, options: [
+                        .init(false, "Summary"),
+                        .init(true, "Cores"),
+                    ], caps: false)
+                }
             }
             MetricView(RXFormat.oneDecimal(Double(summary.sumUsed)), unit: "%")
                 .padding(.top, RX.Space.s1)
-            if showCores {
+            if showCores, hasCores {
                 CoreGrid(cores: processor.cores)
                     .padding(.top, RX.Space.s4)
             } else {
@@ -128,15 +131,16 @@ public struct MemoryCard: View {
     public var body: some View {
         let status = session.status
         let total = Double(memory.memTotal)
+        let swapTotal = Double(memory.swapTotal)
+        let headerSize = showSwap ? swapTotal : total
         VStack(alignment: .leading, spacing: 0) {
-            CardHead(total > 0 ? "Memory · \(kB(total))" : "Memory") {
+            CardHead(headerSize > 0 ? "Memory · \(kB(headerSize))" : "Memory") {
                 RXSegmented(selection: $showSwap, options: [
                     .init(false, "RAM"),
                     .init(true, "Swap"),
                 ], caps: false)
             }
             if showSwap {
-                let swapTotal = Double(memory.swapTotal)
                 let swapUsed = max(0, swapTotal - Double(memory.swapFree))
                 MetricView(RXFormat.percent(swapTotal > 0 ? swapUsed / swapTotal * 100 : 0), unit: "%")
                     .padding(.top, RX.Space.s1)

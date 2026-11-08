@@ -61,7 +61,7 @@ struct IdentitiesView: View {
             } else {
                 HStack(alignment: .top, spacing: RX.Space.s4) {
                     list
-                        .frame(width: 320)
+                        .frame(width: 240)
                     if let selection, store.identityGroup.identities.contains(where: { $0.id == selection }) {
                         IdentityDetail(identity: selection)
                             .id(selection)
@@ -276,7 +276,7 @@ struct IdentityForm: View {
                         text: $draft.privateKey,
                         masked: true,
                         placeholder: "No private key loaded",
-                        loadTitle: "Load Private Key…",
+                        loadTitle: "Load…",
                         matches: RDIdentity.looksLikePrivateKey
                     )
                 }
@@ -285,12 +285,12 @@ struct IdentityForm: View {
                         text: $draft.publicKey,
                         masked: false,
                         placeholder: "No public key loaded",
-                        loadTitle: "Load Public Key…",
+                        loadTitle: "Load…",
                         matches: RDIdentity.looksLikePublicKey
                     )
                 }
                 RXField("Passphrase") {
-                    SecureField("None", text: $draft.password)
+                    SecureField("None", text: $draft.passphrase)
                         .textFieldStyle(.rx)
                 }
             } else {
@@ -345,6 +345,7 @@ private struct KeyField: View {
             }
             Button(loadTitle) { load() }
                 .buttonStyle(.rx)
+                .fixedSize()
         }
     }
 
@@ -391,10 +392,10 @@ struct IdentityEditorSheet: View {
         SheetScaffold("New Identity") {
             IdentityForm(draft: $draft)
         } footer: {
-            Spacer()
             Button("Cancel") { onComplete(nil) }
                 .buttonStyle(.rx)
                 .keyboardShortcut(.cancelAction)
+            Spacer()
             Button("Create") {
                 var base = RDIdentity(
                     username: "",

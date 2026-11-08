@@ -33,8 +33,10 @@ struct MonitorPage: View {
                 MonitorDashboard(session: session)
                     .transition(.opacity.combined(with: .offset(y: 8)))
             } else {
-                MonitorPlaceholder(session: session)
-                    .transition(.opacity)
+                MonitorPlaceholder(session: session) {
+                    session.reconnect()
+                }
+                .transition(.opacity)
             }
         }
         .animation(.easeOut(duration: 0.3), value: session.phase == .connected && session.status.hasData)

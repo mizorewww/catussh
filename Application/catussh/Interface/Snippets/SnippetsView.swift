@@ -121,6 +121,21 @@ private struct SnippetTile: View {
                 Spacer(minLength: RX.Space.s2)
                 Button("Run…") { SnippetActions.run(snippet.id) }
                     .buttonStyle(.rx(size: .small))
+                Menu {
+                    Button("Run…") { SnippetActions.run(snippet.id) }
+                    Button("Edit…", action: edit)
+                    Button("Duplicate") { SnippetActions.duplicate(snippet.id) }
+                    Button("Copy Command") { UIBridge.sendPasteboard(str: snippet.code) }
+                    Divider()
+                    Button("Delete…", role: .destructive) { SnippetActions.delete(snippet.id) }
+                } label: {
+                    Label("More", systemImage: "ellipsis")
+                }
+                .menuStyle(.button)
+                .menuIndicator(.hidden)
+                .buttonStyle(.rx(.plain, size: .small, iconOnly: true))
+                .fixedSize()
+                .help("More actions")
             }
             CodeBlock(snippet.code.trimmingCharacters(in: .whitespacesAndNewlines), lineLimit: 4)
         }

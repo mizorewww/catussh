@@ -104,16 +104,11 @@ struct EditorPage: View {
         VStack(spacing: 0) {
             tabStrip
             Hairline()
-            // Every open file keeps its editor, so changing tabs keeps the
-            // scroll position, the selection and undo.
-            ZStack {
-                ForEach(workspace.documents) { document in
-                    let front = document.id == workspace.selection
-                    EditorSurface(document: document, wrapsLines: wrapsLines)
-                        .opacity(front ? 1 : 0)
-                        .allowsHitTesting(front)
-                        .accessibilityHidden(!front)
-                        .zIndex(front ? 1 : 0)
+            // Render the active document so background NSTextViews do not pollute the accessibility tree.
+            Group {
+                if let current {
+                    EditorSurface(document: current, wrapsLines: wrapsLines)
+                        .id(current.id)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -183,13 +178,21 @@ private struct EditorTab: View {
 
     var body: some View {
         HStack(spacing: RX.Space.s1) {
-            Text(document.name)
-                .font(.system(size: 12, weight: selected ? .medium : .regular))
-                .foregroundStyle(selected ? Color.rxInk : Color.rxInkSecondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: 180)
-            // The dot of an unsaved file gives way to Close under the pointer.
+            Button(action: select) {
+                Text(document.name)
+                    .font(.system(size: 12, weight: selected ? .medium : .regular))
+                    .foregroundStyle(selected ? Color.rxInk : Color.rxInkSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 180)
+                    .padding(.leading, RX.Space.s3)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(document.path)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+
             ZStack {
                 if hovered || (selected && !document.isEdited) {
                     Button(action: close) {
@@ -211,11 +214,10 @@ private struct EditorTab: View {
                 }
             }
             .frame(width: 16, height: 16)
+            .padding(.trailing, RX.Space.s1)
             .animation(.easeOut(duration: 0.15), value: hovered)
             .animation(.easeOut(duration: 0.15), value: document.isEdited)
         }
-        .padding(.leading, RX.Space.s3)
-        .padding(.trailing, RX.Space.s1)
         .frame(height: 26)
         .background {
             if selected {
@@ -227,12 +229,7 @@ private struct EditorTab: View {
                     .fill(Color.rxRowHover)
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: select)
         .onHover { hovered = $0 }
-        .help(document.path)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 }
 
@@ -348,10 +345,10 @@ private struct OpenRemoteFileSheet: View {
                     .onSubmit(confirm)
             }
         } footer: {
-            Spacer()
             Button("Cancel") { dismiss() }
                 .buttonStyle(.rx)
                 .keyboardShortcut(.cancelAction)
+            Spacer()
             Button("Open", action: confirm)
                 .buttonStyle(.rxPrimary)
                 .keyboardShortcut(.defaultAction)

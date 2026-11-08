@@ -6,6 +6,7 @@
 //  `terminal-bg`, Comment; Delete on the left.
 //
 
+import CatusshEditor
 import CatusshModule
 import SwiftUI
 import SymbolPicker
@@ -71,21 +72,27 @@ struct SnippetEditorSheet: View {
                         .padding(RX.Space.s2)
                         .rxFieldBackground()
                         Button("More Symbols…") { showAllSymbols = true }
-                            .buttonStyle(.rxPlain)
+                            .rxLinkButton()
+                            .font(.rxHelp)
                     }
                 }
                 RXField("Command") {
-                    TextEditor(text: $code)
-                        .font(.rxCode)
-                        .foregroundStyle(.rxTerminalForeground)
-                        .scrollContentBackground(.hidden)
-                        .disableAutocorrection(true)
-                        .padding(RX.Space.s2)
-                        .frame(height: 160)
-                        .background(
-                            RoundedRectangle(cornerRadius: RX.Radius.md, style: .continuous)
-                                .fill(Color.rxTerminalBackground)
-                        )
+                    CodeEditor(
+                        text: $code,
+                        language: .bash,
+                        wrapsLines: true,
+                        fontSize: 12.5
+                    )
+                    .frame(height: 160)
+                    .background(
+                        RoundedRectangle(cornerRadius: RX.Radius.md, style: .continuous)
+                            .fill(Color.rxTerminalBackground)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: RX.Radius.md, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: RX.Radius.md, style: .continuous)
+                            .strokeBorder(Color.rxHairline, lineWidth: 1)
+                    )
                 }
                 RXField("Comment") {
                     TextField("Optional", text: $comment)
@@ -93,17 +100,17 @@ struct SnippetEditorSheet: View {
                 }
             }
         } footer: {
+            Button("Cancel", action: onClose)
+                .buttonStyle(.rx)
+                .keyboardShortcut(.cancelAction)
             if let snippet {
                 Button("Delete…") {
                     SnippetActions.delete(snippet)
                     onClose()
                 }
-                .buttonStyle(.rx)
+                .buttonStyle(.rxDanger)
             }
             Spacer()
-            Button("Cancel", action: onClose)
-                .buttonStyle(.rx)
-                .keyboardShortcut(.cancelAction)
             Button(isNew ? "Create" : "Save", action: save)
                 .buttonStyle(.rxPrimary)
                 .keyboardShortcut("s", modifiers: .command)

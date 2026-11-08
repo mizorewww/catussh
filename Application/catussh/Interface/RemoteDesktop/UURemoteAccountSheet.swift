@@ -23,9 +23,9 @@ struct UURemoteAccountSheet: View {
         } footer: {
             Spacer()
             Button("Done") { close?() }
-                .buttonStyle(.rxPrimary)
+                .buttonStyle(.rx)
                 .keyboardShortcut(.defaultAction)
         }
-        .frame(width: 600, height: 520)
+        .frame(width: 560)
     }
 }

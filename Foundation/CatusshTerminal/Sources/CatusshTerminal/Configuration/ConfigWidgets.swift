@@ -78,6 +78,7 @@ struct ConfigSettingRow: View {
                         Text(highlightedName)
                             .font(.rxBody)
                             .foregroundStyle(.rxInk)
+                            .lineLimit(1)
                         if setting.deprecated != nil {
                             RXTag("Deprecated", style: .warning)
                         }
@@ -87,7 +88,8 @@ struct ConfigSettingRow: View {
                             .lineLimit(2)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minWidth: 150, maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
                 .help("Ghostty setting: \(setting.key)")
                 HStack(spacing: RX.Space.s2) {
                     if !widgetBelow {
@@ -196,7 +198,7 @@ struct ConfigWidgetView: View {
                     in: (widget?.min ?? 0) ... (widget?.max ?? 1),
                     step: widget?.step ?? 0.01
                 )
-            case "pill" where (widget?.options ?? []).count <= 4 && !(widget?.options ?? []).isEmpty:
+            case "pill" where (widget?.options ?? []).count <= 3 && (widget?.options ?? []).allSatisfy({ ConfigLayout.optionName(setting.key, value: $0.value, fallback: $0.name).count <= 8 }) && !(widget?.options ?? []).isEmpty:
                 RXSegmented(
                     selection: Binding(get: { effective }, set: { value.wrappedValue = $0 }),
                     options: (widget?.options ?? []).map { .init($0.value, ConfigLayout.optionName(setting.key, value: $0.value, fallback: $0.name)) },

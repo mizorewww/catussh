@@ -333,8 +333,10 @@ private struct AboutSettings: View {
                 HStack(spacing: RX.Space.s2) {
                     Button("License…") { document = .license }
                         .buttonStyle(.rx)
+                        .fixedSize()
                     Button("Agreement…") { document = .agreement }
                         .buttonStyle(.rx)
+                        .fixedSize()
                         .help("End user license agreement")
                 }
             }
@@ -400,7 +402,8 @@ struct LicenseSheet: View {
                     .padding(RX.Space.s4)
             }
             .frame(height: 320)
-            .background(
+            .clipShape(RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous))
+            .overlay(
                 RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous)
                     .strokeBorder(Color.rxHairline, lineWidth: 1)
             )
@@ -431,7 +434,8 @@ struct AgreementSheet: View {
                         .padding(RX.Space.s4)
                 }
                 .frame(height: 240)
-                .background(
+                .clipShape(RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous))
+                .overlay(
                     RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous)
                         .strokeBorder(Color.rxHairline, lineWidth: 1)
                 )

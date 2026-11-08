@@ -2,14 +2,10 @@
 //  TerminalPage.swift
 //  catussh (macOS)
 //
-//  A terminal inside the main window: tabs for this server's terminals (closing
-//  is the tab's button), the Terminal · Files · Monitor switcher, text size and
-//  Reconnect. Status bar: the endpoint, then live figures while monitored.
-//
 
-import MachineStatusView
 import CatusshModule
 import CatusshTerminal
+import MachineStatusView
 import SwiftUI
 
 struct TerminalPage: View {
@@ -21,6 +17,14 @@ struct TerminalPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if context.tabSiblings.count > 1 {
+                HStack(spacing: RX.Space.s2) {
+                    SessionTabs(current: context)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, RX.Space.s6)
+                .padding(.bottom, RX.Space.s2)
+            }
             VStack(spacing: 0) {
                 if context.closed {
                     disconnectedBanner
@@ -28,44 +32,42 @@ struct TerminalPage: View {
                 surface
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            // No backdrop of our own: Ghostty paints its background with
-            // `background-opacity`, so a translucent terminal shows the window
-            // material underneath instead of an opaque fill.
             .clipShape(RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous)
+                    .strokeBorder(Color.rxHairline, lineWidth: 1)
+            )
             .padding(.horizontal, RX.Space.s6)
             TerminalStatusBar(context: context)
                 .padding(.horizontal, RX.Space.s6)
         }
         .padding(.top, RX.Space.s3)
         .pageChrome()
-        // Closing is the tab's close button; no second one here.
         .pageToolbar(
             primary: context.closed
                 ? ToolbarAction("Reconnect", systemImage: "arrow.clockwise", primary: true) { context.reconnect() }
                 : nil,
             trailingMetrics: .controlGroup
         ) {
-            SessionTabs(current: context)
-        } trailing: {
-            Group {
-                Button {
-                    store.terminalFontSize -= 1
-                } label: {
-                    Label("Smaller Text", systemImage: "textformat.size.smaller")
+            ToolbarAction("New Terminal Tab", systemImage: "plus") {
+                if context.remoteType == .machine {
+                    AppRouter.shared.openTerminal(machine: context.machine.id, another: true)
+                } else if let command = context.command {
+                    AppRouter.shared.openTerminal(command: command)
                 }
-                .disabled(store.terminalFontSize <= 4)
-                .keyboardShortcut("-", modifiers: .command)
-                .accessibilityLabel("Smaller Text")
-                Button {
-                    store.terminalFontSize += 1
-                } label: {
-                    Label("Larger Text", systemImage: "textformat.size.larger")
-                }
-                .disabled(store.terminalFontSize >= 30)
-                .keyboardShortcut("+", modifiers: .command)
-                .accessibilityLabel("Larger Text")
             }
-            .help("Text Size")
+        } trailing: {
+            ToolbarAction("Smaller Text", systemImage: "textformat.size.smaller", isEnabled: store.terminalFontSize > 4) {
+                store.terminalFontSize -= 1
+            }
+            .keyboardShortcut("-", modifiers: .command)
+            ToolbarAction("Larger Text", systemImage: "textformat.size.larger", isEnabled: store.terminalFontSize < 30) {
+                store.terminalFontSize += 1
+            }
+            .keyboardShortcut("+", modifiers: .command)
+            ToolbarAction("Close Tab", systemImage: "xmark") {
+                TerminalSessionActions.close(context)
+            }
         }
         .serverToolSwitcher(
             machine: context.remoteType == .machine && context.machine.isNotPlaceholder() ? context.machine.id : nil,
@@ -104,19 +106,25 @@ struct TerminalPage: View {
 
     var disconnectedBanner: some View {
         HStack(spacing: RX.Space.s2) {
+            Image(systemName: "bolt.slash")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.rxWarning)
             Text("Connection closed")
-                .foregroundStyle(.rxTerminalForeground)
+                .foregroundStyle(.rxInk)
             Spacer()
+            Button("Reconnect") {
+                context.reconnect()
+            }
+            .buttonStyle(.rx(.primary, size: .small))
         }
         .font(.rxBody)
         .padding(.horizontal, RX.Space.s3)
         .frame(height: 36)
-        .background(Color.black.opacity(0.35))
+        .background(Color.rxSurface)
+        .overlay(alignment: .bottom) { Hairline() }
     }
 }
 
-/// Tabs for this server's terminals (a Quick Connect terminal has only its own).
-/// The sidebar lists servers; these tabs pick among one server's terminals.
 struct SessionTabs: View {
     @ObservedObject var current: TerminalManager.Context
     @ObservedObject var terminals = TerminalManager.shared
@@ -125,8 +133,6 @@ struct SessionTabs: View {
 
     var body: some View {
         HStack(spacing: RX.Space.s1) {
-            // The tabs scroll where the toolbar is short of room; the one in
-            // front is always scrolled into view, and "+" stays outside.
             ScrollViewReader { reader in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: RX.Space.s1) {
@@ -138,7 +144,7 @@ struct SessionTabs: View {
                                 number: siblings.count > 1 ? index + 1 : nil,
                                 shortcut: siblings.count > 1 ? Self.shortcut(index: index, count: siblings.count) : nil
                             )
-                                .id(context.id)
+                            .id(context.id)
                         }
                     }
                 }
@@ -148,7 +154,6 @@ struct SessionTabs: View {
             }
             Button {
                 if current.remoteType == .machine {
-                    // "+" says what it wants: another tab, without asking.
                     AppRouter.shared.openTerminal(machine: current.machine.id, another: true)
                 } else if let command = current.command {
                     AppRouter.shared.openTerminal(command: command)
@@ -164,16 +169,10 @@ struct SessionTabs: View {
             .help("New Terminal (⌘T)")
             .accessibilityLabel("New Terminal")
         }
-        // With the toolbar capsule's own inset, 4pt from its ends.
-        .padding(.horizontal, 2.25)
-        .frame(maxWidth: 520)
-        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
 extension SessionTabs {
-    /// The key that shows a tab, as the menu binds them: ⌘1–⌘8 the first
-    /// eight, ⌘9 the last.
     static func shortcut(index: Int, count: Int) -> String? {
         if index < 8 { return "⌘\(index + 1)" }
         return index == count - 1 ? "⌘9" : nil
@@ -185,13 +184,9 @@ private struct SessionTab: View {
 
     @ObservedObject var context: TerminalManager.Context
     let selected: Bool
-    /// Position among the server's terminals, when there is more than one.
     let number: Int?
-    /// The key that shows it (⌘1…), when it has one.
     var shortcut: String?
 
-    /// The server is already named in the sidebar and title; the tab names the
-    /// shell (its title, usually user@host: path), else its number.
     private var title: String {
         if !context.navigationSubtitle.isEmpty { return context.navigationSubtitle }
         if let number { return "Terminal \(number)" }
@@ -200,18 +195,30 @@ private struct SessionTab: View {
     @State private var hovered = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text(title)
-                .font(.system(size: 12, weight: selected ? .medium : .regular))
-                .foregroundStyle(selected ? Color.rxInk : Color.rxInkSecondary)
-                .lineLimit(1)
-                .frame(maxWidth: 160)
-            if let shortcut {
-                Text(shortcut)
-                    .font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(.rxInkTertiary)
-                    .accessibilityHidden(true)
+        HStack(spacing: 4) {
+            Button {
+                AppRouter.shared.route = .terminal(context.id)
+            } label: {
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 12, weight: selected ? .medium : .regular))
+                        .foregroundStyle(selected ? Color.rxInk : Color.rxInkSecondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: 160)
+                    if let shortcut {
+                        Text(shortcut)
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(.rxInkTertiary)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .padding(.leading, 10)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+
             Button {
                 TerminalSessionActions.close(context)
             } label: {
@@ -222,21 +229,18 @@ private struct SessionTab: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .padding(.trailing, 6)
             .opacity(selected || hovered ? 1 : 0)
             .accessibilityLabel("Close \(title)")
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 6)
         .frame(height: RX.controlHeight)
         .background {
             if selected {
-                Capsule().fill(Color.primary.opacity(0.1))
+                Capsule().fill(Color.primary.opacity(0.12))
             } else if hovered {
-                Capsule().fill(Color.primary.opacity(0.05))
+                Capsule().fill(Color.primary.opacity(0.06))
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture { AppRouter.shared.route = .terminal(context.id) }
         .onHover { hovered = $0 }
         .contextMenu {
             if context.closed { Button("Reconnect") { context.reconnect() } }
@@ -245,7 +249,6 @@ private struct SessionTab: View {
     }
 }
 
-/// State, user@host:port, live CPU and memory while a monitor is open, font size.
 private struct TerminalStatusBar: View {
     @ObservedObject var context: TerminalManager.Context
     @ObservedObject var monitors = MonitorCenter.shared
@@ -268,7 +271,6 @@ private struct TerminalStatusBar: View {
 
     var endpoint: String {
         if let command = context.command { return command.command }
-        // Its address would be the device id; it is reached by name.
         if context.machine.isUURemoteDevice { return "UU Remote · " + context.machine.name }
         return context.machine.getCommand(insertLeadingSSH: false)
     }
@@ -286,17 +288,12 @@ private struct TerminalStatusBar: View {
 }
 
 enum TerminalSessionActions {
-    /// ⌘W on a terminal: closes the tab. The server's last tab is replaced by
-    /// a fresh terminal to the same server, so the page stays open. A UU
-    /// Remote device's tab only detaches from its session, which stays on the
-    /// device to resume: nothing to confirm, and nothing to replace it with.
     @MainActor
     static func closeTab(_ context: TerminalManager.Context) {
         let manager = TerminalManager.shared
         let keepsSession = context.machine.isUURemoteDevice
         let replace = context.tabSiblings.count == 1 && !keepsSession
         let perform = {
-            // Asked twice, answered twice: only the first closes anything.
             guard manager.sessionContexts.contains(where: { $0.id == context.id }) else { return }
             if replace, let fresh = openReplacement(for: context) {
                 AppRouter.shared.route = .terminal(fresh.id)
@@ -321,8 +318,6 @@ enum TerminalSessionActions {
         }
     }
 
-    /// A new terminal like the one closing: the same saved server, or the same
-    /// Quick Connect command.
     @MainActor
     private static func openReplacement(for context: TerminalManager.Context) -> TerminalManager.Context? {
         let manager = TerminalManager.shared
@@ -357,16 +352,11 @@ enum TerminalSessionActions {
         }
     }
 
-    /// A tab closing in front hands the page to the tab after it (or before
-    /// it, at the end), or the last one to the server's open desktop, so the
-    /// server stays on screen.
     @MainActor
     private static func showNeighbour(of context: TerminalManager.Context) {
         guard AppRouter.shared.route == .terminal(context.id) else { return }
         let siblings = context.tabSiblings
         guard let index = siblings.firstIndex(where: { $0.id == context.id }), siblings.count > 1 else {
-            // The last terminal: the server's desktop, if one is open, rather
-            // than leaving its pages altogether.
             if context.remoteType == .machine,
                let desktop = RemoteDesktopManager.shared.sessions.first(where: { $0.machine.id == context.machine.id })
             {
@@ -380,9 +370,6 @@ enum TerminalSessionActions {
 }
 
 extension TerminalManager.Context {
-    /// The terminals shown as tabs beside this one: the server's terminals,
-    /// or for Quick Connect the ones opened with the same command (⌘T and
-    /// "+" open another of those).
     @MainActor var tabSiblings: [TerminalManager.Context] {
         let all = TerminalManager.shared.sessionContexts
         if remoteType == .machine {
@@ -392,14 +379,12 @@ extension TerminalManager.Context {
         return all.filter { $0.remoteType == .command && $0.command?.command == command }
     }
 
-    /// The server's name, or `user@host` for a Quick Connect session.
     var displayName: String {
         if remoteType == .machine { return machine.name }
         if let command { return "\(command.username)@\(command.remoteAddress)" }
         return navigationTitle
     }
 
-    /// Reconnects with the details from when this session started.
     func reconnect() {
         guard closed else { return }
         DispatchQueue.global().async {

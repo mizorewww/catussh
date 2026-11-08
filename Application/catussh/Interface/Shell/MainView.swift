@@ -47,7 +47,7 @@ struct MainView: View {
             .rxClearToolbar()
         }
         .frame(minWidth: 940, minHeight: 600)
-        .navigationTitle("")
+        .modifier(HiddenWindowTitle())
         .overlay {
             if store.globalProgressInPresent {
                 ProgressHUD()
@@ -129,5 +129,17 @@ private extension View {
             .accessibilityHidden(!active)
             .zIndex(active ? 1 : 0)
             .environment(\.isActivePage, active)
+    }
+}
+
+private struct HiddenWindowTitle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content
+                .navigationTitle("catussh")
+                .toolbar(removing: .title)
+        } else {
+            content.navigationTitle("catussh")
+        }
     }
 }

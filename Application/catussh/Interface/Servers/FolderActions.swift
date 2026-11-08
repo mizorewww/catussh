@@ -15,8 +15,15 @@ enum FolderActions {
     @MainActor
     static func newFolder(moving servers: [RDMachine.ID] = []) {
         let store = CatusshStore.shared
-        UIBridge.askForInput(title: "New Folder", message: "Name the folder.", defaultValue: store.availableFolderName("New Folder")) { name in
-            MainActor.assumeIsolated {
+        SheetPresenter.present { dismiss in
+            FolderNameSheet(
+                title: "New Folder",
+                lead: "Name the folder.",
+                confirmTitle: "Create",
+                initialText: store.availableFolderName("New Folder")
+            ) { name in
+                dismiss()
+                guard let name else { return }
                 let folder = store.createFolder(named: name)
                 store.moveServers(servers, toFolder: folder.name)
             }
@@ -25,8 +32,15 @@ enum FolderActions {
 
     @MainActor
     static func rename(_ name: String) {
-        UIBridge.askForInput(title: "Rename Folder", message: "The servers in it move with it.", defaultValue: name) { newName in
-            MainActor.assumeIsolated {
+        SheetPresenter.present { dismiss in
+            FolderNameSheet(
+                title: "Rename Folder",
+                lead: "The servers in it move with it.",
+                confirmTitle: "Rename",
+                initialText: name
+            ) { newName in
+                dismiss()
+                guard let newName else { return }
                 if !CatusshStore.shared.renameFolder(name, to: newName) {
                     UIBridge.presentError(with: "There is already a folder named \"\(newName)\".")
                 }
@@ -118,6 +132,7 @@ struct FolderHeaderRow: View {
             Image(systemName: folder?.isLinked == true ? "link" : "folder")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.rxInkSecondary)
+                .accessibilityHidden(true)
             Text(name.isEmpty ? "Default" : name)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.rxInkSecondary)
@@ -206,3 +221,41 @@ struct FolderHeaderRow: View {
         }
     }
 }
+
+private struct FolderNameSheet: View {
+    let title: String
+    let lead: String
+    let confirmTitle: String
+    let initialText: String
+    let onComplete: (String?) -> Void
+
+    @State private var text = ""
+
+    private var trimmed: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        SheetScaffold(title, lead: lead) {
+            RXField("Folder name") {
+                TextField("Folder name", text: $text)
+                    .textFieldStyle(.rx)
+                    .onSubmit {
+                        if !trimmed.isEmpty { onComplete(trimmed) }
+                    }
+            }
+        } footer: {
+            Button("Cancel") { onComplete(nil) }
+                .buttonStyle(.rx)
+                .keyboardShortcut(.cancelAction)
+            Spacer()
+            Button(confirmTitle) { onComplete(trimmed) }
+                .buttonStyle(.rxPrimary)
+                .keyboardShortcut(.defaultAction)
+                .disabled(trimmed.isEmpty)
+        }
+        .frame(width: 420)
+        .onAppear { text = initialText }
+    }
+}
+

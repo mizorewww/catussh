@@ -245,7 +245,10 @@ private struct ServerRow: View {
                     if read.isUURemoteDevice {
                         UUDeviceStatus(machine: read)
                     } else {
-                        RedactableText(read.remoteAddress, redacted: store.machineRedacted != .none)
+                        let displayAddress = (read.remotePort.isEmpty || read.remotePort == "22")
+                            ? read.remoteAddress
+                            : "\(read.remoteAddress):\(read.remotePort)"
+                        RedactableText(displayAddress, redacted: store.machineRedacted != .none)
                             .font(.rxCode)
                             .foregroundStyle(.rxInk)
                             .lineLimit(1)
@@ -308,6 +311,9 @@ private struct ServerRow: View {
 
     func toolButtons(_ read: RDMachine, iconOnly: Bool) -> some View {
         HStack(spacing: RX.Space.s1) {
+            Button(ServerTool.terminal.title) { ServerTool.terminal.show(machine) }
+                .buttonStyle(.rx(size: .small))
+                .help(ServerTool.terminal.help(for: read))
             let others: [ServerTool] = read.hasRemoteDesktop ? [.files, .monitor, .desktop] : [.files, .monitor]
             ForEach(others) { tool in
                 Button { tool.show(machine) } label: {
@@ -318,9 +324,6 @@ private struct ServerRow: View {
                 .help(tool.help(for: read))
                 .accessibilityLabel(tool.title)
             }
-            Button(ServerTool.terminal.title) { ServerTool.terminal.show(machine) }
-                .buttonStyle(.rx(size: .small))
-                .help(ServerTool.terminal.help(for: read))
         }
         .fixedSize()
     }

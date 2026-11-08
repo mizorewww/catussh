@@ -101,6 +101,9 @@ struct FileTransferPage: View {
                 .disabled(busy || !context.connected)
             ToolbarAction("Upload", systemImage: "arrow.up.doc") { upload() }
                 .disabled(busy || !context.connected)
+            ToolbarAction("Close Files", systemImage: "xmark") {
+                FileTransferSessionActions.close(context)
+            }
         } header: {
             VStack(alignment: .leading, spacing: RX.Space.s2) {
                 PageTitle(store.machineRedacted == .all ? "File Transfer" : context.machine.name, subtitle: subtitle)

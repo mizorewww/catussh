@@ -62,6 +62,7 @@ struct ConfigLayout {
         ]),
         Category(id: "connection", title: "Connection", icon: "network", section: .app, groups: [
             Group("ssh", "SSH", [.host("connection.ssh")]),
+            Group("uuremote", "NetEase UU Remote", [.host("connection.uuremote")]),
             Group("monitor", "Monitor", [.host("connection.monitor")]),
         ]),
         Category(id: "text", title: "Text", icon: "textformat", section: .terminal, groups: [
@@ -188,8 +189,8 @@ struct ConfigLayout {
 
     /// Human names for option values the catalog leaves raw.
     static let optionNames: [String: [String: String]] = [
-        "cursor-style": ["block": "Block", "bar": "Bar", "underline": "Underline", "block_hollow": "Hollow block"],
-        "cursor-style-blink": ["true": "Blink", "false": "Steady", "": "Program decides"],
+        "cursor-style": ["block": "Block", "bar": "Bar", "underline": "Underline", "block_hollow": "Hollow"],
+        "cursor-style-blink": ["true": "Blink", "false": "Steady", "": "Auto"],
         "mouse-shift-capture": ["false": "Off (programs can opt in)", "true": "On (programs can opt out)", "always": "Always", "never": "Never"],
         "window-padding-color": ["background": "Background color", "extend": "Extend edge cells", "extend-always": "Always extend edge cells"],
     ]

@@ -50,22 +50,19 @@ public struct UURemoteAccountView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: RX.Space.s4) {
-                if account.isLoggedIn {
-                    accountCard
-                    devicesCard
-                    assistCard
-                } else {
-                    signInCard
-                }
-                if !infoLine.isEmpty {
-                    Text(infoLine)
-                        .font(.rxHelp)
-                        .foregroundStyle(Color.rxInkSecondary)
-                }
+        VStack(alignment: .leading, spacing: RX.Space.s4) {
+            if account.isLoggedIn {
+                accountCard
+                devicesCard
+                assistCard
+            } else {
+                signInCard
             }
-            .padding(RX.Space.s4)
+            if !infoLine.isEmpty {
+                Text(infoLine)
+                    .font(.rxHelp)
+                    .foregroundStyle(Color.rxInkSecondary)
+            }
         }
         .task(id: account.isLoggedIn) {
             if account.isLoggedIn, account.devices.isEmpty {
@@ -163,9 +160,9 @@ public struct UURemoteAccountView: View {
                 .foregroundStyle(Color.rxInkSecondary)
             HStack(spacing: RX.Space.s2) {
                 TextField("Connect ID", text: $assistID)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.rxMono)
                 SecureField("Code", text: $assistCode)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.rxMono)
                     .frame(width: 120)
                 Button("Join") { connectAssist() }
                     .buttonStyle(.rx)
@@ -183,11 +180,12 @@ public struct UURemoteAccountView: View {
             Text("Sign in, and the account's computers appear as servers in a folder of their own, kept up to date.")
                 .font(.rxBody)
                 .foregroundStyle(Color.rxInkSecondary)
-            Picker("Sign in with", selection: $loginMode) {
-                ForEach(LoginMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            RXSegmented(
+                selection: $loginMode,
+                options: LoginMode.allCases.map { .init($0, $0.rawValue) },
+                caps: false,
+                fullWidth: true
+            )
             switch loginMode {
             case .qr: qrFields
             case .sms: smsFields
@@ -275,10 +273,10 @@ public struct UURemoteAccountView: View {
         VStack(alignment: .leading, spacing: RX.Space.s2) {
             HStack(spacing: RX.Space.s2) {
                 TextField("+86", text: $phoneCountry)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.rxMono)
                     .frame(width: 64)
                 TextField("Phone number", text: $phoneNumber)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.rxMono)
                     #if os(iOS)
                     .keyboardType(.phonePad)
                     #endif
@@ -293,7 +291,7 @@ public struct UURemoteAccountView: View {
             }
             HStack(spacing: RX.Space.s2) {
                 TextField("Code from the SMS", text: $smsCode)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.rxMono)
                     #if os(iOS)
                     .keyboardType(.numberPad)
                     #endif
@@ -312,7 +310,7 @@ public struct UURemoteAccountView: View {
         VStack(alignment: .leading, spacing: RX.Space.s2) {
             HStack(spacing: RX.Space.s2) {
                 SecureField("Access token", text: $tokenDraft)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.rxMono)
                 Button("Sign In") {
                     run("token") { try await account.importToken(tokenDraft) }
                 }

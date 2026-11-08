@@ -590,13 +590,14 @@ struct ConfigByteInput: View {
             TextField("MB", value: Binding(get: { megabytes }, set: { set(megabytes: $0) }), format: .number.precision(.fractionLength(0 ... 1)))
                 .multilineTextAlignment(.trailing)
                 .textFieldStyle(.rx)
-                .frame(width: 96)
+                .frame(width: 84)
             Stepper("Megabytes", onIncrement: { set(megabytes: megabytes + 1) },
                     onDecrement: { set(megabytes: megabytes - 1) })
                 .labelsHidden()
             Text("MB")
                 .font(.rxBody)
                 .foregroundStyle(.rxInkSecondary)
+                .fixedSize()
         }
     }
 }
