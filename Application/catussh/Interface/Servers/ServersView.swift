@@ -284,17 +284,14 @@ private struct ServerRow: View {
                         .lineLimit(1)
                         .frame(width: columns.lastUsed, alignment: .leading)
                 }
-                if read.isUURemoteDevice {
-                    UUDeviceActions(machine: read)
-                        .frame(width: columns.actions, alignment: .trailing)
-                } else {
                 // Words where they fit beside Terminal, icons where not.
-                ViewThatFits(in: .horizontal) {
-                    toolButtons(read, iconOnly: false)
-                    toolButtons(read, iconOnly: true)
+                UUReachable(machine: read) {
+                    ViewThatFits(in: .horizontal) {
+                        toolButtons(read, iconOnly: false)
+                        toolButtons(read, iconOnly: true)
+                    }
                 }
                 .frame(width: columns.actions, alignment: .trailing)
-                }
             }
         }
         .padding(.horizontal, RX.Space.s3)
@@ -318,12 +315,12 @@ private struct ServerRow: View {
                         .labelStyle(TitleOrIcon(iconOnly: iconOnly))
                 }
                 .buttonStyle(.rx(.plain, size: .small, iconOnly: iconOnly))
-                .help(tool.help)
+                .help(tool.help(for: read))
                 .accessibilityLabel(tool.title)
             }
             Button(ServerTool.terminal.title) { ServerTool.terminal.show(machine) }
                 .buttonStyle(.rx(size: .small))
-                .help(ServerTool.terminal.help)
+                .help(ServerTool.terminal.help(for: read))
         }
         .fixedSize()
     }
@@ -355,25 +352,20 @@ private struct UUDeviceStatus: View {
 
 /// A UU Remote device's row actions: a view of its screen, its desktop and
 /// its terminal.
-private struct UUDeviceActions: View {
+/// A UU device's tools, off while it cannot be reached: signed out of the
+/// account, or offline in it. Any other server's, as they are.
+private struct UUReachable<Content: View>: View {
     let machine: RDMachine
+    @ViewBuilder let content: Content
     @ObservedObject private var account = UURemoteAccountStore.shared
 
     var body: some View {
-        let device = account.devices.first { $0.deviceID == machine.uuDeviceID }
-        HStack(spacing: RX.Space.s1) {
-            Button("View") { AppRouter.shared.openDesktop(machine: machine.id, viewOnly: true) }
-                .buttonStyle(.rx(.plain, size: .small))
-                .help("Watch the screen without controlling it")
-            Button("Desktop") { AppRouter.shared.openDesktop(machine: machine.id) }
-                .buttonStyle(.rx(.plain, size: .small))
-                .help("Control this device's desktop")
-            Button("Terminal") { ServerTool.terminal.show(machine.id) }
-                .buttonStyle(.rx(size: .small))
-                .help("Open the device's own shell through UU Remote")
+        if machine.isUURemoteDevice {
+            let device = account.devices.first { $0.deviceID == machine.uuDeviceID }
+            content.disabled(!account.isLoggedIn || device?.isOnline == false)
+        } else {
+            content
         }
-        // Signed out, the device cannot be reached; offline, nothing answers.
-        .disabled(!account.isLoggedIn || device?.isOnline == false)
     }
 }
 

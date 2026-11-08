@@ -132,7 +132,7 @@ struct ServerEditorSheet: View {
             if transport == .cloudflareAccess {
                 cloudflareFields
             } else if transport == .uuRemote {
-                HelpText("SSH, SFTP and Monitor on this server tunnel through the UU Remote session's port mapping — open the Desktop first so the tunnel is live.")
+                HelpText("Files, Monitor and the editor reach the device's own SSH server through UU Remote, signed in with the identity below; on a Mac, turn on System Settings › General › Sharing › Remote Login. The terminal is UU Remote's own and needs neither.")
             }
             RXField("Remote Desktop") {
                 RXPicker(

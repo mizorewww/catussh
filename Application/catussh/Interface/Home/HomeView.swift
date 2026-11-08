@@ -358,12 +358,7 @@ struct ServerTile: View {
                     } else {
                         VStack(spacing: 6) {
                             infoRow("Last used", RXFormat.relative(read.lastConnection))
-                            if read.isUURemoteDevice {
-                                // No identity: UU Remote signs in with the account.
-                                infoRow("Device", read.comment.isEmpty ? "UU Remote" : read.comment)
-                            } else {
-                                infoRow("Identity", identityName(read))
-                            }
+                            infoRow("Identity", identityName(read))
                         }
                         .transition(.opacity)
                     }
@@ -401,7 +396,7 @@ struct ServerTile: View {
                 Label(ServerTool.terminal.title, systemImage: ServerTool.terminal.systemImage)
             }
             .buttonStyle(.rx(.primary, size: .small))
-            .help(offline ? "The device is offline in UU Remote" : ServerTool.terminal.help)
+            .help(offline ? "The device is offline in UU Remote" : ServerTool.terminal.help(for: store.machineGroup[machine]))
             .disabled(offline)
             // What the server can show (a UU device: its desktop); past two,
             // as icons, so none is cut short.
@@ -430,7 +425,7 @@ struct ServerTile: View {
             Label(tool.title, systemImage: tool.systemImage)
         }
         .buttonStyle(.rx(size: .small, iconOnly: iconOnly))
-        .help(offline ? "The device is offline in UU Remote" : tool.help)
+        .help(offline ? "The device is offline in UU Remote" : tool.help(for: store.machineGroup[machine]))
         .disabled(offline)
     }
 

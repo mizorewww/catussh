@@ -192,6 +192,8 @@ public final class UURemotePortMappingTunnel: NSObject, @unchecked Sendable {
         var localFD: Int32
         var readerThread: Thread?
         var closed = false
+        /// Told once, when the stream is gone.
+        var onClose: (@Sendable () -> Void)?
     }
 
     private var streams: [StreamKey: Stream] = [:]
@@ -263,7 +265,13 @@ public final class UURemotePortMappingTunnel: NSObject, @unchecked Sendable {
 
     /// Opens a stream and returns the socketpair end for libssh2 to use.
     /// Blocks the calling thread until SYN_ACK arrives or `timeout` expires.
-    public func openStream(targetHost: String, targetPort: UInt16, timeout: TimeInterval) -> Result<Int32, Failure> {
+    /// `onClose` runs once the stream has closed, if it opened.
+    public func openStream(
+        targetHost: String,
+        targetPort: UInt16,
+        timeout: TimeInterval,
+        onClose: (@Sendable () -> Void)? = nil
+    ) -> Result<Int32, Failure> {
         let sessionID = nextRuleID()
         let ruleID = nextRuleID()
         let streamID = nextStreamID()
@@ -313,7 +321,7 @@ public final class UURemotePortMappingTunnel: NSObject, @unchecked Sendable {
         }
 
         streamsLock.withLock {
-            streams[key] = Stream(key: key, localFD: pair[1])
+            streams[key] = Stream(key: key, localFD: pair[1], onClose: onClose)
         }
 
         let fd = pair[1]
@@ -371,6 +379,7 @@ public final class UURemotePortMappingTunnel: NSObject, @unchecked Sendable {
             }
             stream.readerThread?.cancel()
             Darwin.close(stream.localFD)
+            stream.onClose?()
         }
     }
 
@@ -399,28 +408,21 @@ public extension NSRemoteShell {
         set { objc_setAssociatedObject(self, uuTunnelFailureKey, newValue, .OBJC_ASSOCIATION_COPY) }
     }
 
-    /// Has the shell reach the machine through an active UU Remote session's
-    /// port-mapping stream. The tunnel must be bound by `UURemoteDriver` before
-    /// any SSH connection is attempted.
+    /// Has the shell reach the machine through UU Remote: a port-mapping
+    /// stream to the service on the device's own loopback (sshd), on the
+    /// device's UU connection, which is made for it if there is none and
+    /// kept while the stream is open.
     internal func applyUUTransport(for machine: RDMachine) {
         uuTunnelFailure = nil
-        let deviceID = machine.uuDeviceID.isEmpty ? machine.remoteAddress : machine.uuDeviceID
         setupConnectionSocketProvider { [weak self] host, port, timeout in
-            guard let tunnel = UURemotePortMappingTunnelProvider.shared.tunnel(for: deviceID) else {
-                self?.uuTunnelFailure = "No active UU Remote session for device \(deviceID). Start remote desktop first."
-                return -1
-            }
             let targetPort = UInt16(port.intValue > 0 ? port.intValue : 22)
-            // `remoteAddress` on a UU machine is the device id, not an IP:
-            // the port-mapped service (sshd) lives on the remote host's own
-            // loopback. Only forward a real dotted address when one exists.
-            let targetHost = (host == deviceID || !host.contains(".")) ? "127.0.0.1" : host
-            let result = tunnel.openStream(
-                targetHost: targetHost,
-                targetPort: targetPort,
-                timeout: max(timeout.doubleValue, 15)
-            )
-            switch result {
+            // `remoteAddress` on a UU device is its device id, not an IP:
+            // the service lives on the device's own loopback. Only a real
+            // dotted address is forwarded as is.
+            let targetHost = (host == machine.uuDeviceID || !host.contains(".")) ? "127.0.0.1" : host
+            switch UURemoteConnections.openStream(
+                to: machine, host: targetHost, port: targetPort, timeout: max(timeout.doubleValue, 15)
+            ) {
             case let .success(fd):
                 self?.uuTunnelFailure = nil
                 return fd
@@ -447,9 +449,10 @@ public final class UURemotePortMappingTunnelProvider: @unchecked Sendable {
         lock.withLock { tunnels[deviceID] = tunnel }
     }
 
-    /// Removes the binding when a session ends.
-    public func unregister(for deviceID: String) {
-        lock.withLock { tunnels.removeValue(forKey: deviceID) }
+    /// Removes the binding when a session ends, unless another session has
+    /// bound its own since.
+    public func unregister(_ tunnel: UURemotePortMappingTunnel, for deviceID: String) {
+        lock.withLock { if tunnels[deviceID] === tunnel { tunnels.removeValue(forKey: deviceID) } }
     }
 
     /// The tunnel bound to a device, or nil when no UU Remote session is open.

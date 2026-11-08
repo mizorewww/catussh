@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import os
 
 @MainActor
 public final class UURemoteConnections {
@@ -23,6 +24,7 @@ public final class UURemoteConnections {
     }
 
     private var entries: [String: Entry] = [:]
+    private nonisolated static let log = Logger(subsystem: "me.mizorewww.rayon", category: "uu-connections")
 
     private init() {}
 
@@ -117,6 +119,52 @@ public final class UURemoteConnections {
         let driver = try await acquire(for: machine)
         defer { release(machine, driver: driver) }
         driver.closeTerminal(id)
+    }
+
+    /// A port-mapped stream to a service on the device (its sshd, for SSH,
+    /// SFTP and the rest), on the device's connection, which stays while the
+    /// stream is open. Blocks the calling thread, which is never the main one.
+    public nonisolated static func openStream(
+        to machine: RDMachine,
+        host: String,
+        port: UInt16,
+        timeout: TimeInterval
+    ) -> Result<Int32, UURemotePortMappingTunnel.Failure> {
+        typealias Failure = UURemotePortMappingTunnel.Failure
+        guard !Thread.isMainThread else { return .failure(Failure("UU Remote streams are not opened on the main thread.")) }
+        let acquired = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var lease: Result<UURemoteDriver, Error> = .failure(Failure("UU Remote did not connect in time."))
+        // Joining the device's room takes longer than a TCP connect; the
+        // caller's timeout is for the stream.
+        let connectTimeout = max(timeout, 30)
+        Task { @MainActor in
+            do { lease = .success(try await shared.acquire(for: machine, timeout: connectTimeout)) } catch { lease = .failure(error) }
+            acquired.signal()
+        }
+        guard acquired.wait(timeout: .now() + connectTimeout + 5) == .success else {
+            return .failure(Failure("UU Remote did not connect in \(Int(connectTimeout)) seconds."))
+        }
+        let driver: UURemoteDriver
+        switch lease {
+        case let .success(value): driver = value
+        case let .failure(error):
+            log.error("no connection to \(machine.name, privacy: .public) for a stream: \(error.localizedDescription, privacy: .public)")
+            return .failure(Failure(error.localizedDescription))
+        }
+        let release: @Sendable () -> Void = {
+            Task { @MainActor in shared.release(machine, driver: driver) }
+        }
+        let result = driver.openPortMappingStream(targetHost: host, targetPort: port, timeout: timeout, onClose: release)
+        switch result {
+        case .success:
+            log.info("stream to \(host, privacy: .public):\(port) on \(machine.name, privacy: .public) open")
+            return result
+        case let .failure(failure):
+            log.error("stream to \(host, privacy: .public):\(port) on \(machine.name, privacy: .public) failed: \(failure.message, privacy: .public)")
+            release()
+            // Nothing listens there: on a Mac, Remote Login is off.
+            return .failure(Failure("\(machine.name) did not accept a connection to port \(port) through UU Remote (\(failure.message)). Turn on SSH on the device (on a Mac: System Settings › General › Sharing › Remote Login)."))
+        }
     }
 
     /// What the connection is doing now, for a terminal to show while it waits.

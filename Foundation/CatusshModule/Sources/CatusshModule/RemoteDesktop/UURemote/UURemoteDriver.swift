@@ -119,7 +119,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         heartbeatTask?.cancel()
         videoRequestTask?.cancel()
         portMapping.shutdown()
-        UURemotePortMappingTunnelProvider.shared.unregister(for: deviceID)
+        UURemotePortMappingTunnelProvider.shared.unregister(portMapping, for: deviceID)
         Task { await signalClient.disconnect() }
         // Capture the peer before clearing it: `self?.peer` inside the
         // MainActor task would already be nil and closeAll() would never
@@ -1002,6 +1002,17 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     /// Resizes the host's terminal session.
     public func sendTerminalResize(cols: Int, rows: Int, sessionID: UInt32 = 1) {
         sendBinaryChannel(UUTerminalFrame(kind: .resize, sessionID: sessionID, payload: UUTerminalJSON.resize(cols: cols, rows: rows)).encode())
+    }
+
+    /// A port-mapped stream to `targetHost:targetPort` as seen from the
+    /// device. Blocks until the host answers; not on the main thread.
+    public func openPortMappingStream(
+        targetHost: String,
+        targetPort: UInt16,
+        timeout: TimeInterval,
+        onClose: @escaping @Sendable () -> Void
+    ) -> Result<Int32, UURemotePortMappingTunnel.Failure> {
+        portMapping.openStream(targetHost: targetHost, targetPort: targetPort, timeout: timeout, onClose: onClose)
     }
 
     /// Opens a port-mapped socket for SSH/SFTP through the UU host.

@@ -143,12 +143,17 @@ enum ServerTool: CaseIterable, Identifiable {
         }
     }
 
-    /// The tools a server can actually show. A UU Remote device has a
-    /// terminal and a desktop through UU, and none of the SSH tools; a
-    /// dead-end "Desktop" on a server without one would only error out.
+    /// The tools a server can actually show; a dead-end "Desktop" on a
+    /// server without one would only error out. A UU Remote device has them
+    /// all: UU is only how it is reached.
     static func available(for machine: RDMachine) -> [ServerTool] {
-        if machine.isUURemoteDevice { return [.terminal, .desktop] }
-        return allCases.filter { $0 != .desktop || machine.hasRemoteDesktop }
+        allCases.filter { $0 != .desktop || machine.hasRemoteDesktop }
+    }
+
+    /// The tooltip for this tool on `machine`.
+    func help(for machine: RDMachine) -> String {
+        if self == .terminal, machine.isUURemoteDevice { return "Open a terminal session on the device through UU Remote" }
+        return help
     }
 
     /// Shows this tool for the server, reusing a session that is already open.
@@ -170,59 +175,20 @@ enum ServerTool: CaseIterable, Identifiable {
     }
 }
 
-/// Terminal, Files, Monitor, Show in Menu Bar, Edit, Duplicate, Copy Address,
-/// Copy SSH Command, Forget Host Key, Delete.
+/// Terminal, Files, Monitor, Show in Menu Bar, Edit, Duplicate, Copy Address
+/// (a UU device's id), Copy SSH Command, Forget Host Key, Delete.
 struct ServerContextMenu: View {
     let machine: RDMachine.ID
     /// False where the tools already sit beside the menu (a tile's ⋯ button).
     var includesTools = true
 
     var body: some View {
-        if CatusshStore.shared.machineGroup[machine].isUURemoteDevice {
-            uuDeviceItems
-        } else {
-            sshItems
-        }
-    }
-
-    /// A UU Remote device has its desktop and nothing that needs SSH.
-    @ViewBuilder private var uuDeviceItems: some View {
-        Button {
-            ServerTool.terminal.show(machine)
-        } label: {
-            Label("Open Terminal", systemImage: ServerTool.terminal.systemImage)
-        }
-        Button {
-            AppRouter.shared.openTerminal(machine: machine)
-        } label: {
-            Label("New Terminal", systemImage: "plus.rectangle")
-        }
-        Divider()
-        Button {
-            AppRouter.shared.openDesktop(machine: machine)
-        } label: {
-            Label("Open Desktop", systemImage: ServerTool.desktop.systemImage)
-        }
-        Button {
-            AppRouter.shared.openDesktop(machine: machine, viewOnly: true)
-        } label: {
-            Label("View Only", systemImage: "eye")
-        }
-        Divider()
-        Button {
-            ServerActions.edit(machine)
-        } label: {
-            Label("Edit…", systemImage: "pencil")
-        }
-        Button {
-            UIBridge.sendPasteboard(str: CatusshStore.shared.machineGroup[machine].uuDeviceID)
-        } label: {
-            Label("Copy Device ID", systemImage: "doc.on.doc")
-        }
+        sshItems
     }
 
     @ViewBuilder private var sshItems: some View {
         let router = AppRouter.shared
+        let read = CatusshStore.shared.machineGroup[machine]
         Group {
             if includesTools {
                 Button {
@@ -245,11 +211,16 @@ struct ServerContextMenu: View {
                 } label: {
                     Label("Open Monitor", systemImage: ServerTool.monitor.systemImage)
                 }
-                if CatusshStore.shared.machineGroup[machine].hasRemoteDesktop {
+                if read.hasRemoteDesktop {
                     Button {
                         ServerTool.desktop.show(machine)
                     } label: {
                         Label("Open Desktop", systemImage: ServerTool.desktop.systemImage)
+                    }
+                    Button {
+                        router.openDesktop(machine: machine, viewOnly: true)
+                    } label: {
+                        Label("View Desktop Only", systemImage: "eye")
                     }
                 }
             }
@@ -275,15 +246,24 @@ struct ServerContextMenu: View {
             } label: {
                 Label("Duplicate", systemImage: "plus.square.on.square")
             }
-            Button {
-                ServerActions.copyAddress(machine)
-            } label: {
-                Label("Copy Address", systemImage: "doc.on.doc")
-            }
-            Button {
-                ServerActions.copyCommand(machine)
-            } label: {
-                Label("Copy SSH Command", systemImage: "chevron.left.forwardslash.chevron.right")
+            if read.isUURemoteDevice {
+                // Its address is the device id; no ssh command reaches it.
+                Button {
+                    UIBridge.sendPasteboard(str: read.uuDeviceID)
+                } label: {
+                    Label("Copy Device ID", systemImage: "doc.on.doc")
+                }
+            } else {
+                Button {
+                    ServerActions.copyAddress(machine)
+                } label: {
+                    Label("Copy Address", systemImage: "doc.on.doc")
+                }
+                Button {
+                    ServerActions.copyCommand(machine)
+                } label: {
+                    Label("Copy SSH Command", systemImage: "chevron.left.forwardslash.chevron.right")
+                }
             }
             Button {
                 ServerActions.forgetHostKey(machine)
@@ -365,13 +345,13 @@ struct ServerToolSwitcher: View {
         if #available(iOS 26.0, *) {
             RXToolbarSegmented(
                 selection: current,
-                options: tools.map { .init($0, $0.title, help: $0.help) }
+                options: tools.map { .init($0, $0.title, help: $0.help(for: CatusshStore.shared.machineGroup[machine])) }
             ) { $0.show(machine) }
         } else {
             Picker("View", selection: Binding(get: { current }, set: { $0.show(machine) })) {
                 ForEach(tools) { tool in
                     Text(tool.title)
-                        .help(tool.help)
+                        .help(tool.help(for: CatusshStore.shared.machineGroup[machine]))
                         .tag(tool)
                 }
             }
