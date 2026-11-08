@@ -143,18 +143,16 @@ public extension CatusshStore {
     func storeEncryptedDefault<T: Codable>(to key: UserDefaultKey, with data: T) {
         guard !crypto.isEphemeral else { return }
         storeWritePrecondition()
-        onMainThread {
-            DeferredStoreWrites.shared.schedule(key) {
-                guard let data = try? documentEncoder.encode(data),
-                      let encrypt = crypto.encrypt(data: data)
-                else {
-                    debugPrint("CatusshStore: failed to encode or encrypt \(key.rawValue); the change is not stored")
-                    return
-                }
-                UserDefaults
-                    .standard
-                    .set(encrypt, forKey: key.rawValue)
+        DeferredStoreWrites.shared.schedule(key) {
+            guard let data = try? documentEncoder.encode(data),
+                  let encrypt = crypto.encrypt(data: data)
+            else {
+                debugPrint("CatusshStore: failed to encode or encrypt \(key.rawValue); the change is not stored")
+                return
             }
+            UserDefaults
+                .standard
+                .set(encrypt, forKey: key.rawValue)
         }
     }
 
@@ -162,19 +160,15 @@ public extension CatusshStore {
     /// goes to the background or is about to terminate.
     func flushPendingWrites() {
         storeWritePrecondition()
-        onMainThread {
-            DeferredStoreWrites.shared.flush()
-        }
+        DeferredStoreWrites.shared.flush()
     }
 
     /// Removes a stored value, after any write of it that is still queued.
     func removeDefault(_ key: UserDefaultKey) {
         storeWritePrecondition()
-        onMainThread {
-            DeferredStoreWrites.shared.cancel(key)
-            storeQueue.async {
-                UserDefaults.standard.removeObject(forKey: key.rawValue)
-            }
+        DeferredStoreWrites.shared.cancel(key)
+        storeQueue.async {
+            UserDefaults.standard.removeObject(forKey: key.rawValue)
         }
     }
 
@@ -252,6 +246,9 @@ public extension CatusshStore {
             debugPrint("CatusshStore: broken payload")
             return false
         }
+        let fg = (dic[UserDefaultKey.folderGroupEncrypted.rawValue] as? Data).flatMap {
+            readEncrypted(from: $0, CatusshStore.shared.folderGroup.self)
+        }
         onMainThread {
             // Assigning fires each didSet, which stores the value; the
             // extra writes this used to do stored the same bytes twice.
@@ -259,6 +256,7 @@ public extension CatusshStore {
             CatusshStore.shared.machineGroup = mg
             CatusshStore.shared.snippetGroup = sg
             CatusshStore.shared.portForwardGroup = pg
+            if let fg { CatusshStore.shared.folderGroup = fg }
         }
         return true
     }

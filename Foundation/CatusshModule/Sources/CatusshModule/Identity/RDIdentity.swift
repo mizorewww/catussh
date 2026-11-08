@@ -97,12 +97,14 @@ public struct RDIdentity: Codable, Identifiable, Equatable, Sendable {
             return
         }
         let date = Date()
-        let fmt = DateFormatter()
-        fmt.dateStyle = .full
-        fmt.timeStyle = .full
-        debugPrint("Identity \(id) was used to authentic session at \(fmt.string(from: date))")
+        debugPrint("Identity \(id) was used to authenticate session at \(date.ISO8601Format())")
         onMainThread {
-            CatusshStore.shared.identityGroup[id].lastRecentUsed = date
+            if var existing = CatusshStore.shared.identityGroup.find(id),
+               abs(existing.lastRecentUsed.timeIntervalSince(date)) > 60
+            {
+                existing.lastRecentUsed = date
+                CatusshStore.shared.identityGroup[id] = existing
+            }
         }
     }
 }

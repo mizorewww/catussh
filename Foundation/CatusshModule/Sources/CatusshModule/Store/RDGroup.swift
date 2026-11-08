@@ -2,11 +2,6 @@
 //  RDGroup.swift
 //  CatusshModule
 //
-//  The insert/delete/lookup the four store groups used to carry four
-//  copies of. A group keeps its own stored array — the persisted key
-//  names differ and must not change — and its own placeholder rule;
-//  the rest lives here once.
-//
 
 import Foundation
 
@@ -31,6 +26,11 @@ public protocol RDGroup {
 public extension RDGroup {
     var count: Int { items.count }
 
+    /// Safe optional lookup by ID without allocating a placeholder.
+    func find(_ id: Item.ID) -> Item? {
+        items.first(where: { $0.id == id })
+    }
+
     mutating func insert(_ value: Item) {
         guard Self.accepts(value) else { return }
         if let index = items.firstIndex(where: { $0.id == value.id }) {
@@ -46,18 +46,20 @@ public extension RDGroup {
         }
 
         set(newValue) {
-            if let index = items.firstIndex(where: { $0.id == newValue.id }) {
-                items[index] = newValue
-            } else {
-                debugPrint("setting subscript found nil when sending value, did you forget to call insert?")
+            if let index = items.firstIndex(where: { $0.id == id }) {
+                if Self.accepts(newValue) {
+                    items[index] = newValue
+                } else {
+                    items.remove(at: index)
+                }
+            } else if Self.accepts(newValue) {
+                items.append(newValue)
             }
         }
     }
 
     mutating func delete(_ value: Item.ID) {
-        let index = items
-            .firstIndex { $0.id == value }
-        if let index = index {
+        if let index = items.firstIndex(where: { $0.id == value }) {
             items.remove(at: index)
         }
     }

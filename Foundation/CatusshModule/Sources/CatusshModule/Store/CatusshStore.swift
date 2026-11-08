@@ -9,7 +9,6 @@ import Combine
 import Foundation
 import NSRemoteShell
 import os
-import PropertyWrapper
 #if canImport(UIKit)
     import UIKit
 #elseif canImport(AppKit)
@@ -34,14 +33,16 @@ public class CatusshStore: ObservableObject, @unchecked Sendable {
 
         // bool(forKey:) also reads "YES"/"1" from the argument domain
         // (`-licenseAgreed YES`), and is false when the key is missing.
-        licenseAgreed = UserDefaults.standard.bool(forKey: UserDefaultKey.licenseAgreed.rawValue)
-        storeRecent = UDStoreRecent
-        saveTemporarySession = UDSaveTemporarySession
-        timeout = UDTimeout
-        reducedViewEffects = UDReducedViewEffects
-        disableConformation = UDDisableConformation
-        monitorInterval = UDMonitorInterval
-        terminalFontSize = UDTerminalFontSize
+        let defaults = UserDefaults.standard
+        licenseAgreed = defaults.bool(forKey: UserDefaultKey.licenseAgreed.rawValue)
+        storeRecent = Self.readDefaultBool("me.mizorewww.rayon.storeRecent", defaultValue: true, in: defaults)
+        saveTemporarySession = Self.readDefaultBool("me.mizorewww.rayon.saveTemporarySession", defaultValue: true, in: defaults)
+        timeout = Self.readDefaultInt("me.mizorewww.rayon.timeout", defaultValue: 5, in: defaults)
+        reducedViewEffects = Self.readDefaultBool("me.mizorewww.rayon.reducedViewEffects", defaultValue: false, in: defaults)
+        disableConformation = Self.readDefaultBool("me.mizorewww.rayon.disableConformation", defaultValue: false, in: defaults)
+        monitorInterval = Self.readDefaultInt("me.mizorewww.rayon.monitorInterval", defaultValue: 3, in: defaults)
+        terminalFontSize = Self.readDefaultInt("me.mizorewww.rayon.terminalFontSize", defaultValue: 14, in: defaults)
+        maxRecentRecordCount = Self.readDefaultInt("me.mizorewww.rayon.maxRecentRecordCount", defaultValue: 8, in: defaults)
         if timeout <= 0 { timeout = 5 }
 
         if let read = readEncryptedDefault(
@@ -146,20 +147,26 @@ public class CatusshStore: ObservableObject, @unchecked Sendable {
         }
     }
 
-    @UserDefaultsWrapper(key: "me.mizorewww.rayon.timeout", defaultValue: 5)
-    private var UDTimeout: Int
-    @Published public var timeout: Int = 0 {
+    private static func readDefaultInt(_ key: String, defaultValue: Int, in defaults: UserDefaults) -> Int {
+        guard defaults.object(forKey: key) != nil else { return defaultValue }
+        return defaults.integer(forKey: key)
+    }
+
+    private static func readDefaultBool(_ key: String, defaultValue: Bool, in defaults: UserDefaults) -> Bool {
+        guard defaults.object(forKey: key) != nil else { return defaultValue }
+        return defaults.bool(forKey: key)
+    }
+
+    @Published public var timeout: Int = 5 {
         didSet {
-            UDTimeout = timeout
+            UserDefaults.standard.set(timeout, forKey: "me.mizorewww.rayon.timeout")
             workerState.withLock { $0.timeout = timeout }
         }
     }
 
-    @UserDefaultsWrapper(key: "me.mizorewww.rayon.monitorInterval", defaultValue: 3)
-    private var UDMonitorInterval: Int
-    @Published public var monitorInterval: Int = 0 {
+    @Published public var monitorInterval: Int = 3 {
         didSet {
-            UDMonitorInterval = monitorInterval
+            UserDefaults.standard.set(monitorInterval, forKey: "me.mizorewww.rayon.monitorInterval")
             workerState.withLock { $0.monitorInterval = monitorInterval }
         }
     }
@@ -216,47 +223,38 @@ public class CatusshStore: ObservableObject, @unchecked Sendable {
         }
     }
 
-    @UserDefaultsWrapper(key: "me.mizorewww.rayon.saveTemporarySession", defaultValue: true)
-    private var UDSaveTemporarySession: Bool
-
-    @Published public var saveTemporarySession: Bool = false {
+    @Published public var saveTemporarySession: Bool = true {
         didSet {
-            UDSaveTemporarySession = saveTemporarySession
+            UserDefaults.standard.set(saveTemporarySession, forKey: "me.mizorewww.rayon.saveTemporarySession")
         }
     }
 
-    @UserDefaultsWrapper(key: "me.mizorewww.rayon.storeRecent", defaultValue: true)
-    private var UDStoreRecent: Bool
-
-    @Published public var storeRecent: Bool = false {
+    @Published public var storeRecent: Bool = true {
         didSet {
-            UDStoreRecent = storeRecent
+            UserDefaults.standard.set(storeRecent, forKey: "me.mizorewww.rayon.storeRecent")
             if !storeRecent {
                 recentRecord = []
             }
         }
     }
 
-    @UserDefaultsWrapper(key: "me.mizorewww.rayon.reducedViewEffects", defaultValue: false)
-    private var UDReducedViewEffects: Bool
-
     @Published public var reducedViewEffects: Bool = false {
         didSet {
-            UDReducedViewEffects = reducedViewEffects
+            UserDefaults.standard.set(reducedViewEffects, forKey: "me.mizorewww.rayon.reducedViewEffects")
         }
     }
-
-    @UserDefaultsWrapper(key: "me.mizorewww.rayon.disableConformation", defaultValue: false)
-    private var UDDisableConformation: Bool
 
     @Published public var disableConformation: Bool = false {
         didSet {
-            UDDisableConformation = disableConformation
+            UserDefaults.standard.set(disableConformation, forKey: "me.mizorewww.rayon.disableConformation")
         }
     }
 
-    @UserDefaultsWrapper(key: "me.mizorewww.rayon.maxRecentRecordCount", defaultValue: 8)
-    public var maxRecentRecordCount: Int
+    public var maxRecentRecordCount: Int = 8 {
+        didSet {
+            UserDefaults.standard.set(maxRecentRecordCount, forKey: "me.mizorewww.rayon.maxRecentRecordCount")
+        }
+    }
 
     @Published public var recentRecord: [RecentConnection] = [] {
         didSet {
@@ -267,12 +265,9 @@ public class CatusshStore: ObservableObject, @unchecked Sendable {
         }
     }
 
-    @UserDefaultsWrapper(key: "me.mizorewww.rayon.terminalFontSize", defaultValue: 14)
-    public var UDTerminalFontSize: Int
-
     @Published public var terminalFontSize: Int = 14 {
         didSet {
-            UDTerminalFontSize = terminalFontSize
+            UserDefaults.standard.set(terminalFontSize, forKey: "me.mizorewww.rayon.terminalFontSize")
             workerState.withLock { $0.terminalFontSize = terminalFontSize }
         }
     }

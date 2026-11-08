@@ -46,7 +46,7 @@ extension TerminalContext {
             MainActor.assumeIsolated {
                 var saved = CatusshStore.shared.machineGroup[id]
                 guard saved.isNotPlaceholder(), !saved.hasGhosttyTerminfo else { return }
-                saved.attachment[GhosttyTerminfo.cacheKey] = GhosttyTerminfo.version
+                saved.ghosttyTerminfoVersion = GhosttyTerminfo.version
                 CatusshStore.shared.machineGroup[id] = saved
             }
         }

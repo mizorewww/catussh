@@ -74,7 +74,7 @@ public extension CatusshStore {
         folderGroup.folders.removeAll { $0.name == name }
         var group = machineGroup
         for machine in machines(inFolder: name) {
-            if machine.attachment[UURemoteFolderSync.managedKey] == "1" {
+            if machine.uuManaged {
                 group.delete(machine.id)
             } else {
                 var moved = machine

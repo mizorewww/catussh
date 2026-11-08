@@ -148,7 +148,7 @@ xterm-ghostty|ghostty|Ghostty,
 
     /// Whether a server is known to have this version of the entry.
     static func isCached(on machine: RDMachine) -> Bool {
-        machine.attachment[cacheKey] == version
+        machine.ghosttyTerminfoVersion == version
     }
 }
 
@@ -156,7 +156,7 @@ public extension RDMachine {
     /// Forgets that the server has Ghostty's terminfo, so the next terminal
     /// checks and installs it again.
     mutating func forgetGhosttyTerminfo() {
-        attachment[GhosttyTerminfo.cacheKey] = nil
+        ghosttyTerminfoVersion = nil
     }
 
     var hasGhosttyTerminfo: Bool { GhosttyTerminfo.isCached(on: self) }

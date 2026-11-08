@@ -8,7 +8,7 @@
 import Foundation
 import NSRemoteShell
 
-public struct RDPortForward: Codable, Identifiable, Equatable {
+public struct RDPortForward: Codable, Identifiable, Equatable, Sendable {
     public init(
         id: UUID = .init(),
         forwardOrientation: ForwardOrientation = .listenLocal,
@@ -29,7 +29,7 @@ public struct RDPortForward: Codable, Identifiable, Equatable {
 
     public var id: UUID
 
-    public enum ForwardOrientation: String, Codable, CaseIterable {
+    public enum ForwardOrientation: String, Codable, CaseIterable, Sendable {
         case listenLocal = "Local"
         case listenRemote = "Remote"
     }
@@ -62,7 +62,7 @@ public struct RDPortForward: Codable, Identifiable, Equatable {
               !targetHost.isEmpty,
               targetPort >= 0, targetPort <= 65535,
               let machine = usingMachine,
-              CatusshStore.shared.machineGroup[machine].isNotPlaceholder()
+              CatusshStore.shared.workerMachine(for: machine).isNotPlaceholder()
         else {
             return false
         }
@@ -73,7 +73,7 @@ public struct RDPortForward: Codable, Identifiable, Equatable {
         guard let mid = usingMachine else {
             return nil
         }
-        let machine = CatusshStore.shared.machineGroup[mid]
+        let machine = CatusshStore.shared.workerMachine(for: mid)
         if machine.isNotPlaceholder() {
             return machine.name
         }
@@ -96,7 +96,7 @@ public struct RDPortForward: Codable, Identifiable, Equatable {
         guard isValid(), let using = usingMachine else {
             return nil
         }
-        let machineCommand = CatusshStore.shared.machineGroup[using]
+        let machineCommand = CatusshStore.shared.workerMachine(for: using)
         switch forwardOrientation {
         case .listenLocal:
             return "ssh -L \(bindPort):\(targetHost):\(targetPort) \(machineCommand.getCommand(insertLeadingSSH: false))"

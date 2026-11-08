@@ -26,7 +26,7 @@ public enum UURemoteFolderSync {
         machine.uuDeviceID = device.deviceID
         machine.uuDeviceAlias = device.alias
         machine.transport = .uuRemote
-        machine.attachment[managedKey] = "1"
+        machine.uuManaged = true
         return machine
     }
 
@@ -43,14 +43,14 @@ public enum UURemoteFolderSync {
                 if machine.name == oldAlias, !device.alias.isEmpty { machine.name = device.alias }
                 machine.uuDeviceAlias = device.alias
                 // Saved before folders by "Add to Servers": the folder's now.
-                if machine.group == folder { machine.attachment[managedKey] = "1" }
+                if machine.group == folder { machine.uuManaged = true }
                 if machine != before { group[machine.id] = machine }
             } else {
                 group.insert(makeMachine(for: device, folder: folder))
             }
         }
         for machine in group.machines
-            where machine.group == folder && machine.attachment[managedKey] == "1" && !present.contains(machine.uuDeviceID)
+            where machine.group == folder && machine.uuManaged && !present.contains(machine.uuDeviceID)
         {
             group.delete(machine.id)
         }

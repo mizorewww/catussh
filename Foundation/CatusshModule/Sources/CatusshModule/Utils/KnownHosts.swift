@@ -13,10 +13,15 @@ import Foundation
 import NSRemoteShell
 
 public final class KnownHosts: @unchecked Sendable {
-    public struct HostKey: Equatable, Sendable {
+    public struct HostKey: Equatable, Codable, Sendable {
         /// The algorithm as SSH names it, "ssh-ed25519" for one.
         public let type: String
         public let key: Data
+
+        public init(type: String, key: Data) {
+            self.type = type
+            self.key = key
+        }
 
         /// What `ssh-keygen -l` prints for the key.
         public var fingerprint: String {
@@ -29,13 +34,21 @@ public final class KnownHosts: @unchecked Sendable {
 
     private let defaults: UserDefaults
     private let storageKey: String
+    private let crypto: AES
     private let lock = NSLock()
+    /// In-memory cache of decrypted entries, protected by `lock`.
+    private var cachedEntries: [String: String]?
     /// The keys refused since launch, to tell the user what was offered.
     private var refused: [String: HostKey] = [:]
 
-    public init(defaults: UserDefaults = .standard, storageKey: String = "me.mizorewww.rayon.knownHosts") {
+    public init(
+        defaults: UserDefaults = .standard,
+        storageKey: String = "me.mizorewww.rayon.knownHosts",
+        crypto: AES = .shared
+    ) {
         self.defaults = defaults
         self.storageKey = storageKey
+        self.crypto = crypto
     }
 
     /// Has every connection of `NSRemoteShell` checked against the saved keys.
@@ -55,10 +68,10 @@ public final class KnownHosts: @unchecked Sendable {
         let name = Self.name(host: host, port: port)
         lock.lock()
         defer { lock.unlock() }
-        var saved = entries()
+        var saved = entriesLocked()
         guard let line = saved[name] else {
             saved[name] = Self.line(for: offered)
-            defaults.set(saved, forKey: storageKey)
+            saveEntriesLocked(saved)
             refused[name] = nil
             return true
         }
@@ -73,7 +86,7 @@ public final class KnownHosts: @unchecked Sendable {
     public func savedKey(host: String, port: Int) -> HostKey? {
         lock.lock()
         defer { lock.unlock() }
-        return entries()[Self.name(host: host, port: port)].flatMap(Self.hostKey(from:))
+        return entriesLocked()[Self.name(host: host, port: port)].flatMap(Self.hostKey(from:))
     }
 
     /// The key the address offered that was refused, if one was since launch.
@@ -88,15 +101,16 @@ public final class KnownHosts: @unchecked Sendable {
         let name = Self.name(host: host, port: port)
         lock.lock()
         defer { lock.unlock() }
-        var saved = entries()
+        var saved = entriesLocked()
         saved[name] = nil
-        defaults.set(saved, forKey: storageKey)
+        saveEntriesLocked(saved)
         refused[name] = nil
     }
 
     public func forgetAll() {
         lock.lock()
         defer { lock.unlock() }
+        cachedEntries = [:]
         defaults.removeObject(forKey: storageKey)
         refused.removeAll()
     }
@@ -104,15 +118,20 @@ public final class KnownHosts: @unchecked Sendable {
     public var count: Int {
         lock.lock()
         defer { lock.unlock() }
-        return entries().count
+        return entriesLocked().count
     }
 
     /// Why a connection to the address was refused, when its host key was the
     /// reason; nil when it was not.
     public func refusalMessage(host: String, port: Int) -> String? {
-        guard let offered = refusedKey(host: host, port: port) else { return nil }
+        let name = Self.name(host: host, port: port)
+        lock.lock()
+        let offered = refused[name]
+        let saved = entriesLocked()[name].flatMap(Self.hostKey(from:))
+        lock.unlock()
+        guard let offered else { return nil }
         var lines = ["The host key of \(host):\(port) has changed, so the connection was refused."]
-        if let saved = savedKey(host: host, port: port) {
+        if let saved {
             lines.append("Saved: \(saved.type) \(saved.fingerprint)")
         }
         lines.append("Offered: \(offered.type) \(offered.fingerprint)")
@@ -120,8 +139,26 @@ public final class KnownHosts: @unchecked Sendable {
         return lines.joined(separator: "\n")
     }
 
-    private func entries() -> [String: String] {
-        defaults.dictionary(forKey: storageKey) as? [String: String] ?? [:]
+    private func entriesLocked() -> [String: String] {
+        if let cachedEntries { return cachedEntries }
+        guard let encrypted = defaults.data(forKey: storageKey),
+              let plain = crypto.decrypt(data: encrypted),
+              let decoded = try? PropertyListDecoder().decode([String: String].self, from: plain)
+        else {
+            cachedEntries = [:]
+            return [:]
+        }
+        cachedEntries = decoded
+        return decoded
+    }
+
+    private func saveEntriesLocked(_ entries: [String: String]) {
+        cachedEntries = entries
+        guard !crypto.isEphemeral,
+              let plain = try? PropertyListEncoder().encode(entries),
+              let encrypted = crypto.encrypt(data: plain)
+        else { return }
+        defaults.set(encrypted, forKey: storageKey)
     }
 
     /// `[host]:port`, as known_hosts writes an address with a port.

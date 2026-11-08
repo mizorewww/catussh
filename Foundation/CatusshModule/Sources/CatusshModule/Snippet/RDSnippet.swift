@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct RDSnippet: Codable, Identifiable, Equatable {
+public struct RDSnippet: Codable, Identifiable, Equatable, Sendable {
     public init(
         id: UUID = UUID(),
         name: String = "",

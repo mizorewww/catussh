@@ -94,7 +94,17 @@ public final class CloudSync: ObservableObject {
     /// Counts the changes to what a round reads, to tell a round that was
     /// overtaken by one.
     private var generation = 0
+    private var debounceTask: Task<Void, Never>?
     private var observers: Set<AnyCancellable> = []
+
+    private func scheduleDebouncedSync() {
+        debounceTask?.cancel()
+        debounceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.sync()
+        }
+    }
 
     private init() {
         defaults.register(defaults: [Key.servers: true, Key.identities: true])
@@ -123,27 +133,27 @@ public final class CloudSync: ObservableObject {
         // Asks iCloud for what it has, well before Settings asks whether
         // there is anything.
         _ = transport.read()
+        // Only trigger sync when sync-relevant content changed, ignoring volatile
+        // connection timestamps and banner updates.
         Publishers.Merge(
-            store.$machineGroup.dropFirst().map { _ in () },
-            store.$identityGroup.dropFirst().map { _ in () }
+            store.$machineGroup
+                .map { $0.machines.map(\.content) }
+                .removeDuplicates()
+                .dropFirst()
+                .map { _ in () },
+            store.$identityGroup
+                .map { $0.identities.map(\.content) }
+                .removeDuplicates()
+                .dropFirst()
+                .map { _ in () }
         )
         .sink { [weak self] in
-            // The generation count is only meaningful when every change is
-            // published on the main thread; the store enforces that in
-            // DEBUG builds, and this guard keeps RELEASE ones safe.
             guard Thread.isMainThread else { return }
-            MainActor.assumeIsolated { self?.generation += 1 }
-        }
-        .store(in: &observers)
-        // The publishers fire before the value is set; by the time the delay
-        // has passed the store has it.
-        Publishers.Merge(
-            store.$machineGroup.dropFirst().map { _ in () },
-            store.$identityGroup.dropFirst().map { _ in () }
-        )
-        .debounce(for: .seconds(2), scheduler: DispatchQueue.main)
-        .sink { [weak self] in
-            MainActor.assumeIsolated { self?.sync() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.generation += 1
+                self.scheduleDebouncedSync()
+            }
         }
         .store(in: &observers)
         #if canImport(UIKit)

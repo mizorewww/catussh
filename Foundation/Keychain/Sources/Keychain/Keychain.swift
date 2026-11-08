@@ -105,11 +105,13 @@ public final class Keychain {
         var lookup = baseQuery
         lookup[kSecAttrAccount as String] = key
 
-        var attributes: [String: Any] = [kSecValueData as String: data]
+        var attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
         if let labelValue { attributes[kSecAttrLabel as String] = labelValue }
         if let commentValue { attributes[kSecAttrComment as String] = commentValue }
 
-        // Deliberately no kSecAttrAccessible: items keep the default WhenUnlocked.
         var insert = lookup
         attributes.forEach { insert[$0] = $1 }
         let add = SecItemAdd(insert as CFDictionary, nil)

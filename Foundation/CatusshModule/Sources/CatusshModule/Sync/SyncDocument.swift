@@ -94,11 +94,24 @@ enum SyncMerge {
         var dirty = false
     }
 
-    static func digest<Value: SyncItem>(_ value: Value) -> String {
+    private static let sharedSyncEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let data = (try? encoder.encode(value.content)) ?? Data()
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return encoder
+    }()
+
+    private static let hexLookup = Array("0123456789abcdef".utf8)
+
+    static func digest<Value: SyncItem>(_ value: Value) -> String {
+        let data = (try? sharedSyncEncoder.encode(value.content)) ?? Data()
+        let hash = SHA256.hash(data: data)
+        var out: [UInt8] = []
+        out.reserveCapacity(64)
+        for byte in hash {
+            out.append(hexLookup[Int(byte >> 4)])
+            out.append(hexLookup[Int(byte & 0x0F)])
+        }
+        return String(decoding: out, as: UTF8.self)
     }
 
     static func reconcile<Value: SyncItem>(
