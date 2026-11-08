@@ -10,24 +10,41 @@
 #import "TSEventLoop.h"
 
 #import <Foundation/Foundation.h>
+#import <os/lock.h>
 
 int kLIBSSH2_CONSTRUCTOR_SUCCESS = 0;
 
 #if TARGET_OS_OSX
-
-/*
- 
- https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/AppNap.html
- 
- App Nap will make our Timer inside CFRunLoop not waking up on schedule
- which will then cause a port forward to die
- 
- we are here to disable it on macOS
- 
- */
-NSObject *activity = NULL;
-
+static id<NSObject> activityToken = nil;
+static NSInteger activityRefCount = 0;
+static os_unfair_lock activityLock = OS_UNFAIR_LOCK_INIT;
 #endif
+
+void libssh2_retain_activity(void) {
+#if TARGET_OS_OSX
+    os_unfair_lock_lock(&activityLock);
+    activityRefCount += 1;
+    if (activityRefCount == 1 && !activityToken) {
+        activityToken = [[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep | NSActivityLatencyCritical
+                                                                       reason:@"NSRemoteShell active SSH session"];
+    }
+    os_unfair_lock_unlock(&activityLock);
+#endif
+}
+
+void libssh2_release_activity(void) {
+#if TARGET_OS_OSX
+    os_unfair_lock_lock(&activityLock);
+    if (activityRefCount > 0) {
+        activityRefCount -= 1;
+    }
+    if (activityRefCount == 0 && activityToken) {
+        [[NSProcessInfo processInfo] endActivity:activityToken];
+        activityToken = nil;
+    }
+    os_unfair_lock_unlock(&activityLock);
+#endif
+}
 
 __attribute__((constructor)) void libssh2_constructor(void) {
     int ret = libssh2_init(0); // flag 1 == no crypto
@@ -35,9 +52,6 @@ __attribute__((constructor)) void libssh2_constructor(void) {
         kLIBSSH2_CONSTRUCTOR_SUCCESS = 1;
         NSRLog(@"libssh2 init success");
     }
-#if TARGET_OS_OSX
-    activity = [[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityLatencyCritical reason:@"NSRemoteShell is latency critical"];
-#endif
 }
 
 __attribute__((destructor)) void libssh2_destructor(void) {
@@ -45,9 +59,13 @@ __attribute__((destructor)) void libssh2_destructor(void) {
         libssh2_exit();
     }
 #if TARGET_OS_OSX
-    if (activity) {
-        [[NSProcessInfo processInfo] endActivity:activity];
+    os_unfair_lock_lock(&activityLock);
+    if (activityToken) {
+        [[NSProcessInfo processInfo] endActivity:activityToken];
+        activityToken = nil;
+        activityRefCount = 0;
     }
+    os_unfair_lock_unlock(&activityLock);
 #endif
 }
 

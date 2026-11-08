@@ -46,20 +46,44 @@ final class VNCFramebuffer: @unchecked Sendable {
             let x0 = max(0, x), y0 = max(0, y)
             let x1 = min(width, x + w), y1 = min(height, y + h)
             guard x1 > x0, y1 > y0 else { return }
-            for row in y0 ..< y1 {
-                for column in x0 ..< x1 {
-                    pixels[row * width + column] = pixel
+            let spanCount = x1 - x0
+            pixels.withUnsafeMutableBufferPointer { dst in
+                guard let base = dst.baseAddress else { return }
+                for row in y0 ..< y1 {
+                    (base + row * width + x0).initialize(repeating: pixel, count: spanCount)
                 }
             }
         }
     }
 
-    /// Copies a rectangle inside the buffer (CopyRect).
+    /// Copies a rectangle inside the buffer (CopyRect), handling overlapping regions in-place.
     func copy(fromX: Int, fromY: Int, toX: Int, toY: Int, width w: Int, height h: Int) {
         lock.withLock {
             guard w > 0, h > 0 else { return }
-            // Rows must be moved in an order that does not smear overlapping
-            // regions; collect the source rows first when they overlap.
+            if fromX >= 0, fromY >= 0, toX >= 0, toY >= 0,
+               fromX + w <= width, fromY + h <= height,
+               toX + w <= width, toY + h <= height
+            {
+                pixels.withUnsafeMutableBufferPointer { buf in
+                    guard let base = buf.baseAddress else { return }
+                    let rowBytes = w * MemoryLayout<UInt32>.stride
+                    if toY > fromY {
+                        for row in stride(from: h - 1, through: 0, by: -1) {
+                            let srcPtr = base + (fromY + row) * width + fromX
+                            let dstPtr = base + (toY + row) * width + toX
+                            memmove(dstPtr, srcPtr, rowBytes)
+                        }
+                    } else {
+                        for row in 0 ..< h {
+                            let srcPtr = base + (fromY + row) * width + fromX
+                            let dstPtr = base + (toY + row) * width + toX
+                            memmove(dstPtr, srcPtr, rowBytes)
+                        }
+                    }
+                }
+                return
+            }
+
             var source: [UInt32] = []
             source.reserveCapacity(w * h)
             for row in 0 ..< h {
@@ -81,17 +105,29 @@ final class VNCFramebuffer: @unchecked Sendable {
         }
     }
 
-    /// Writes a run of canonical pixels starting at (x, y), wrapping to the
-    /// next row — the shape the ZRLE decoder produces.
+    /// Writes a run of canonical pixels starting at (x, y), wrapping every `w` pixels to the next row.
     func putRun(x: Int, y: Int, width w: Int, pixels line: ArraySlice<UInt32>) {
+        guard w > 0, !line.isEmpty else { return }
         lock.withLock {
-            var offset = 0
-            for pixel in line {
-                let px = x + offset % w, py = y + offset / w
-                if px >= 0, py >= 0, px < width, py < height {
-                    self.pixels[py * width + px] = pixel
+            let total = line.count
+            let rows = (total + w - 1) / w
+            pixels.withUnsafeMutableBufferPointer { dst in
+                guard let dstBase = dst.baseAddress else { return }
+                line.withUnsafeBufferPointer { src in
+                    guard let srcBase = src.baseAddress else { return }
+                    for row in 0 ..< rows {
+                        let py = y + row
+                        guard py >= 0, py < height else { continue }
+                        let rowStartOffset = row * w
+                        let rowLen = min(w, total - rowStartOffset)
+                        let colStart = max(0, -x)
+                        let colEnd = min(rowLen, width - x)
+                        guard colEnd > colStart else { continue }
+                        let dstPtr = dstBase + py * width + (x + colStart)
+                        let srcPtr = srcBase + rowStartOffset + colStart
+                        dstPtr.update(from: srcPtr, count: colEnd - colStart)
+                    }
                 }
-                offset += 1
             }
         }
     }
@@ -104,9 +140,9 @@ final class VNCFramebuffer: @unchecked Sendable {
         }
     }
 
-    /// A snapshot CGImage of the whole framebuffer. The copy is what a
-    /// `CGDataProvider` needs to outlive the lock; frames are large but the
-    /// copy is cheap next to decoding.
+    private static let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+    /// A snapshot CGImage of the whole framebuffer.
     func makeImage() -> CGImage? {
         lock.withLock {
             guard width > 0, height > 0 else { return nil }
@@ -118,7 +154,7 @@ final class VNCFramebuffer: @unchecked Sendable {
                 bitsPerComponent: 8,
                 bitsPerPixel: 32,
                 bytesPerRow: width * 4,
-                space: CGColorSpaceCreateDeviceRGB(),
+                space: Self.colorSpace,
                 bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue)
                     .union(.byteOrder32Little),
                 provider: provider,

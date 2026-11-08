@@ -16,8 +16,11 @@ final class SSHFlowLiveTests: XCTestCase {
     /// input window is full, or both sides wait on each other for good.
     func testPastingIntoAFloodingProgramDoesNotDeadlock() throws {
         let environment = ProcessInfo.processInfo.environment
-        let host = try XCTUnwrap(environment["SSH_LIVE_HOST"], "set SSH_LIVE_HOST")
-        let user = try XCTUnwrap(environment["SSH_LIVE_USER"], "set SSH_LIVE_USER")
+        guard let host = environment["SSH_LIVE_HOST"], !host.isEmpty,
+              let user = environment["SSH_LIVE_USER"], !user.isEmpty
+        else {
+            throw XCTSkip("Set SSH_LIVE_HOST and SSH_LIVE_USER to run the live SSH flow test")
+        }
         let home = FileManager.default.homeDirectoryForCurrentUser
         let privateKey = try String(contentsOf: home.appendingPathComponent(".ssh/id_ed25519"), encoding: .utf8)
         let publicKey = try String(contentsOf: home.appendingPathComponent(".ssh/id_ed25519.pub"), encoding: .utf8)

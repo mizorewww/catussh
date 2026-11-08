@@ -32,6 +32,9 @@ enum VNCStreamError: Error, Equatable {
 final class VNCSocket: VNCByteChannel, @unchecked Sendable {
     private var fd: Int32 = -1
     private let fdLock = NSLock()
+    private var readBuffer = Data(count: 65536)
+    private var readHead = 0
+    private var readTail = 0
 
     private init(fd: Int32) {
         self.fd = fd
@@ -92,21 +95,56 @@ final class VNCSocket: VNCByteChannel, @unchecked Sendable {
     }
 
     func read(exactly count: Int) throws -> Data {
+        guard count > 0 else { return Data() }
         var data = Data(count: count)
         var received = 0
         while received < count {
+            let buffered = readTail - readHead
+            if buffered > 0 {
+                let takeCount = min(count - received, buffered)
+                data.withUnsafeMutableBytes { dst in
+                    readBuffer.withUnsafeBytes { src in
+                        guard let dstBase = dst.baseAddress, let srcBase = src.baseAddress else { return }
+                        memcpy(dstBase + received, srcBase + readHead, takeCount)
+                    }
+                }
+                readHead += takeCount
+                received += takeCount
+                if readHead == readTail {
+                    readHead = 0
+                    readTail = 0
+                }
+                continue
+            }
+
             let descriptor = fdLock.withLock { fd }
             guard descriptor >= 0 else { throw VNCStreamError.endOfStream }
-            let count_ = data.withUnsafeMutableBytes { buffer -> Int in
-                guard let base = buffer.baseAddress else { return -1 }
-                return Darwin.recv(descriptor, base + received, count - received, 0)
+            let remaining = count - received
+            if remaining >= readBuffer.count {
+                let count_ = data.withUnsafeMutableBytes { buffer -> Int in
+                    guard let base = buffer.baseAddress else { return -1 }
+                    return Darwin.recv(descriptor, base + received, remaining, 0)
+                }
+                if count_ < 0, errno == EINTR { continue }
+                if count_ == 0 { throw VNCStreamError.endOfStream }
+                guard count_ > 0 else {
+                    throw VNCStreamError.failed(String(cString: strerror(errno)))
+                }
+                received += count_
+            } else {
+                let cap = readBuffer.count
+                let count_ = readBuffer.withUnsafeMutableBytes { buffer -> Int in
+                    guard let base = buffer.baseAddress else { return -1 }
+                    return Darwin.recv(descriptor, base, cap, 0)
+                }
+                if count_ < 0, errno == EINTR { continue }
+                if count_ == 0 { throw VNCStreamError.endOfStream }
+                guard count_ > 0 else {
+                    throw VNCStreamError.failed(String(cString: strerror(errno)))
+                }
+                readHead = 0
+                readTail = count_
             }
-            if count_ < 0, errno == EINTR { continue }
-            if count_ == 0 { throw VNCStreamError.endOfStream }
-            guard count_ > 0 else {
-                throw VNCStreamError.failed(String(cString: strerror(errno)))
-            }
-            received += count_
         }
         return data
     }

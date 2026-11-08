@@ -198,6 +198,9 @@ public final class UURemotePortMappingTunnel: NSObject, @unchecked Sendable {
 
     private var streams: [StreamKey: Stream] = [:]
     private let streamsLock = NSLock()
+    /// Serial queue for writing inbound tunnel data to local socketpair descriptors
+    /// outside `streamsLock`, preventing main-thread stalls and lock-order deadlocks.
+    private let writeQueue = DispatchQueue(label: "me.mizorewww.uu.portmap.write")
 
     /// The completion handlers waiting for a SYN_ACK for each stream.
     private var pendingSYN: [StreamKey: (Result<UUPortMappingSYNACK, Failure>) -> Void] = [:]
@@ -239,21 +242,28 @@ public final class UURemotePortMappingTunnel: NSObject, @unchecked Sendable {
                 }
             }
         case .data:
-            streamsLock.withLock {
-                if var stream = streams[key], !stream.closed {
-                    let fd = stream.localFD
-                    var data = frame.payload
-                    let written = data.withUnsafeBytes { raw -> Bool in
-                        var offset = 0
-                        while offset < raw.count {
-                            let n = Darwin.write(fd, raw.baseAddress! + offset, raw.count - offset)
-                            if n < 0, errno == EINTR { continue }
-                            guard n > 0 else { return false }
-                            offset += n
-                        }
-                        return true
+            let payload = frame.payload
+            writeQueue.async { [weak self] in
+                guard let self else { return }
+                guard let fd = self.streamsLock.withLock({ () -> Int32? in
+                    guard let stream = self.streams[key], !stream.closed else { return nil }
+                    return stream.localFD
+                }) else { return }
+                let written = payload.withUnsafeBytes { raw -> Bool in
+                    guard let base = raw.baseAddress else { return true }
+                    var offset = 0
+                    while offset < raw.count {
+                        let n = Darwin.write(fd, base + offset, raw.count - offset)
+                        if n < 0, errno == EINTR { continue }
+                        guard n > 0 else { return false }
+                        offset += n
                     }
-                    if !written { stream.closed = true }
+                    return true
+                }
+                if !written {
+                    self.streamsLock.withLock {
+                        self.streams[key]?.closed = true
+                    }
                 }
             }
         case .fin:
@@ -378,7 +388,9 @@ public final class UURemotePortMappingTunnel: NSObject, @unchecked Sendable {
                 send(fin)
             }
             stream.readerThread?.cancel()
-            Darwin.close(stream.localFD)
+            writeQueue.async {
+                Darwin.close(stream.localFD)
+            }
             stream.onClose?()
         }
     }

@@ -97,14 +97,28 @@ final class VNCRFBTests: XCTestCase {
         XCTAssertEqual(machine.uuQuality, 3)
     }
 
-    func testRemoteDesktopDefaultsAreNotWritten() {
+    func testRemoteDesktopDefaultsAreNotWritten() throws {
         var machine = RDMachine()
         machine.remoteDesktopProtocol = .vnc
-        XCTAssertEqual(machine.attachment["remoteDesktop.vnc.port"], nil)
+        let firstPlist = try PropertyListSerialization.propertyList(
+            from: PropertyListEncoder().encode(machine),
+            format: nil
+        ) as? [String: Any]
+        XCTAssertNil(firstPlist?["vncPort"])
+
         machine.vncPort = "6000"
-        XCTAssertEqual(machine.attachment["remoteDesktop.vnc.port"], "6000")
+        let secondPlist = try PropertyListSerialization.propertyList(
+            from: PropertyListEncoder().encode(machine),
+            format: nil
+        ) as? [String: Any]
+        XCTAssertEqual(secondPlist?["vncPort"] as? String, "6000")
+
         machine.vncPort = "5900"
-        XCTAssertNil(machine.attachment["remoteDesktop.vnc.port"])
+        let thirdPlist = try PropertyListSerialization.propertyList(
+            from: PropertyListEncoder().encode(machine),
+            format: nil
+        ) as? [String: Any]
+        XCTAssertNil(thirdPlist?["vncPort"])
     }
 
     func testVNCPasswordFallsBackToIdentity() {

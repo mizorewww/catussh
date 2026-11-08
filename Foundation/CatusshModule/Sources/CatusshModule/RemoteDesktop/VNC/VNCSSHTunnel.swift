@@ -132,16 +132,16 @@ final class VNCSSHTunnel: @unchecked Sendable {
         } withContinuationHandler: {
             true // the forward runs until the shell disconnects
         }
-        finish(failure: nil)
+        // If createPortForward returned before signalReady fired (e.g. local port bind conflict),
+        // wake the caller immediately instead of stalling for 30s.
+        finish(failure: "Could not bind the local port for the SSH tunnel.")
     }
 
     private func finish(failure: String?) {
         let shouldSignal = stateLock.withLock { () -> Bool in
-            if let failure { self.failure = failure }
             finished = true
-            // Success leaves the signal to the port-forward completion
-            // handler: it fires when the listener is actually bound.
-            guard failure != nil, !readySignaled else { return false }
+            guard !readySignaled else { return false }
+            if let failure { self.failure = failure }
             readySignaled = true
             return true
         }

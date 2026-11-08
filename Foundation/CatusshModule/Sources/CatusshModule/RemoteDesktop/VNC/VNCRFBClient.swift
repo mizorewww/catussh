@@ -87,9 +87,12 @@ final class VNCRFBClient: @unchecked Sendable {
     /// Ends the session: the socket is interrupted so a blocked read wakes,
     /// and the reader exits.
     func stop() {
-        stateLock.withLock { stopped = true }
-        (channel as? VNCSocket)?.interrupt()
-        channel?.close()
+        let currentChannel = stateLock.withLock { () -> VNCByteChannel? in
+            stopped = true
+            return channel
+        }
+        (currentChannel as? VNCSocket)?.interrupt()
+        currentChannel?.close()
     }
 
     private func isStopped() -> Bool {
@@ -109,7 +112,14 @@ final class VNCRFBClient: @unchecked Sendable {
         do {
             let channel: VNCByteChannel = try configuration.channel
                 ?? VNCSocket.connect(host: configuration.host, port: configuration.port, timeout: configuration.timeout)
-            self.channel = channel
+            let alreadyStopped = stateLock.withLock { () -> Bool in
+                self.channel = channel
+                return stopped
+            }
+            if alreadyStopped {
+                channel.close()
+                return
+            }
             try handshake(over: channel)
             report(phase: .connected, hint: nil)
             try readLoop(over: channel)
@@ -335,8 +345,8 @@ final class VNCRFBClient: @unchecked Sendable {
     }
 
     private func send(_ data: Data) throws {
-        guard let channel else { return }
-        try send(data, over: channel)
+        guard let currentChannel = stateLock.withLock({ channel }) else { return }
+        try send(data, over: currentChannel)
     }
 
     func requestUpdate(incremental: Bool) {
@@ -370,37 +380,50 @@ final class VNCRFBClient: @unchecked Sendable {
 
     func pointerMoved(normalizedX: Double, normalizedY: Double) {
         let point = pixelPoint(normalizedX: normalizedX, normalizedY: normalizedY)
-        pointerX = point.x
-        pointerY = point.y
-        try? send(VNCWire.pointerEvent(buttonMask: buttonMask, x: point.x, y: point.y))
+        let mask = stateLock.withLock { () -> UInt8 in
+            pointerX = point.x
+            pointerY = point.y
+            return buttonMask
+        }
+        try? send(VNCWire.pointerEvent(buttonMask: mask, x: point.x, y: point.y))
     }
 
     func pointerButton(_ button: MouseButton, isDown: Bool, normalizedX: Double, normalizedY: Double) {
         let point = pixelPoint(normalizedX: normalizedX, normalizedY: normalizedY)
-        pointerX = point.x
-        pointerY = point.y
         let bit = buttonBit(button)
-        if isDown { buttonMask |= bit } else { buttonMask &= ~bit }
-        try? send(VNCWire.pointerEvent(buttonMask: buttonMask, x: point.x, y: point.y))
+        let mask = stateLock.withLock { () -> UInt8 in
+            pointerX = point.x
+            pointerY = point.y
+            if isDown { buttonMask |= bit } else { buttonMask &= ~bit }
+            return buttonMask
+        }
+        try? send(VNCWire.pointerEvent(buttonMask: mask, x: point.x, y: point.y))
     }
 
-    /// A wheel event is a button press-release pair per tick.
+    /// A wheel event is a button press-release pair per tick, coalesced into a single write.
     func scrolled(deltaX: Double, deltaY: Double, normalizedX: Double, normalizedY: Double) {
         let point = pixelPoint(normalizedX: normalizedX, normalizedY: normalizedY)
-        pointerX = point.x
-        pointerY = point.y
+        let mask = stateLock.withLock { () -> UInt8 in
+            pointerX = point.x
+            pointerY = point.y
+            return buttonMask
+        }
 
-        func wheelTicks(_ delta: Double, upBit: UInt8, downBit: UInt8) {
+        var batch = Data()
+        func appendWheelTicks(_ delta: Double, upBit: UInt8, downBit: UInt8) {
             let ticks = min(Int(abs(delta).rounded()), 10)
             let bit: UInt8 = delta > 0 ? upBit : downBit
             for _ in 0 ..< ticks {
-                try? send(VNCWire.pointerEvent(buttonMask: buttonMask | bit, x: point.x, y: point.y))
-                try? send(VNCWire.pointerEvent(buttonMask: buttonMask, x: point.x, y: point.y))
+                batch.append(VNCWire.pointerEvent(buttonMask: mask | bit, x: point.x, y: point.y))
+                batch.append(VNCWire.pointerEvent(buttonMask: mask, x: point.x, y: point.y))
             }
         }
         // RFB: bit3=scroll up, bit4=down, bit5=left, bit6=right.
-        wheelTicks(deltaY, upBit: 1 << 3, downBit: 1 << 4)
-        wheelTicks(deltaX, upBit: 1 << 6, downBit: 1 << 5)
+        appendWheelTicks(deltaY, upBit: 1 << 3, downBit: 1 << 4)
+        appendWheelTicks(deltaX, upBit: 1 << 6, downBit: 1 << 5)
+        if !batch.isEmpty {
+            try? send(batch)
+        }
     }
 
     func keyEvent(keyCode: UInt16, keySym: UInt32?, characters: String, isDown: Bool) {

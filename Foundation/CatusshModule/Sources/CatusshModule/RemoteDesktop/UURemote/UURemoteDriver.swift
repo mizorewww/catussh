@@ -661,15 +661,22 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     private func applyRemoteAnswer(_ sdp: String) async {
         guard let peer else { return }
         if answered { return }
-        answered = true
-        _ = try? await peer.evaluate("answer(\(Self.javascriptString(sdp)))") as String?
+        do {
+            _ = try await peer.evaluate("answer(\(Self.javascriptString(sdp)))") as String?
+            answered = true
+        } catch {
+            Self.log.error("applyRemoteAnswer failed: \(error.localizedDescription, privacy: .public)")
+            reportTerminal(.failed("UU Remote SDP answer rejected: \(error.localizedDescription)"))
+            return
+        }
         // Learn the negotiated video payload types for the RTP path.
         let h265 = Self.payloadTypes(forCodec: "H265", in: sdp)
         if !h265.isEmpty { videoAssembler.h265PayloadTypes = h265 }
-        for candidate in earlyCandidates {
+        let pendingCandidates = earlyCandidates
+        earlyCandidates.removeAll()
+        for candidate in pendingCandidates {
             _ = try? await peer.evaluate("addIce(\(Self.javascriptObject(candidate)))") as String?
         }
-        earlyCandidates.removeAll()
     }
 
     /// `a=rtpmap:<pt> H265/90000` payload types in the negotiated SDP.
@@ -744,29 +751,62 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
 
     // MARK: - Data channel senders
 
+    /// Serializes outbound WebRTC JS evaluations in FIFO order so frames never race out of order.
+    private struct OutboundEvalQueue: Sendable {
+        private let continuation: AsyncStream<String>.Continuation
+
+        init(peerProvider: @escaping @Sendable @MainActor () -> UURTCPeerConnection?) {
+            let (stream, cont) = AsyncStream<String>.makeStream()
+            self.continuation = cont
+            Task { @MainActor in
+                for await script in stream {
+                    guard let peer = peerProvider() else { continue }
+                    _ = try? await peer.evaluate(script) as String?
+                }
+            }
+        }
+
+        func enqueue(_ script: String) {
+            continuation.yield(script)
+        }
+
+        func finish() {
+            continuation.finish()
+        }
+    }
+
+    private lazy var outboundEvalQueue = OutboundEvalQueue { [weak self] in
+        self?.peer
+    }
+
+    private func enqueueChannelSend(_ label: String, data: Data) {
+        let base64 = data.base64EncodedString()
+        outboundEvalQueue.enqueue("dcSendB64('\(label)', '\(base64)')")
+    }
+
     private func sendControlChannel(_ data: Data) {
-        guard let peer, controlChannelOpen else { return }
-        Task { _ = try? await peer.evaluate("dcSend('CONTROL_DATA_CHANNEL', \(Self.javascriptArray(data)))") as String? }
+        guard controlChannelOpen else { return }
+        enqueueChannelSend("CONTROL_DATA_CHANNEL", data: data)
     }
 
     private func sendBinaryChannel(_ data: Data) {
-        guard let peer, binaryChannelOpen else { return }
-        Task { _ = try? await peer.evaluate("dcSend('BINARY_DATA_CHANNEL', \(Self.javascriptArray(data)))") as String? }
+        guard binaryChannelOpen else { return }
+        enqueueChannelSend("BINARY_DATA_CHANNEL", data: data)
     }
 
     private func sendFileChannel(_ data: Data) {
-        guard let peer, fileChannelOpen else { return }
-        Task { _ = try? await peer.evaluate("dcSend('FILE_DATA_CHANNEL', \(Self.javascriptArray(data)))") as String? }
+        guard fileChannelOpen else { return }
+        enqueueChannelSend("FILE_DATA_CHANNEL", data: data)
     }
 
     private func sendStreamerChannel(_ data: Data) {
-        guard let peer, streamerChannelOpen else { return }
-        Task { _ = try? await peer.evaluate("dcSend('STREAMER_DATA_CHANNEL', \(Self.javascriptArray(data)))") as String? }
+        guard streamerChannelOpen else { return }
+        enqueueChannelSend("STREAMER_DATA_CHANNEL", data: data)
     }
 
     private func sendTextChannel(_ data: Data) {
-        guard let peer, textChannelOpen else { return }
-        Task { _ = try? await peer.evaluate("dcSend('TEXT_DATA_CHANNEL', \(Self.javascriptArray(data)))") as String? }
+        guard textChannelOpen else { return }
+        enqueueChannelSend("TEXT_DATA_CHANNEL", data: data)
     }
 
     // MARK: - Inbound data channels
@@ -1078,11 +1118,8 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         videoRequestTask?.cancel()
         guard purpose == .desktop else { return }
         videoRequestTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard let self, !self.closed else { return }
-            // One sendVideoTrack RPC once the channel is up (like the
-            // official iPhone viewer); 4:4:4 true colour rides a separate
-            // CaptureSettingRequest when the quality tier asks for it.
+            // Send video track request immediately once control channel is open.
             self.sendControlChannel(UUControlProtocol.sendVideoTrackRequest(requestID: self.nextOutboundSequence()))
             if self.session.machine.uuQuality >= 4 {
                 self.sendControlChannel(UUControlProtocol.captureSettingRequest(
@@ -1128,10 +1165,6 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
 private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     /// The page runs here, in process, where WebKit has WebRTC (iOS, macOS)…
     private let webView: WKWebView?
-    #if targetEnvironment(macCatalyst)
-        /// …and in the helper on Mac Catalyst, where it does not.
-        private var helper: UURTCHelperProcess?
-    #endif
     private var ready = false
     /// The page could not load, or its helper ended.
     private var failedReason: String?
@@ -1147,19 +1180,6 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     private var iceStateHandler: ((String) -> Void)?
 
     override init() {
-        #if targetEnvironment(macCatalyst)
-            if let executable = UURTCHelperProcess.executableURL,
-               let helper = try? UURTCHelperProcess(executable: executable)
-            {
-                webView = nil
-                self.helper = helper
-                super.init()
-                helper.onEvent = { [weak self] body in self?.handlePageMessage(body) }
-                helper.onReady = { [weak self] loaded, reason in self?.pageLoaded(loaded, reason: reason) }
-                loadBridge()
-                return
-            }
-        #endif
         let config = WKWebViewConfiguration()
         config.userContentController = WKUserContentController()
         // The remote screen is a muted video nobody taps on: it must play
@@ -1218,7 +1238,7 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
                 ch.binaryType = 'arraybuffer';
                 ch.onopen = () => post('dc_open', {label: ch.label});
                 ch.onclose = () => post('dc_close', {label: ch.label});
-                ch.onmessage = m => post('dc_message', {label: ch.label, data: Array.from(new Uint8Array(m.data))});
+                ch.onmessage = m => post('dc_message', {label: ch.label, b64: base64(typeof m.data === 'string' ? new TextEncoder().encode(m.data) : new Uint8Array(m.data))});
                 channels[ch.label] = ch;
             };
             pc.ontrack = e => {
@@ -1277,7 +1297,7 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
                 ch.binaryType = 'arraybuffer';
                 ch.onopen = () => post('dc_open', {label: ch.label});
                 ch.onclose = () => post('dc_close', {label: ch.label});
-                ch.onmessage = m => post('dc_message', {label: ch.label, data: typeof m.data === 'string' ? Array.from(new TextEncoder().encode(m.data)) : Array.from(new Uint8Array(m.data))});
+                ch.onmessage = m => post('dc_message', {label: ch.label, b64: base64(typeof m.data === 'string' ? new TextEncoder().encode(m.data) : new Uint8Array(m.data))});
                 channels[label] = ch;
             }
             for (let i = 0; i < 5; i++) pc.addTransceiver('video', {direction: 'recvonly'});
@@ -1293,18 +1313,20 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         async function offerDesc(sdp) { await pc.setRemoteDescription({type: 'offer', sdp: sdp}); const a = await pc.createAnswer(); await pc.setLocalDescription(a); return a.sdp; }
         async function addIce(c) { await pc.addIceCandidate(c); return 'ok'; }
         function dcSend(label, data) { const c = channels[label]; if (c && c.readyState === 'open') c.send(new Uint8Array(data)); }
+        function dcSendB64(label, b64) {
+            const c = channels[label];
+            if (!c || c.readyState !== 'open') return;
+            const bin = atob(b64);
+            const arr = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+            c.send(arr);
+        }
         function dcClose(label) { channels[label] && channels[label].close(); }
         function closeAll() { if (frameTimer) { clearInterval(frameTimer); frameTimer = null; } for (const k in channels) { try { channels[k].close(); } catch (e) {} } if (pc) { try { pc.close(); } catch (e) {} } return 'ok'; }
         </script></body></html>
         """
         // An origin of its own, so the page may start a worker from a blob.
         let base = "https://rtc.catussh.invalid/"
-        #if targetEnvironment(macCatalyst)
-            if let helper {
-                helper.load(html: html, baseURL: base)
-                return
-            }
-        #endif
         webView?.loadHTMLString(html, baseURL: URL(string: base))
     }
 
@@ -1350,9 +1372,13 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         case "dc_close":
             dataChannelStateHandlers[data["label"] as? String ?? ""]?("close")
         case "dc_message":
-            if let label = data["label"] as? String, let bytes = data["data"] as? [Int] {
-                let raw = Data(bytes.map { UInt8($0 & 0xFF) })
-                dataChannelHandlers[label]?(raw)
+            if let label = data["label"] as? String {
+                if let b64 = data["b64"] as? String, let raw = Data(base64Encoded: b64) {
+                    dataChannelHandlers[label]?(raw)
+                } else if let bytes = data["data"] as? [Int] {
+                    let raw = Data(bytes.map { UInt8($0 & 0xFF) })
+                    dataChannelHandlers[label]?(raw)
+                }
             }
         case "track":
             trackHandler?(data["kind"] as? String ?? "", Data())
@@ -1421,9 +1447,6 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     /// ("a result of an unsupported type"), nor `undefined`.
     func evaluate<T>(_ script: String) async throws -> T? {
         do {
-            #if targetEnvironment(macCatalyst)
-                if let helper { return try await helper.evaluate(script) as? T }
-            #endif
             let result = try await webView?.callAsyncJavaScript("return await (\(script));", contentWorld: .page)
             return result as? T
         } catch {

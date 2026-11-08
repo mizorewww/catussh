@@ -285,9 +285,7 @@ public final class UURemoteAccountStore: ObservableObject {
             guard let data = try? Data(contentsOf: url),
                   let saved = try? JSONDecoder().decode(UUCredentials.self, from: data)
             else { return }
-            // After the saved account has been handed to the client at
-            // launch, or that would replace this one.
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await ready()
             await useForTesting(saved)
             try? await refreshDevices()
         }

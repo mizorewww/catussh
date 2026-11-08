@@ -7,6 +7,12 @@
 
 #import "NSRemoteChannelSocketPair.h"
 
+@interface NSRemoteChannelSocketPair ()
+
+@property (nonatomic, nonnull, strong) NSMutableData *bufferData;
+
+@end
+
 @implementation NSRemoteChannelSocketPair
 
 - (instancetype)initWithSocket:(int)socket
@@ -17,6 +23,7 @@
         _socket = socket;
         _channel = channel;
         _completed = NO;
+        _bufferData = [[NSMutableData alloc] initWithLength:BUFFER_SIZE];
         setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &(int){1}, sizeof(int));
     }
     return self;
@@ -29,48 +36,37 @@
 }
 
 - (void)unsafeProcessReadWrite {
-    // two 128k frames per tick do not belong on the event loop thread stack
-    NSMutableData *bufferData = [[NSMutableData alloc] initWithLength:BUFFER_SIZE];
-    if (!bufferData) { return; }
-    char *buf = [bufferData mutableBytes];
-    do {
-        long len = 0;
-        len = recv(self.socket, buf, BUFFER_SIZE, 0);
-        if (len > 0) {
-            long wr = 0;
-            while(wr < len) {
-                long i = libssh2_channel_write(self.channel, buf + wr, len - wr);
-                // eagain means the remote window of a live transfer is full
-                // keep waiting but do not burn the event loop thread
-                if (LIBSSH2_ERROR_EAGAIN == i) { usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT); continue; }
-                if (i <= 0) {
-                    NSRLog(@"libssh2_channel_write returns failure %ld", len);
-                    self.completed = YES;
-                    return;
-                }
-                wr += i;
+    char *buf = [self.bufferData mutableBytes];
+    if (!buf) { return; }
+
+    long len = recv(self.socket, buf, BUFFER_SIZE, 0);
+    if (len > 0) {
+        long wr = 0;
+        while (wr < len) {
+            long i = libssh2_channel_write(self.channel, buf + wr, len - wr);
+            if (LIBSSH2_ERROR_EAGAIN == i) { usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT); continue; }
+            if (i <= 0) {
+                NSRLog(@"libssh2_channel_write returns failure %ld", len);
+                self.completed = YES;
+                return;
             }
+            wr += i;
         }
-    } while (0);
-    do {
-        memset(buf, 0, BUFFER_SIZE);
-        long len = 0;
-        len = libssh2_channel_read(self.channel, buf, BUFFER_SIZE);
-        if (len > 0) {
-            long wr = 0;
-            while(wr < len) {
-                long i = send(self.socket, buf + wr, len - wr, 0);
-                if (i <= 0) { self.completed = YES; return; }
-                wr += i;
-            }
-        } else if (len != LIBSSH2_ERROR_EAGAIN) {
-            NSRLog(@"libssh2_channel_read returns failure %ld", len);
-            self.completed = YES;
-            return;
+    }
+
+    len = libssh2_channel_read(self.channel, buf, BUFFER_SIZE);
+    if (len > 0) {
+        long wr = 0;
+        while (wr < len) {
+            long i = send(self.socket, buf + wr, len - wr, 0);
+            if (i <= 0) { self.completed = YES; return; }
+            wr += i;
         }
-    } while (0);
-    // connection may send 0 tcp packet data but still keep alive
-    // so only check eof
+    } else if (len != LIBSSH2_ERROR_EAGAIN) {
+        NSRLog(@"libssh2_channel_read returns failure %ld", len);
+        self.completed = YES;
+        return;
+    }
 }
 
 - (void)setCompleted:(BOOL)completed {
@@ -87,13 +83,10 @@
 }
 
 - (BOOL)unsafeInsanityCheckAndReturnDidSuccess {
-    do {
-        if (self.completed) { break; }
-        if (![self seatbeltCheckPassed]) { break; }
-        if (libssh2_channel_eof(self.channel)) { break; }
-        return YES;
-    } while (0);
-    return NO;
+    if (self.completed) { return NO; }
+    if (![self seatbeltCheckPassed]) { return NO; }
+    if (libssh2_channel_eof(self.channel)) { return NO; }
+    return YES;
 }
 
 - (void)unsafeDisconnectAndPrepareForRelease {

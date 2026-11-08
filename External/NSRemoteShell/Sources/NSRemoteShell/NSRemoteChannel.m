@@ -20,6 +20,11 @@
 @property (nonatomic) CGSize currentTerminalSize;
 // what was typed and the channel has not taken yet
 @property (nonatomic, nonnull, strong) NSMutableData *pendingWrite;
+// reusable buffers and incomplete UTF-8 tail caches for stdout and stderr
+@property (nonatomic, nonnull, strong) NSMutableData *readBufferData;
+@property (nonatomic, nonnull, strong) NSMutableData *errorBufferData;
+@property (nonatomic, nonnull, strong) NSMutableData *pendingStdoutUTF8;
+@property (nonatomic, nonnull, strong) NSMutableData *pendingStderrUTF8;
 
 @property (nonatomic, nullable, strong) NSDate *scheduledTermination;
 @property (nonatomic, nullable, strong) dispatch_block_t terminationBlock;
@@ -30,6 +35,63 @@
 @end
 
 @implementation NSRemoteChannel
+
+static NSUInteger NSRemoteUTF8CompletePrefixLength(const uint8_t *bytes, NSUInteger length) {
+    if (length == 0) { return 0; }
+    NSUInteger idx = length;
+    NSUInteger trailingContinuations = 0;
+    while (idx > 0 && trailingContinuations < 3) {
+        uint8_t b = bytes[idx - 1];
+        if ((b & 0xC0) == 0x80) {
+            trailingContinuations += 1;
+            idx -= 1;
+        } else {
+            break;
+        }
+    }
+    if (idx == 0) {
+        return length;
+    }
+    uint8_t lead = bytes[idx - 1];
+    NSUInteger expectedLen = 1;
+    if ((lead & 0x80) == 0x00) {
+        return length;
+    } else if ((lead & 0xE0) == 0xC0) {
+        expectedLen = 2;
+    } else if ((lead & 0xF0) == 0xE0) {
+        expectedLen = 3;
+    } else if ((lead & 0xF8) == 0xF0) {
+        expectedLen = 4;
+    } else {
+        return length;
+    }
+    NSUInteger actualLen = 1 + trailingContinuations;
+    if (actualLen < expectedLen) {
+        return idx - 1;
+    }
+    return length;
+}
+
+static NSString * _Nullable NSRemoteDecodeUTF8StreamChunk(NSMutableData *accumulator, const char *bytes, NSUInteger length, BOOL flushAll) {
+    if (length > 0 && bytes != NULL) {
+        [accumulator appendBytes:bytes length:length];
+    }
+    if (accumulator.length == 0) {
+        return nil;
+    }
+    NSUInteger decodeLen = flushAll
+        ? accumulator.length
+        : NSRemoteUTF8CompletePrefixLength((const uint8_t *)accumulator.bytes, accumulator.length);
+    if (decodeLen == 0) {
+        return nil;
+    }
+    NSString *decoded = [[NSString alloc] initWithBytes:accumulator.bytes length:decodeLen encoding:NSUTF8StringEncoding];
+    if (!decoded) {
+        decoded = [[NSString alloc] initWithBytes:accumulator.bytes length:decodeLen encoding:NSISOLatin1StringEncoding];
+    }
+    [accumulator replaceBytesInRange:NSMakeRange(0, decodeLen) withBytes:NULL length:0];
+    return decoded;
+}
 
 // MARK: - LIFE CYCLE
 
@@ -43,6 +105,10 @@
         _channelCompleted = NO;
         _currentTerminalSize = CGSizeMake(0, 0);
         _pendingWrite = [[NSMutableData alloc] init];
+        _readBufferData = [[NSMutableData alloc] initWithLength:BUFFER_SIZE];
+        _errorBufferData = [[NSMutableData alloc] initWithLength:BUFFER_SIZE];
+        _pendingStdoutUTF8 = [[NSMutableData alloc] init];
+        _pendingStderrUTF8 = [[NSMutableData alloc] init];
         _exitStatus = 0;
     }
     return self;
@@ -106,45 +172,39 @@
 }
 
 - (void)unsafeChannelRead {
-    // two 128k frames do not belong on the event loop thread stack
-    NSMutableData *bufferData = [[NSMutableData alloc] initWithLength:BUFFER_SIZE];
-    NSMutableData *errorBufferData = [[NSMutableData alloc] initWithLength:BUFFER_SIZE];
-    if (!bufferData || !errorBufferData) { return; }
-    char *buffer = [bufferData mutableBytes];
-    char *errorBuffer = [errorBufferData mutableBytes];
+    char *buffer = [self.readBufferData mutableBytes];
+    char *errorBuffer = [self.errorBufferData mutableBytes];
+    if (!buffer || !errorBuffer) { return; }
 
-    long rcout = libssh2_channel_read(self.representedChannel, buffer, BUFFER_SIZE);
-    long rcerr = libssh2_channel_read_stderr(self.representedChannel, errorBuffer, BUFFER_SIZE);
-
-    if (rcout != LIBSSH2_ERROR_EAGAIN && rcout > 0) {
-        NSString *read = [[NSString alloc] initWithBytes:buffer length:(NSUInteger)rcout encoding:NSUTF8StringEncoding];
-        if (!read) {
-            // a chunk holding invalid or split UTF-8 must not be dropped nor passed as nil
-            read = [[NSString alloc] initWithBytes:buffer length:(NSUInteger)rcout encoding:NSISOLatin1StringEncoding];
+    while (true) {
+        long rcout = libssh2_channel_read(self.representedChannel, buffer, BUFFER_SIZE);
+        if (rcout > 0) {
+            NSString *read = NSRemoteDecodeUTF8StreamChunk(self.pendingStdoutUTF8, buffer, (NSUInteger)rcout, NO);
+            if (read && self.receiveDataBlock) {
+                self.receiveDataBlock(read);
+            }
+            if (rcout == BUFFER_SIZE) {
+                continue;
+            }
         }
-        if (read && self.receiveDataBlock) {
-            self.receiveDataBlock(read);
-        }
+        break;
     }
-    if (rcerr != LIBSSH2_ERROR_EAGAIN && rcerr > 0) {
-        NSString *read = [[NSString alloc] initWithBytes:errorBuffer length:(NSUInteger)rcerr encoding:NSUTF8StringEncoding];
-        if (!read) {
-            read = [[NSString alloc] initWithBytes:errorBuffer length:(NSUInteger)rcerr encoding:NSISOLatin1StringEncoding];
+
+    while (true) {
+        long rcerr = libssh2_channel_read_stderr(self.representedChannel, errorBuffer, BUFFER_SIZE);
+        if (rcerr > 0) {
+            NSString *read = NSRemoteDecodeUTF8StreamChunk(self.pendingStderrUTF8, errorBuffer, (NSUInteger)rcerr, NO);
+            if (read && self.receiveDataBlock) {
+                self.receiveDataBlock(read);
+            }
+            if (rcerr == BUFFER_SIZE) {
+                continue;
+            }
         }
-        if (read && self.receiveDataBlock) {
-            self.receiveDataBlock(read);
-        }
+        break;
     }
 }
 
-/*
- Writes what the channel takes now and keeps the rest for the next tick.
- It must never wait here for the remote to take more: a remote whose
- input window is full may itself be waiting for us to read its output,
- and reading happens on this same tick; waiting would freeze both sides
- for good (pasting into a busy full-screen program did it). A partial
- write keeps the remainder instead of dropping it.
- */
 - (void)unsafeChannelWrite {
     if (self.requestDataBlock) {
         NSString *requestedBuffer = self.requestDataBlock();
@@ -158,10 +218,9 @@
             [self.pendingWrite setLength:0];
             return;
         }
-        // Actual number of bytes written or negative on failure.
         long rc = libssh2_channel_write(self.representedChannel, self.pendingWrite.bytes, self.pendingWrite.length);
         if (rc == LIBSSH2_ERROR_EAGAIN || rc == 0) {
-            return; // the channel is full: the next tick, after reading
+            return;
         }
         if (rc < 0) {
             NSRLog(@"error occurred during message write, consider terminated channel");
@@ -173,29 +232,24 @@
 }
 
 - (BOOL)unsafeChannelShouldTerminate {
-    do {
-        if (self.scheduledTermination && [self.scheduledTermination timeIntervalSinceNow] < 0) {
-            NSRLog(@"channel terminating due to timeout schedule");
-            break;
-        }
-        if (self.continuationDecisionBlock && !self.continuationDecisionBlock()) {
-            break;
-        }
-        long rc = libssh2_channel_eof(self.representedChannel);
-        if (rc == 1) {
-            break;
-        }
-        if (rc < 0 && rc != LIBSSH2_ERROR_EAGAIN) {
-            break;
-        }
-        return NO;
-    } while (0);
-    self.channelCompleted = YES;
-    return YES;
+    if (self.scheduledTermination && [self.scheduledTermination timeIntervalSinceNow] < 0) {
+        NSRLog(@"channel terminating due to timeout schedule");
+        self.channelCompleted = YES;
+        return YES;
+    }
+    if (self.continuationDecisionBlock && !self.continuationDecisionBlock()) {
+        self.channelCompleted = YES;
+        return YES;
+    }
+    long rc = libssh2_channel_eof(self.representedChannel);
+    if (rc == 1 || (rc < 0 && rc != LIBSSH2_ERROR_EAGAIN)) {
+        self.channelCompleted = YES;
+        return YES;
+    }
+    return NO;
 }
 
 - (void)unsafeChannelTerminalSizeUpdate {
-    // may called from outside
     if (![self seatbeltCheckPassed]) { return; }
     if (!self.requestTerminalSizeBlock) {
         return;
@@ -204,8 +258,6 @@
     if (CGSizeEqualToSize(targetSize, self.currentTerminalSize)) {
         return;
     }
-    // a wedged channel must not stall the loop here; giving up leaves
-    // currentTerminalSize stale so a later tick retries the resize
     NSDate *resizeDeadline = [[NSDate alloc] initWithTimeIntervalSinceNow:LIBSSH2_CHANNEL_EAGAIN_TIMEOUT];
     while (true) {
         if ([resizeDeadline timeIntervalSinceNow] < 0) { return; }
@@ -216,7 +268,6 @@
             usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
             continue;
         }
-        // don't check error here?
         break;
     }
     self.currentTerminalSize = targetSize;
@@ -232,18 +283,23 @@
 }
 
 - (BOOL)unsafeInsanityCheckAndReturnDidSuccess {
-    do {
-        if (self.channelCompleted) { break; }
-        if (![self seatbeltCheckPassed]) { break; }
-        return YES;
-    } while (0);
-    return NO;
+    if (self.channelCompleted) { return NO; }
+    if (![self seatbeltCheckPassed]) { return NO; }
+    return YES;
 }
 
 - (void)unsafeDisconnectAndPrepareForRelease {
     if (!self.channelCompleted) { self.channelCompleted = YES; }
     if (!self.representedSession) { return; }
     if (!self.representedChannel) { return; }
+    if (self.pendingStdoutUTF8.length > 0 && self.receiveDataBlock) {
+        NSString *tail = NSRemoteDecodeUTF8StreamChunk(self.pendingStdoutUTF8, NULL, 0, YES);
+        if (tail) { self.receiveDataBlock(tail); }
+    }
+    if (self.pendingStderrUTF8.length > 0 && self.receiveDataBlock) {
+        NSString *tail = NSRemoteDecodeUTF8StreamChunk(self.pendingStderrUTF8, NULL, 0, YES);
+        if (tail) { self.receiveDataBlock(tail); }
+    }
     LIBSSH2_CHANNEL *channel = self.representedChannel;
     self.representedChannel = NULL;
     self.representedSession = NULL;

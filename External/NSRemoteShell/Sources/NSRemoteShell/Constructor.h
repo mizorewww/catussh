@@ -10,5 +10,7 @@
 
 /// return 1 if success
 int libssh2_init_check(void);
+void libssh2_retain_activity(void);
+void libssh2_release_activity(void);
 
 #endif /* Constructor_h */

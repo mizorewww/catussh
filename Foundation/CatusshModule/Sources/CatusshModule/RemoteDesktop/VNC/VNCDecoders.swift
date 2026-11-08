@@ -3,9 +3,7 @@
 //  CatusshModule
 //
 //  FramebufferUpdate rectangle decoders: Raw, CopyRect, RRE, Hextile,
-//  ZRLE, and the Cursor and DesktopSize pseudo-encodings. Each decoder
-//  pulls its payload out of a `VNCByteChannel` (the socket in production,
-//  a memory buffer in tests) and paints into the framebuffer.
+//  ZRLE, and the Cursor and DesktopSize pseudo-encodings.
 //
 
 import CoreGraphics
@@ -17,32 +15,21 @@ enum VNCDecodeError: Error, Equatable {
 }
 
 enum VNCDecoders {
-    /// The context one update shares: the pixel translator for the
-    /// server's format and the framebuffer being painted.
     struct Context {
         var framebuffer: VNCFramebuffer
         /// Server pixel -> canonical `0xAARRGGBB` word.
         var pixelTranslator: (Data, Int) -> UInt32
-        /// Full pixel byte count in the server's format.
         var bytesPerPixel: Int
-        /// CPIXEL byte count (ZRLE): 3 for 32bpp/depth24/all-255 formats,
-        /// otherwise `bytesPerPixel`.
         var cpixelByteCount: Int
-        /// Where the absent byte of a CPIXEL goes when padding to a full
-        /// pixel: big-endian wire order drops the leading byte.
         var cpixelPadsAtEnd = true
-        /// The connection's persistent ZRLE inflate stream, when ZRLE was
-        /// negotiated.
         var zlib: VNCZlibStream?
     }
 
-    /// Reads one full pixel in the server's format and translates it.
     private static func readFullPixel(from source: VNCByteChannel, using context: Context) throws -> UInt32 {
         let data = try source.read(exactly: context.bytesPerPixel)
         return context.pixelTranslator(data, 0)
     }
 
-    /// Decodes one rectangle payload for `header` into the framebuffer.
     static func decode(_ header: VNCWire.RectangleHeader, from source: VNCByteChannel, context: Context) throws {
         switch VNCWire.Encoding(rawValue: header.encoding) {
         case .raw:
@@ -150,13 +137,15 @@ enum VNCDecoders {
                 }
                 if subencoding & HextileSubencoding.anySubrects != 0 {
                     let count = Int(try source.read(exactly: 1)[0])
-                    for _ in 0 ..< count {
-                        var pixel = foreground
-                        if subencoding & HextileSubencoding.subrectsColoured != 0 {
-                            pixel = try readFullPixel(from: source, using: context)
-                        }
-                        let position = try source.read(exactly: 1)[0]
-                        let dimension = try source.read(exactly: 1)[0]
+                    let coloured = (subencoding & HextileSubencoding.subrectsColoured) != 0
+                    let subrectStride = (coloured ? context.bytesPerPixel : 0) + 2
+                    let subrectsData = try source.read(exactly: count * subrectStride)
+                    for idx in 0 ..< count {
+                        let base = idx * subrectStride
+                        let pixel = coloured ? context.pixelTranslator(subrectsData, base) : foreground
+                        let posOffset = base + (coloured ? context.bytesPerPixel : 0)
+                        let position = subrectsData[posOffset]
+                        let dimension = subrectsData[posOffset + 1]
                         context.framebuffer.fill(
                             x: tileX + Int(position >> 4),
                             y: tileY + Int(position & 0x0F),
@@ -175,8 +164,6 @@ enum VNCDecoders {
     // MARK: - ZRLE (encoding 16)
 
     static func zrle(_ header: VNCWire.RectangleHeader, from source: VNCByteChannel, context: Context) throws {
-        // u32 compressed length, then the zlib payload; the persistent
-        // inflate stream lives on the client, handed in through `zlib`.
         guard let zlib = context.zlib else {
             throw VNCDecodeError.malformed("ZRLE without an inflate stream")
         }
@@ -189,147 +176,170 @@ enum VNCDecoders {
         try decodeZRLE(header, inflated: inflated, context: context)
     }
 
-    /// Decodes one ZRLE rectangle. `data` is the already-inflated payload —
-    /// the persistent zlib stream lives on the client — so this stays a
-    /// pure buffer decode.
+    /// Zero-allocation ZRLE rectangle decoder using direct buffer reading and batch tile writes.
     static func decodeZRLE(_ header: VNCWire.RectangleHeader, inflated data: Data, context: Context) throws {
         var offset = 0
+        let totalBytes = data.count
+        let fastBGR24 = (context.cpixelByteCount == 3 && context.bytesPerPixel == 4 && context.cpixelPadsAtEnd)
+        var scratchPixel = Data(repeating: 0, count: max(4, context.bytesPerPixel))
+        var tileBuffer: [UInt32] = []
+        tileBuffer.reserveCapacity(64 * 64)
 
-        func take(_ count: Int) throws -> [UInt8] {
-            guard offset + count <= data.count else {
-                throw VNCDecodeError.malformed("ZRLE payload ended early at \(offset) of \(data.count)")
+        return try data.withUnsafeBytes { rawBuffer in
+            guard let ptr = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                if header.width == 0 || header.height == 0 { return }
+                throw VNCDecodeError.malformed("Empty ZRLE payload")
             }
-            defer { offset += count }
-            return Array(data[offset ..< offset + count])
-        }
 
-        func cpixel() throws -> UInt32 {
-            // CPIXEL drops the padding byte of a 32bpp/depth-24 pixel: the
-            // trailing byte for little-endian wire order, the leading one
-            // for big-endian.
-            var bytes = try take(context.cpixelByteCount)
-            while bytes.count < context.bytesPerPixel {
-                if context.cpixelPadsAtEnd { bytes.append(0) } else { bytes.insert(0, at: 0) }
-            }
-            return context.pixelTranslator(Data(bytes), 0)
-        }
-
-        func palette(_ count: Int) throws -> [UInt32] {
-            try (0 ..< count).map { _ in try cpixel() }
-        }
-
-        func runLength() throws -> Int {
-            // "The length is encoded as a sequence of bytes; the run
-            // continues while a byte is 255, total = sum + 1."
-            var length = 1
-            var next = try take(1)[0]
-            length += Int(next)
-            while next == 255 {
-                next = try take(1)[0]
-                length += Int(next)
-            }
-            return length
-        }
-
-        var tileY = 0
-        while tileY < header.height {
-            var tileX = 0
-            let tileHeight = min(64, header.height - tileY)
-            while tileX < header.width {
-                let tileWidth = min(64, header.width - tileX)
-                let subencoding = Int(try take(1)[0])
-
-                if subencoding == 0 {
-                    // Raw CPIXELs.
-                    var line: [UInt32] = []
-                    line.reserveCapacity(tileWidth * tileHeight)
-                    for _ in 0 ..< tileWidth * tileHeight { line.append(try cpixel()) }
-                    context.framebuffer.putRun(
-                        x: header.x + tileX, y: header.y + tileY,
-                        width: tileWidth, pixels: line[...]
-                    )
-                } else if subencoding == 1 {
-                    // Solid fill.
-                    let pixel = try cpixel()
-                    context.framebuffer.fill(
-                        x: header.x + tileX, y: header.y + tileY,
-                        width: tileWidth, height: tileHeight, pixel: pixel
-                    )
-                } else if subencoding >= 2, subencoding <= 16 {
-                    // Packed palette: 1-bit indices for 2 colours, 4-bit for
-                    // 3–4, 8-bit otherwise.
-                    let entries = try palette(subencoding)
-                    let bitsPerIndex: Int = subencoding > 4 ? 8 : (subencoding > 2 ? 4 : 1)
-                    let bytesPerRow = (tileWidth * bitsPerIndex + 7) / 8
-                    for row in 0 ..< tileHeight {
-                        let rowData = try take(bytesPerRow)
-                        for column in 0 ..< tileWidth {
-                            let bitIndex = column * bitsPerIndex
-                            let byte = Int(rowData[bitIndex / 8])
-                            let shift = 8 - bitsPerIndex - (bitIndex % 8)
-                            let paletteIndex = (byte >> shift) & ((1 << bitsPerIndex) - 1)
-                            guard paletteIndex < entries.count else {
-                                throw VNCDecodeError.malformed("ZRLE palette index \(paletteIndex) out of \(entries.count)")
-                            }
-                            context.framebuffer.put(
-                                x: header.x + tileX + column,
-                                y: header.y + tileY + row,
-                                pixel: entries[paletteIndex]
-                            )
-                        }
-                    }
-                } else if subencoding == 128 {
-                    // Plain RLE: (CPIXEL, runLength) pairs.
-                    var line: [UInt32] = []
-                    let total = tileWidth * tileHeight
-                    line.reserveCapacity(total)
-                    var pixelsWritten = 0
-                    while pixelsWritten < total {
-                        let pixel = try cpixel()
-                        let length = try runLength()
-                        line.append(contentsOf: repeatElement(pixel, count: length))
-                        pixelsWritten += length
-                    }
-                    context.framebuffer.putRun(
-                        x: header.x + tileX, y: header.y + tileY,
-                        width: tileWidth, pixels: line.prefix(total)
-                    )
-                } else {
-                    // Palette RLE: palette size = subencoding & 0x7F; an
-                    // index byte per element, bit 7 marking a run of that
-                    // palette entry whose length follows.
-                    let entries = try palette(subencoding & 0x7F)
-                    var line: [UInt32] = []
-                    let total = tileWidth * tileHeight
-                    line.reserveCapacity(total)
-                    var pixelsWritten = 0
-                    while pixelsWritten < total {
-                        let indicator = try take(1)[0]
-                        let index = Int(indicator & 0x7F)
-                        guard index < entries.count else {
-                            throw VNCDecodeError.malformed("ZRLE palette index \(index) out of \(entries.count)")
-                        }
-                        var length = 1
-                        if indicator & 0x80 != 0 {
-                            length = try runLength()
-                        }
-                        line.append(contentsOf: repeatElement(entries[index], count: length))
-                        pixelsWritten += length
-                    }
-                    context.framebuffer.putRun(
-                        x: header.x + tileX, y: header.y + tileY,
-                        width: tileWidth, pixels: line.prefix(total)
-                    )
+            @inline(__always)
+            func readByte() throws -> UInt8 {
+                guard offset < totalBytes else {
+                    throw VNCDecodeError.malformed("ZRLE payload ended early at \(offset) of \(totalBytes)")
                 }
-                tileX += tileWidth
+                defer { offset += 1 }
+                return ptr[offset]
             }
-            tileY += tileHeight
+
+            @inline(__always)
+            func cpixel() throws -> UInt32 {
+                let count = context.cpixelByteCount
+                guard offset + count <= totalBytes else {
+                    throw VNCDecodeError.malformed("ZRLE payload ended early at \(offset) of \(totalBytes)")
+                }
+                defer { offset += count }
+                if fastBGR24 {
+                    let b = UInt32(ptr[offset])
+                    let g = UInt32(ptr[offset + 1])
+                    let r = UInt32(ptr[offset + 2])
+                    return 0xFF00_0000 | (r << 16) | (g << 8) | b
+                }
+                if count == context.bytesPerPixel {
+                    return context.pixelTranslator(data, offset)
+                }
+                let padStart = context.cpixelPadsAtEnd ? 0 : (context.bytesPerPixel - count)
+                for i in 0 ..< context.bytesPerPixel { scratchPixel[i] = 0 }
+                for i in 0 ..< count { scratchPixel[padStart + i] = ptr[offset + i] }
+                return context.pixelTranslator(scratchPixel, 0)
+            }
+
+            func palette(_ count: Int) throws -> [UInt32] {
+                var entries: [UInt32] = []
+                entries.reserveCapacity(count)
+                for _ in 0 ..< count {
+                    entries.append(try cpixel())
+                }
+                return entries
+            }
+
+            @inline(__always)
+            func runLength() throws -> Int {
+                var length = 1
+                var next = try readByte()
+                length += Int(next)
+                while next == 255 {
+                    next = try readByte()
+                    length += Int(next)
+                }
+                return length
+            }
+
+            var tileY = 0
+            while tileY < header.height {
+                var tileX = 0
+                let tileHeight = min(64, header.height - tileY)
+                while tileX < header.width {
+                    let tileWidth = min(64, header.width - tileX)
+                    let subencoding = Int(try readByte())
+
+                    if subencoding == 0 {
+                        tileBuffer.removeAll(keepingCapacity: true)
+                        let total = tileWidth * tileHeight
+                        for _ in 0 ..< total {
+                            tileBuffer.append(try cpixel())
+                        }
+                        context.framebuffer.putRun(
+                            x: header.x + tileX, y: header.y + tileY,
+                            width: tileWidth, pixels: tileBuffer[...]
+                        )
+                    } else if subencoding == 1 {
+                        let pixel = try cpixel()
+                        context.framebuffer.fill(
+                            x: header.x + tileX, y: header.y + tileY,
+                            width: tileWidth, height: tileHeight, pixel: pixel
+                        )
+                    } else if subencoding >= 2, subencoding <= 16 {
+                        let entries = try palette(subencoding)
+                        let bitsPerIndex: Int = subencoding > 4 ? 8 : (subencoding > 2 ? 4 : 1)
+                        let bytesPerRow = (tileWidth * bitsPerIndex + 7) / 8
+                        guard offset + bytesPerRow * tileHeight <= totalBytes else {
+                            throw VNCDecodeError.malformed("ZRLE payload ended early at \(offset) of \(totalBytes)")
+                        }
+                        tileBuffer.removeAll(keepingCapacity: true)
+                        let mask = (1 << bitsPerIndex) - 1
+                        for _ in 0 ..< tileHeight {
+                            let rowBase = offset
+                            offset += bytesPerRow
+                            for column in 0 ..< tileWidth {
+                                let bitIndex = column * bitsPerIndex
+                                let byte = Int(ptr[rowBase + bitIndex / 8])
+                                let shift = 8 - bitsPerIndex - (bitIndex % 8)
+                                let paletteIndex = (byte >> shift) & mask
+                                guard paletteIndex < entries.count else {
+                                    throw VNCDecodeError.malformed("ZRLE palette index \(paletteIndex) out of \(entries.count)")
+                                }
+                                tileBuffer.append(entries[paletteIndex])
+                            }
+                        }
+                        context.framebuffer.putRun(
+                            x: header.x + tileX, y: header.y + tileY,
+                            width: tileWidth, pixels: tileBuffer[...]
+                        )
+                    } else if subencoding == 128 {
+                        tileBuffer.removeAll(keepingCapacity: true)
+                        let total = tileWidth * tileHeight
+                        var pixelsWritten = 0
+                        while pixelsWritten < total {
+                            let pixel = try cpixel()
+                            let length = try runLength()
+                            tileBuffer.append(contentsOf: repeatElement(pixel, count: length))
+                            pixelsWritten += length
+                        }
+                        context.framebuffer.putRun(
+                            x: header.x + tileX, y: header.y + tileY,
+                            width: tileWidth, pixels: tileBuffer.prefix(total)
+                        )
+                    } else {
+                        let entries = try palette(subencoding & 0x7F)
+                        tileBuffer.removeAll(keepingCapacity: true)
+                        let total = tileWidth * tileHeight
+                        var pixelsWritten = 0
+                        while pixelsWritten < total {
+                            let indicator = try readByte()
+                            let index = Int(indicator & 0x7F)
+                            guard index < entries.count else {
+                                throw VNCDecodeError.malformed("ZRLE palette index \(index) out of \(entries.count)")
+                            }
+                            var length = 1
+                            if indicator & 0x80 != 0 {
+                                length = try runLength()
+                            }
+                            tileBuffer.append(contentsOf: repeatElement(entries[index], count: length))
+                            pixelsWritten += length
+                        }
+                        context.framebuffer.putRun(
+                            x: header.x + tileX, y: header.y + tileY,
+                            width: tileWidth, pixels: tileBuffer.prefix(total)
+                        )
+                    }
+                    tileX += tileWidth
+                }
+                tileY += tileHeight
+            }
         }
     }
 
     // MARK: - Cursor pseudo-encoding (-239)
 
-    /// Decodes the cursor shape inside its rectangle (x, y = hotspot).
     static func decodeCursor(_ header: VNCWire.RectangleHeader, from source: VNCByteChannel, context: Context) throws -> RemoteCursorInfo? {
         let pixelCount = header.width * header.height
         guard pixelCount > 0 else { return nil }
@@ -337,7 +347,6 @@ enum VNCDecoders {
         let maskRowBytes = (header.width + 7) / 8
         let mask = try source.read(exactly: maskRowBytes * header.height)
 
-        // RGBA with alpha from the mask: [R, G, B, A] bytes per pixel.
         var rgba = Data(count: pixelCount * 4)
         rgba.withUnsafeMutableBytes { buffer in
             guard let base = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }

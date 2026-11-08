@@ -102,15 +102,25 @@ struct VNCPixelFormat: Equatable, Sendable {
         guard trueColour else { return nil }
         let rMax = UInt32(redMax), gMax = UInt32(greenMax), bMax = UInt32(blueMax)
         guard rMax > 0, gMax > 0, bMax > 0 else { return nil }
+        if self == .clientRequested {
+            return { data, offset in
+                let base = data.startIndex + offset
+                let b = UInt32(data[base])
+                let g = UInt32(data[base + 1])
+                let r = UInt32(data[base + 2])
+                return 0xFF00_0000 | (r << 16) | (g << 8) | b
+            }
+        }
         let rShift = redShift, gShift = greenShift, bShift = blueShift
         let littleEndian = !bigEndian
         let bpp = bytesPerPixel
         return { data, offset in
+            let base = data.startIndex + offset
             var raw: UInt32 = 0
             if littleEndian {
-                for i in 0 ..< bpp { raw |= UInt32(data[offset + i]) << (8 * i) }
+                for i in 0 ..< bpp { raw |= UInt32(data[base + i]) << (8 * i) }
             } else {
-                for i in 0 ..< bpp { raw = (raw << 8) | UInt32(data[offset + i]) }
+                for i in 0 ..< bpp { raw = (raw << 8) | UInt32(data[base + i]) }
             }
             let r = ((raw >> rShift) & rMax) * 255 / rMax
             let g = ((raw >> gShift) & gMax) * 255 / gMax

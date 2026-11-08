@@ -51,10 +51,41 @@
 @property (nonatomic, readwrite, assign) unsigned keepAliveAttampt;
 @property (nonatomic, readwrite, nullable, strong) NSDate *keepAliveLastAttampt;
 @property (nonatomic, readwrite, nullable, strong) NSDate *keepAliveLastSuccessAttampt;
+@property (nonatomic, readwrite, assign) BOOL holdsLatencyActivity;
 
 @end
 
 @implementation NSRemoteShell
+
+static NSString *NSRemoteSFTPFailureDescription(LIBSSH2_SFTP * _Nullable sftp, NSString * _Nullable fallback) {
+    if (sftp) {
+        unsigned long code = libssh2_sftp_last_error(sftp);
+        switch (code) {
+            case LIBSSH2_FX_OK: break;
+            case LIBSSH2_FX_EOF: return @"end of file";
+            case LIBSSH2_FX_NO_SUCH_FILE: return @"no such file or directory";
+            case LIBSSH2_FX_PERMISSION_DENIED: return @"permission denied";
+            case LIBSSH2_FX_FAILURE: return @"remote SFTP operation failed";
+            case LIBSSH2_FX_BAD_MESSAGE: return @"bad SFTP message";
+            case LIBSSH2_FX_NO_CONNECTION: return @"no connection";
+            case LIBSSH2_FX_CONNECTION_LOST: return @"connection lost";
+            case LIBSSH2_FX_OP_UNSUPPORTED: return @"operation not supported";
+            case LIBSSH2_FX_INVALID_HANDLE: return @"invalid handle";
+            case LIBSSH2_FX_NO_SUCH_PATH: return @"no such path";
+            case LIBSSH2_FX_FILE_ALREADY_EXISTS: return @"file already exists";
+            case LIBSSH2_FX_WRITE_PROTECT: return @"write protected";
+            case LIBSSH2_FX_NO_MEDIA: return @"no media";
+            case LIBSSH2_FX_NO_SPACE_ON_FILESYSTEM: return @"no space left on filesystem";
+            case LIBSSH2_FX_QUOTA_EXCEEDED: return @"quota exceeded";
+            case LIBSSH2_FX_DIR_NOT_EMPTY: return @"directory not empty";
+            case LIBSSH2_FX_NOT_A_DIRECTORY: return @"not a directory";
+            case LIBSSH2_FX_INVALID_FILENAME: return @"invalid filename";
+            case LIBSSH2_FX_LINK_LOOP: return @"symbolic link loop";
+            default: return [NSString stringWithFormat:@"SFTP error %lu", code];
+        }
+    }
+    return fallback ?: @"remote operation failed";
+}
 
 static NSRemoteShellHostKeyVerifier sharedHostKeyVerifier;
 
@@ -708,10 +739,18 @@ continue; \
     libssh2_keepalive_config(constructorSession, 0, 2);
     
     self.connected = YES;
+    if (!self.holdsLatencyActivity) {
+        self.holdsLatencyActivity = YES;
+        libssh2_retain_activity();
+    }
     NSRLog(@"constructed libssh2 session to %@ with %@", self.remoteHost, self.resolvedRemoteIpAddress);
 }
 
 - (void)unsafeDisconnect {
+    if (self.holdsLatencyActivity) {
+        self.holdsLatencyActivity = NO;
+        libssh2_release_activity();
+    }
     for (id<NSRemoteOperableObject> object in [self.operableObjects copy]) {
         if (object) { [object unsafeDisconnectAndPrepareForRelease]; }
     }
@@ -1361,7 +1400,7 @@ continue; \
     }
     [self unsafeReadLastError];
     if (!handler) {
-        [self unsafeFileTransferSetErrorForFile:path pathIsRemote:YES failureReason:@"remote permission denied"];
+        [self unsafeFileTransferSetErrorForFile:path pathIsRemote:YES failureReason:NSRemoteSFTPFailureDescription(sftp, self.lastError)];
     }
     return handler;
 }
@@ -1380,15 +1419,6 @@ continue; \
             break;
         }
         const char *cpath = [path UTF8String];
-        /*
-         by using c path and strlen, utf8 char set with multi length will have the right space
-         
-         (lldb) po [path length];
-         25
-
-         (lldb) po strlen(cpath)
-         29
-         */
         LIBSSH2_SFTP_HANDLE *handlerBuilder = libssh2_sftp_open_ex(sftp,
                                                                    cpath,
                                                                    (unsigned int)strlen(cpath),
@@ -1409,7 +1439,7 @@ continue; \
     }
     [self unsafeReadLastError];
     if (!handler) {
-        [self unsafeFileTransferSetErrorForFile:path pathIsRemote:YES failureReason:@"remote permission denied"];
+        [self unsafeFileTransferSetErrorForFile:path pathIsRemote:YES failureReason:NSRemoteSFTPFailureDescription(sftp, self.lastError)];
     }
     return handler;
 }
@@ -1425,7 +1455,6 @@ continue; \
                                                                            withSFTP:sftp
                                                                            withPath:withDirPath];
     if (!handle) {
-        [self unsafeFileTransferSetErrorForFile:withDirPath pathIsRemote:YES failureReason:@"remote permission denied"];
         return NULL;
     }
     
@@ -1495,7 +1524,6 @@ continue; \
                                                                             withFlag:LIBSSH2_FXF_READ
                                                                             withMode:0];
     if (!handle) {
-        [self unsafeFileTransferSetErrorForFile:atPath pathIsRemote:YES failureReason:@"remote permission denied"];
         return NULL;
     }
     
@@ -1520,13 +1548,13 @@ continue; \
     }
 
     date = [[NSDate alloc] initWithTimeIntervalSinceNow:[self.operationTimeout intValue]];
-    while (libssh2_sftp_closedir(handle) == LIBSSH2_ERROR_EAGAIN) {
+    while (libssh2_sftp_close_handle(handle) == LIBSSH2_ERROR_EAGAIN) {
         if ([date timeIntervalSinceNow] < 0) { break; }
         usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
     }
 
     if (!statSuccess) {
-        [self unsafeFileTransferSetErrorForFile:atPath pathIsRemote:YES failureReason:@"remote permission denied"];
+        [self unsafeFileTransferSetErrorForFile:atPath pathIsRemote:YES failureReason:NSRemoteSFTPFailureDescription(sftp, self.lastError)];
         return NULL;
     }
     NSRemoteFile *file = [[NSRemoteFile alloc] initWithFilename:atPath.lastPathComponent];
@@ -1603,7 +1631,8 @@ continue; \
     }
     [self unsafeReadLastError];
     if (!channel) {
-        [self unsafeFileTransferSetErrorForFile:localFile.path pathIsRemote:NO failureReason:@"remote permission denied"];
+        fclose(f);
+        [self unsafeFileTransferSetErrorForFile:localFile.path pathIsRemote:NO failureReason:self.lastError ?: @"SCP send initialization failed"];
         return NO;
     }
     
@@ -1625,7 +1654,6 @@ continue; \
     while (sent_size < total_size) {
         if (continuationBlock && !continuationBlock()) { break; }
         if (!self.isConnectedFileTransfer) { break; }
-        memset(buff, 0, SFTP_BUFFER_SIZE);
         read_size = fread(buff, 1, SFTP_BUFFER_SIZE, f);
         if (read_size <= 0) {
             break; // done or error
@@ -1734,7 +1762,6 @@ continue; \
                                  URLByAppendingPathComponent:localBase.lastPathComponent];
             // now create dir on remote
             if (![self unsafeCreateDirAndWait:remoteBase.path]) {
-                [self unsafeFileTransferSetErrorForFile:remoteBase.path pathIsRemote:YES failureReason:@"remote permission denied"];
                 return NO;
             }
             for (NSString *file in content) {
@@ -1806,7 +1833,11 @@ continue; \
     NSRemoteFile *file = [self unsafeGetFileInfo:atPath];
     if (file) {
         if (file.isDirectory) { return YES; } // already exists
-        // otherwise error later on
+    } else {
+        // Clear the "no such file" error set by the existence probe above.
+        @synchronized (self) {
+            self.lastFileTransferError = NULL;
+        }
     }
     
     NSDate *date = [[NSDate alloc] initWithTimeIntervalSinceNow:[self.operationTimeout intValue]];
@@ -1832,7 +1863,7 @@ continue; \
     }
     [self unsafeReadLastError];
     if (rc != 0) {
-        [self unsafeFileTransferSetErrorForFile:atPath pathIsRemote:YES failureReason:@"remote permission denied"];
+        [self unsafeFileTransferSetErrorForFile:atPath pathIsRemote:YES failureReason:NSRemoteSFTPFailureDescription(sftp, self.lastError)];
         return NO;
     }
     return YES;
@@ -1894,7 +1925,7 @@ continue; \
         }
         [self unsafeReadLastError];
         if (rc != 0) {
-            [self unsafeFileTransferSetErrorForFile:atPath pathIsRemote:YES failureReason:@"remote permission denied"];
+            [self unsafeFileTransferSetErrorForFile:atPath pathIsRemote:YES failureReason:NSRemoteSFTPFailureDescription(sftp, self.lastError)];
             return NO;
         }
         return YES;
@@ -1922,7 +1953,7 @@ continue; \
         }
         [self unsafeReadLastError];
         if (rc != 0) {
-            [self unsafeFileTransferSetErrorForFile:atPath pathIsRemote:YES failureReason:@"remote permission denied"];
+            [self unsafeFileTransferSetErrorForFile:atPath pathIsRemote:YES failureReason:NSRemoteSFTPFailureDescription(sftp, self.lastError)];
             return NO;
         }
         return YES;
@@ -1934,31 +1965,15 @@ continue; \
                            onProgress:(NSRemoteFileTransferProgressBlock)onProgress
               withContinuationHandler:(BOOL (^)(void))continuationBlock
 {
-    // we are not in charge to fix any stuff related to path
-    // we are called from ourselves
     NSString *atPath = atFullPath;
     NSURL *localFile = [[NSURL alloc] initFileURLWithPath:toFullPath];
-//    NSString *toPath = toFullPath;
     NSURL *remoteFile = [[NSURL alloc] initFileURLWithPath:atFullPath];
-    
-    //    NSRLog(@"%@ to %@", remoteFile.path, localFile.path);
     
     if (![self unsafeValidateSessionSFTP]) {
         [self unsafeFileTransferSetErrorForFile:atFullPath pathIsRemote:YES failureReason:@"broken connection"];
         return NO;
     }
     LIBSSH2_SESSION *session = self.associatedSession;
-    LIBSSH2_SFTP *sftp = self.associatedFileTransfer;
-    LIBSSH2_SFTP_HANDLE *handle = [self unsafeFileTransferOpenFileHandlerWithSession:session
-                                                                            withSFTP:sftp
-                                                                            withPath:atPath
-                                                                            withFlag:LIBSSH2_FXF_READ
-                                                                            withMode:0];
-    if (!handle) {
-        [self unsafeFileTransferSetErrorForFile:atFullPath pathIsRemote:YES failureReason:@"broken connection"];
-        return NO;
-    }
-//    NSRLog(@"downloading file %@ to %@", atPath, toPath);
     
     struct stat fi;
     memset(&fi, 0, sizeof(fi));
@@ -1984,51 +1999,39 @@ continue; \
     }
     [self unsafeReadLastError];
     if (!channel) {
-        libssh2_sftp_close_handle(handle);
-        [self unsafeFileTransferSetErrorForFile:atFullPath pathIsRemote:YES failureReason:@"broken connection"];
+        [self unsafeFileTransferSetErrorForFile:atFullPath pathIsRemote:YES failureReason:self.lastError ?: @"SCP receive initialization failed"];
         return NO;
     }
     
-    int f = open([localFile.path UTF8String], O_WRONLY | O_CREAT, 0644);
+    int f = open([localFile.path UTF8String], O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (f < 0) {
         LIBSSH2_CHANNEL_SHUTDOWN(channel);
-        libssh2_sftp_close_handle(handle);
-        [self unsafeFileTransferSetErrorForFile:atFullPath pathIsRemote:YES failureReason:@"broken connection"];
+        [self unsafeFileTransferSetErrorForFile:localFile.path pathIsRemote:NO failureReason:@"failed to open local destination file"];
         return NO;
     }
     
     NSDate *begin = [[NSDate alloc] init];
     NSDate *lastProgress = [[NSDate alloc] initWithTimeIntervalSince1970:0];
     
-    // do note that the file could be empty
-    // fi.st_size may be zero, the entire loop is going to be skipped
     long long recv_size = 0;
-    // 128k per transfer does not belong on the event loop thread stack
     char *buff = (char*)malloc(SFTP_BUFFER_SIZE);
     if (!buff) {
         close(f);
         LIBSSH2_CHANNEL_SHUTDOWN(channel);
-        libssh2_sftp_close_handle(handle);
         [self unsafeFileTransferSetErrorForFile:atFullPath pathIsRemote:YES failureReason:@"failed to allocate transfer buffer"];
         return NO;
     }
-    // a read that stalls on eagain gives up after operationTimeout while
-    // any progress re-arms the deadline, so long transfers are unaffected
     date = [[NSDate alloc] initWithTimeIntervalSinceNow:[self.operationTimeout intValue]];
     while (recv_size < fi.st_size) {
         if (continuationBlock && !continuationBlock()) { break; }
         if (!self.isConnectedFileTransfer) { break; }
         long long recv_decision = SFTP_BUFFER_SIZE;
-        memset(buff, 0, SFTP_BUFFER_SIZE);
         if ((fi.st_size - recv_size) < recv_decision) {
-            // do not write over!
-            // libssh2_channel_read may have dirty data
             recv_decision = (size_t)(fi.st_size - recv_size);
         }
         long long recv_write_size = libssh2_channel_read(channel, buff, recv_decision);
         if (recv_write_size < 0) {
             if (recv_write_size == LIBSSH2_ERROR_EAGAIN) {
-                // do not change anything
                 if ([date timeIntervalSinceNow] < 0) {
                     libssh2_session_set_last_error(session, LIBSSH2_ERROR_TIMEOUT, NULL);
                     break;
@@ -2036,11 +2039,9 @@ continue; \
                 usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
                 continue;
             }
-            // error occurred
             break;
         }
         if (recv_write_size == 0) {
-            // remote sent eof, no more data will arrive
             break;
         }
         if (recv_write_size > 0) {
@@ -2100,7 +2101,6 @@ continue; \
     
     close(f);
     LIBSSH2_CHANNEL_SHUTDOWN(channel);
-    libssh2_sftp_close_handle(handle);
     return recv_size == fi.st_size;
 }
 
@@ -2248,7 +2248,7 @@ continue; \
     }
     [self unsafeReadLastError];
     if (rc != 0) {
-        [self unsafeFileTransferSetErrorForFile:atPath pathIsRemote:YES failureReason:@"remote permission denied"];
+        [self unsafeFileTransferSetErrorForFile:atPath pathIsRemote:YES failureReason:NSRemoteSFTPFailureDescription(sftp, self.lastError)];
         return NO;
     }
     return YES;
