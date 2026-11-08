@@ -472,11 +472,15 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             self?.decodeQueue.async { self?.decodeEncodedFrame(bytes, timestamp: timestamp) }
         }
         await peer.setDataChannelStateHandler("CONTROL_DATA_CHANNEL") { [weak self] (state: String) in
-            self?.controlChannelOpen = state == "open"
-            if state == "open" { self?.startControlChannelHeartbeat() }
+            guard let self else { return }
+            if state != "open", self.controlChannelOpen { self.lose("The UU Remote connection closed.") }
+            self.controlChannelOpen = state == "open"
+            if state == "open" { self.startControlChannelHeartbeat() }
         }
         await peer.setDataChannelStateHandler("BINARY_DATA_CHANNEL") { [weak self] (state: String) in
-            self?.binaryChannelOpen = state == "open"
+            guard let self else { return }
+            if state != "open", self.binaryChannelOpen { self.lose("The UU Remote connection closed.") }
+            self.binaryChannelOpen = state == "open"
         }
         await peer.setDataChannelStateHandler("FILE_DATA_CHANNEL") { [weak self] (state: String) in
             self?.fileChannelOpen = state == "open"
@@ -712,11 +716,30 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
 
     private func handleICEState(_ state: String) {
         session.reportHint("ICE \(state)")
+        iceState = state
         if state == "connected" {
             session.reportPhase(.connected)
-        } else if state == "failed" || state == "disconnected" {
-            reportTerminal(.failed("UU Remote ICE \(state)"))
+        } else if state == "failed" {
+            lose("The UU Remote connection was lost.")
+        } else if state == "disconnected" {
+            // Often back within seconds (a network change); gone if not.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                guard let self, self.iceState == "disconnected" else { return }
+                self.lose("The UU Remote connection was lost.")
+            }
         }
+    }
+
+    private var iceState = ""
+
+    /// The connection is gone for good: it reads as closed, so what runs on
+    /// it (terminals, port mappings) ends and can reconnect on a new one.
+    private func lose(_ reason: String) {
+        guard !closed else { return }
+        Self.log.error("connection lost: \(reason, privacy: .public)")
+        reportTerminal(.failed(reason))
+        stop()
     }
 
     // MARK: - Data channel senders
