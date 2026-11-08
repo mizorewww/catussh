@@ -110,7 +110,38 @@ final class AppRouter: ObservableObject {
     /// - Parameter another: open one more terminal even when one is open,
     ///   without asking.
     func openTerminal(machine: RDMachine.ID, another: Bool = false) {
-        TerminalManager.shared.createSession(withMachineID: machine, force: another) { [weak self] context in
+        // A UU Remote device may have sessions to resume: asked first.
+        let object = CatusshStore.shared.machineGroup[machine]
+        guard !another, object.isNotPlaceholder(), object.isUURemoteDevice else {
+            openTerminal(machine: machine, resuming: nil, another: another)
+            return
+        }
+        let pick = {
+            SheetPresenter.present { dismiss in
+                UURemoteSessionPickerSheet(machine: object) { choice in
+                    dismiss()
+                    switch choice {
+                    case .new: self.openTerminal(machine: machine, resuming: nil, another: true)
+                    case let .resume(id): self.openTerminal(machine: machine, resuming: id, another: true)
+                    case nil: break
+                    }
+                }
+            }
+        }
+        if TerminalManager.shared.sessionContexts.contains(where: { $0.machine.id == machine }) {
+            UIBridge.requiresConfirmation(
+                message: "\(object.name) already has a terminal open",
+                confirmTitle: "Open Another"
+            ) { confirmed in
+                if confirmed { MainActor.assumeIsolated { pick() } }
+            }
+        } else {
+            pick()
+        }
+    }
+
+    private func openTerminal(machine: RDMachine.ID, resuming uuSession: UInt32?, another: Bool) {
+        TerminalManager.shared.createSession(withMachineID: machine, force: another, resuming: uuSession) { [weak self] context in
             guard let self, self.opensAutomatically else { return }
             self.route = .terminal(context.id)
         }

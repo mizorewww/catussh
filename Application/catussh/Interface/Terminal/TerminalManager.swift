@@ -21,6 +21,7 @@ class TerminalManager: ObservableObject {
     func createSession(
         withMachineObject machine: RDMachine,
         force: Bool = false,
+        resuming uuSession: UInt32? = nil,
         completion: @escaping (Context) -> Void = { _ in }
     ) {
         let index = sessionContexts.firstIndex { $0.machine.id == machine.id }
@@ -36,18 +37,25 @@ class TerminalManager: ObservableObject {
             return
         }
         let context = Context(machine: machine)
+        // Read when the tab connects, after this.
+        context.uuSessionID = uuSession
         sessionContexts.append(context)
         CatusshStore.shared.storeRecentIfNeeded(from: machine.id)
         completion(context)
     }
 
-    func createSession(withMachineID machineId: RDMachine.ID, force: Bool = false, completion: @escaping (Context) -> Void = { _ in }) {
+    func createSession(
+        withMachineID machineId: RDMachine.ID,
+        force: Bool = false,
+        resuming uuSession: UInt32? = nil,
+        completion: @escaping (Context) -> Void = { _ in }
+    ) {
         let machine = CatusshStore.shared.machineGroup[machineId]
         guard machine.isNotPlaceholder() else {
             UIBridge.presentError(with: "This server's details could not be read.")
             return
         }
-        createSession(withMachineObject: machine, force: force, completion: completion)
+        createSession(withMachineObject: machine, force: force, resuming: uuSession, completion: completion)
     }
 
     @discardableResult
@@ -81,11 +89,15 @@ class TerminalManager: ObservableObject {
             let context = sessionContexts.remove(at: index)
             context.processShutdown()
             context.shell.destroyPermanently()
+            context.endLeftUURemoteSession()
         }
     }
 
+    /// catussh is quitting: a UU Remote device keeps its sessions, to resume
+    /// next time.
     func closeAll() {
         for context in sessionContexts {
+            context.keepsRemoteSession = true
             context.processShutdown()
             context.shell.destroyPermanently()
         }

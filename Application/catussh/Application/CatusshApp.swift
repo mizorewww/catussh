@@ -410,6 +410,13 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             quitAsked = false
         }
         let terminals = !TerminalManager.shared.sessionContexts.isEmpty
+        // A UU Remote device keeps its sessions; an SSH server does not.
+        let kept = TerminalManager.shared.sessionContexts.filter(\.machine.isUURemoteDevice).count
+        let terminalConsequence = switch kept {
+        case 0: "Open terminal sessions will be closed."
+        case TerminalManager.shared.sessionContexts.count: "UU Remote sessions keep running on their devices, to resume next time."
+        default: "SSH sessions will be closed; UU Remote sessions keep running on their devices, to resume next time."
+        }
         // Unsaved text is always asked about, whatever the setting.
         let unsaved = EditorCenter.shared.workspaces.contains(where: \.hasUnsavedChanges)
         Self.quitLog.info("quit requested: terminals \(terminals), unsaved \(unsaved)")
@@ -420,7 +427,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         }
         let consequences = [
             unsaved ? "Unsaved changes in the editor will be lost." : nil,
-            terminals ? "Open terminal sessions will be closed." : nil,
+            terminals ? terminalConsequence : nil,
         ]
         quitAsked = true
         quitAskedAt = Date()

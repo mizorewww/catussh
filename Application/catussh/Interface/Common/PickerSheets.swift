@@ -2,9 +2,11 @@
 //  PickerSheets.swift
 //  catussh (macOS)
 //
-//  The server picker (Open Terminals, Run snippet, Port Forward) and the identity picker.
+//  The server picker (Open Terminals, Run snippet, Port Forward), the identity
+//  picker, and the picker of a UU Remote device's detached terminal sessions.
 //
 
+import CatusshDesign
 import CatusshModule
 import SwiftUI
 
@@ -247,5 +249,174 @@ struct IdentityPickerSheet: View {
             }
             .environmentObject(CatusshStore.shared)
         }
+    }
+}
+
+/// A UU Remote device keeps its terminal sessions after their tab is gone
+/// (catussh quit, or the connection dropped): one of them, or a new one.
+struct UURemoteSessionPickerSheet: View {
+    enum Choice { case new, resume(UInt32) }
+
+    let machine: RDMachine
+    /// nil when cancelled.
+    let onComplete: (Choice?) -> Void
+
+    private enum Phase { case loading, failed(String), loaded }
+
+    @State private var phase = Phase.loading
+    @State private var sessions: [UUTerminalSession] = []
+    @State private var selection: UInt32?
+    @State private var ending: UUTerminalSession?
+    @State private var status = ""
+
+    var body: some View {
+        SheetScaffold(
+            "Terminal on \(machine.name)",
+            lead: "Sessions keep running on the device after catussh quits or the connection drops. Resume one, or start a new one."
+        ) {
+            content
+                .frame(height: 240)
+                .background(
+                    RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous)
+                        .fill(Color.rxSurface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous)
+                                .strokeBorder(Color.rxHairline, lineWidth: 1)
+                        )
+                )
+        } footer: {
+            Button("End Session…") {
+                ending = sessions.first { $0.id == selection }
+            }
+            .buttonStyle(.rxDanger)
+            .disabled(selection == nil)
+            Spacer()
+            Button("Cancel") { onComplete(nil) }
+                .buttonStyle(.rx)
+                .keyboardShortcut(.cancelAction)
+            Button("New Session") { onComplete(.new) }
+                .buttonStyle(.rx)
+            Button("Resume") {
+                if let selection { onComplete(.resume(selection)) }
+            }
+            .buttonStyle(.rxPrimary)
+            .keyboardShortcut(.defaultAction)
+            .disabled(selection == nil)
+        }
+        .frame(width: 520)
+        .task { await load() }
+        .alert(
+            "End \(ending?.name ?? "the session")?",
+            isPresented: Binding(get: { ending != nil }, set: { if !$0 { ending = nil } }),
+            presenting: ending
+        ) { session in
+            Button("End Session", role: .destructive) { Task { await end(session) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Its shell, and whatever runs in it, stops on \(machine.name).")
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch phase {
+        case .loading:
+            VStack(spacing: RX.Space.s2) {
+                ProgressView().controlSize(.small)
+                Text(status.isEmpty ? "Connecting to \(machine.name)…" : status)
+                    .font(.rxCaption)
+                    .foregroundStyle(.rxInkSecondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case let .failed(reason):
+            EmptyStateView(
+                "Sessions could not be listed",
+                systemImage: "exclamationmark.triangle",
+                message: reason,
+                actionTitle: "Try Again"
+            ) {
+                Task { await load() }
+            }
+        case .loaded:
+            ScrollView {
+                RXDividedStack {
+                    ForEach(sessions) { session in
+                        row(session)
+                    }
+                }
+                .padding(RX.Space.s2)
+            }
+        }
+    }
+
+    private func row(_ session: UUTerminalSession) -> some View {
+        let isSelected = selection == session.id
+        return Button {
+            selection = session.id
+        } label: {
+            HStack(spacing: RX.Space.s3) {
+                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 15))
+                    .foregroundStyle(isSelected ? Color.rxAccent : Color.rxControlBorder)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(session.name)
+                        .font(.rxBody)
+                        .foregroundStyle(.rxInk)
+                    Text("Last used \(Self.relative(session.lastActive)) · started \(session.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.rxCaption)
+                        .foregroundStyle(.rxInkSecondary)
+                }
+                Spacer()
+                if !session.shell.isEmpty { RXTag(session.shell) }
+            }
+            .padding(.horizontal, RX.Space.s2)
+            .frame(height: RX.tableRowHeight)
+            .rxRowBackground(selected: isSelected)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(TapGesture(count: 2).onEnded { onComplete(.resume(session.id)) })
+    }
+
+    private static func relative(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func load() async {
+        phase = .loading
+        let watch = Task { @MainActor in
+            while !Task.isCancelled {
+                status = UURemoteConnections.shared.status(for: machine)
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
+        }
+        defer { watch.cancel() }
+        do {
+            let detached = try await UURemoteConnections.shared.sessions(for: machine).filter(\.isDetached)
+            // Nothing to resume: straight to a new one.
+            if detached.isEmpty {
+                onComplete(.new)
+                return
+            }
+            sessions = detached
+            if selection.map({ id in !detached.contains { $0.id == id } }) ?? true { selection = detached.first?.id }
+            phase = .loaded
+        } catch {
+            phase = .failed(error.localizedDescription)
+        }
+    }
+
+    private func end(_ session: UUTerminalSession) async {
+        do {
+            try await UURemoteConnections.shared.endSession(session.id, on: machine)
+        } catch {
+            phase = .failed(error.localizedDescription)
+            return
+        }
+        sessions.removeAll { $0.id == session.id }
+        if selection == session.id { selection = sessions.first?.id }
+        if sessions.isEmpty { onComplete(.new) }
     }
 }
