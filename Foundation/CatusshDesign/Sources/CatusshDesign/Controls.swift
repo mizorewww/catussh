@@ -555,24 +555,28 @@ private struct RXPopoverMenuItemStyle: PrimitiveButtonStyle {
     @State private var hovered = false
 
     func makeBody(configuration: Configuration) -> some View {
-        Button(role: configuration.role) {
-            dismiss()
-            configuration.trigger()
-        } label: {
-            configuration.label
-                .font(.rxBody)
-                .foregroundStyle(configuration.role == .destructive ? Color.rxDanger : Color.rxInk)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .frame(height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(hovered ? Color.rxRowHover : Color.clear)
-                )
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovered = $0 }
+        configuration.label
+            .font(.rxBody)
+            .foregroundStyle(configuration.role == .destructive ? Color.rxDanger : Color.rxInk)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(hovered ? Color.rxRowHover : Color.clear)
+            )
+            .contentShape(Rectangle())
+            .onHover { hovered = $0 }
+            .onTapGesture {
+                dismiss()
+                configuration.trigger()
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                dismiss()
+                configuration.trigger()
+            }
     }
 }
 

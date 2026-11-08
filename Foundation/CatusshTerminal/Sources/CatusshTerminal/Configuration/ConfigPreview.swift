@@ -37,8 +37,11 @@ struct ConfigPreview: View {
                                         .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                                 }
                                 HStack(spacing: 2) {
-                                    Text(shell.prompt).foregroundStyle(Color(configHex: document.effectivePalette(2, dark: dark)))
-                                    ConfigCommandInput(shell: shell, color: foreground, fontName: family, size: size).frame(minWidth: 70)
+                                    Text(shell.prompt)
+                                        .foregroundStyle(Color(configHex: document.effectivePalette(2, dark: dark)))
+                                        .lineLimit(1)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                    ConfigCommandInput(shell: shell, color: foreground, fontName: family, size: size).frame(minWidth: 40)
                                 }.id("input")
                             }.font(.custom(family, size: size)).padding(compact ? 8 : 12).frame(maxWidth: .infinity, alignment: .leading)
                         }.frame(minHeight: compact ? 92 : 200, idealHeight: compact ? 105 : 280, maxHeight: compact ? 120 : 420)
