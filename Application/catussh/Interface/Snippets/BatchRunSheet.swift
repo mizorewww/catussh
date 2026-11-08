@@ -31,7 +31,7 @@ struct BatchRunSheet: View {
         _selection = State(initialValue: machines.first)
     }
 
-    var completedCount: Int { context.safeAccessCompletedMachines.count }
+    var completedCount: Int { context.completedCount }
     var finished: Bool { completedCount >= machines.count }
 
     var body: some View {
@@ -75,8 +75,6 @@ struct BatchRunSheet: View {
         .frame(width: 820)
         .onAppear { context.start() }
         .onReceive(timer) { date in
-            // Nothing changes once every server is done; ticking then would
-            // redraw the whole sheet twice a second until it is closed.
             if !finished { tick = date }
         }
     }
@@ -141,7 +139,7 @@ struct BatchRunSheet: View {
     @ViewBuilder var output: some View {
         ZStack {
             ForEach(machines, id: \.self) { machine in
-                BatchOutputView(machine: machine)
+                BatchOutputView(machine: machine, isSelected: selection == machine)
                     .opacity(selection == machine ? 1 : 0)
                     .allowsHitTesting(selection == machine)
             }
@@ -158,21 +156,33 @@ struct BatchRunSheet: View {
 /// One server's output in a terminal surface.
 private struct BatchOutputView: View {
     let machine: RDMachine.ID
+    let isSelected: Bool
     @EnvironmentObject var context: BatchSnippetExecContext
 
     private let timer = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
-    // State keeps one terminal per server across view updates.
     @State private var terminalId = UUID()
     @State private var terminalView = CatusshTerminalView()
+    @State private var drainedAfterFinish = false
+
+    private func flushPending() {
+        let incoming = context.requestBuffer(for: terminalId, machine: machine)
+        if !incoming.isEmpty {
+            terminalView.write(incoming)
+        }
+        if context.state(for: machine).isFinished {
+            drainedAfterFinish = true
+        }
+    }
 
     var body: some View {
         terminalView
+            .onAppear { flushPending() }
+            .onChange(of: isSelected) { selected in
+                if selected { flushPending() }
+            }
             .onReceive(timer) { _ in
-                // A drained buffer returns nothing; writing it would only churn.
-                let incoming = context.requestBuffer(for: terminalId, machine: machine)
-                if !incoming.isEmpty {
-                    terminalView.write(incoming)
-                }
+                guard isSelected || !drainedAfterFinish else { return }
+                flushPending()
             }
     }
 }

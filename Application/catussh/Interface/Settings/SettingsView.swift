@@ -7,6 +7,7 @@
 //  preferences (General, Connection, About).
 //
 
+import AppKit
 import CatusshModule
 import CatusshTerminal
 import SwiftUI
@@ -72,8 +73,11 @@ enum AppearancePreference: String, CaseIterable {
 
     @MainActor
     func apply() {
-        // The app's appearance is AppKit's to set; UIKit follows it.
-        Mac.bridge?.setAppearance(self == .system ? nil : rawValue)
+        switch self {
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        case .system: NSApp.appearance = nil
+        }
     }
 
     @MainActor
@@ -353,7 +357,7 @@ private struct AcknowledgementSettings: View {
             RXFormRow("Terminal", description: "Ghostty, its configuration catalog and app icon presets (MIT, Ghostty contributors).") {
                 EmptyView()
             }
-            RXFormRow("Libraries", description: "libssh2 · NSRemoteShell · CodeMirror · XMLCoder · SymbolPicker · Keychain") {
+            RXFormRow("Libraries", description: "libssh2 · NSRemoteShell · Ghostty · Runestone · SymbolPicker · Keychain") {
                 EmptyView()
             }
         }
@@ -436,7 +440,7 @@ struct AgreementSheet: View {
                     .font(.rxBody)
             }
         } footer: {
-            Button("Quit") { Mac.bridge?.terminate() }
+            Button("Quit") { NSApp.terminate(nil) }
                 .buttonStyle(.rx)
             Spacer()
             Button("Continue") {

@@ -223,26 +223,22 @@ struct FileTransferPage: View {
         .opacity(busy ? 0.6 : 1)
     }
 
-    func menu(for file: FileTransferContext.RemoteFile) -> UIMenu {
-        func group(_ actions: [UIAction]) -> UIMenu {
-            UIMenu(options: .displayInline, children: actions)
+    @ViewBuilder
+    func menu(for file: FileTransferContext.RemoteFile) -> some View {
+        if file.fstat.isDirectory {
+            Button("Open") { open(file) }
+        } else {
+            Button("Edit") { edit(file) }
         }
-        return UIMenu(children: [
-            group([
-                file.fstat.isDirectory
-                    ? UIAction(title: "Open") { _ in open(file) }
-                    : UIAction(title: "Edit") { _ in edit(file) },
-                UIAction(title: "Download…") { _ in download(file) },
-            ]),
-            group([
-                UIAction(title: "Rename…") { _ in prompt = .rename(file.name) },
-                UIAction(title: "Copy Name") { _ in UIBridge.sendPasteboard(str: file.name) },
-                UIAction(title: "Copy Path") { _ in
-                    UIBridge.sendPasteboard(str: context.currentUrl.appendingPathComponent(file.name).path)
-                },
-            ]),
-            group([UIAction(title: "Delete…", attributes: .destructive) { _ in delete(file) }]),
-        ])
+        Button("Download…") { download(file) }
+        Divider()
+        Button("Rename…") { prompt = .rename(file.name) }
+        Button("Copy Name") { UIBridge.sendPasteboard(str: file.name) }
+        Button("Copy Path") {
+            UIBridge.sendPasteboard(str: context.currentUrl.appendingPathComponent(file.name).path)
+        }
+        Divider()
+        Button("Delete…", role: .destructive) { delete(file) }
     }
 
     // MARK: Transfer card
@@ -298,7 +294,7 @@ struct FileTransferPage: View {
     }
 
     func upload() {
-        Mac.bridge?.openPanel(
+        UIBridge.openPanel(
             message: "Upload to \(context.currentDir)",
             prompt: "Upload",
             directory: nil,
@@ -314,7 +310,7 @@ struct FileTransferPage: View {
 
     func download(_ file: FileTransferContext.RemoteFile) {
         let remote = context.currentUrl.appendingPathComponent(file.name)
-        Mac.bridge?.openPanel(
+        UIBridge.openPanel(
             message: "Choose where to save \(file.name)",
             prompt: "Download Here",
             directory: nil,

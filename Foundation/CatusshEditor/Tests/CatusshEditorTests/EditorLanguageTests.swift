@@ -12,11 +12,13 @@ final class EditorLanguageTests: XCTestCase {
         XCTAssertEqual(EditorLanguage.detect(fileName: "notes", firstLine: "hello"), .plain)
     }
 
+    #if os(iOS)
     func testEveryLanguageButPlainHasAGrammar() {
         for language in EditorLanguage.allCases {
             XCTAssertEqual(language.treeSitter == nil, language == .plain, language.title)
         }
     }
+    #endif
 
     func testIndentationFollowsTheFile() {
         XCTAssertEqual(EditorIndentation.detect(in: "a:\n\tb\n\tc\n"), .tabs)

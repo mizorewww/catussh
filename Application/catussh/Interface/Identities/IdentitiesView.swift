@@ -246,62 +246,6 @@ private struct IdentityDetail: View {
     }
 }
 
-/// Editable copy of an identity.
-struct IdentityDraft: Equatable {
-    enum Method: Hashable {
-        case keyPair
-        case password
-    }
-
-    var username = ""
-    var group = ""
-    var method: Method = .password
-    var password = ""
-    var privateKey = ""
-    var publicKey = ""
-    var comment = ""
-    var automatic = true
-
-    init() {}
-
-    init(_ identity: RDIdentity) {
-        username = identity.username
-        group = identity.group
-        method = identity.privateKey.isEmpty ? .password : .keyPair
-        password = identity.password
-        privateKey = identity.privateKey
-        publicKey = identity.publicKey
-        comment = identity.comment
-        automatic = identity.authenticAutomatically
-    }
-
-    var isValid: Bool { !username.trimmingCharacters(in: .whitespaces).isEmpty }
-
-    func apply(to identity: RDIdentity) -> RDIdentity {
-        var result = identity
-        result.username = username.trimmingCharacters(in: .whitespaces)
-        result.group = group
-        result.password = password
-        result.privateKey = method == .keyPair ? privateKey : ""
-        result.publicKey = method == .keyPair ? publicKey : ""
-        result.comment = comment
-        result.authenticAutomatically = automatic
-        return result
-    }
-
-    /// RDIdentity compares by id only, so compare the edited fields.
-    func differs(from identity: RDIdentity) -> Bool {
-        let edited = apply(to: identity)
-        return edited.username != identity.username
-            || edited.group != identity.group
-            || edited.password != identity.password
-            || edited.privateKey != identity.privateKey
-            || edited.publicKey != identity.publicKey
-            || edited.comment != identity.comment
-            || edited.authenticAutomatically != identity.authenticAutomatically
-    }
-}
-
 /// Username, Group, Key pair / Password, keys, Password, Comment, Authenticate automatically.
 struct IdentityForm: View {
     @Binding var draft: IdentityDraft
@@ -333,7 +277,7 @@ struct IdentityForm: View {
                         masked: true,
                         placeholder: "No private key loaded",
                         loadTitle: "Load Private Key…",
-                        matches: { $0.contains("PRIVATE KEY") }
+                        matches: RDIdentity.looksLikePrivateKey
                     )
                 }
                 RXField("Public key", help: "Optional") {
@@ -342,7 +286,7 @@ struct IdentityForm: View {
                         masked: false,
                         placeholder: "No public key loaded",
                         loadTitle: "Load Public Key…",
-                        matches: looksLikePublicKey
+                        matches: RDIdentity.looksLikePublicKey
                     )
                 }
                 RXField("Passphrase") {
@@ -367,14 +311,6 @@ struct IdentityForm: View {
             )
         }
     }
-}
-
-/// An OpenSSH public key starts with its algorithm — and ecdsa-sha2-* and the
-/// FIDO sk-* types contain no "ssh-" for a substring check to find.
-private func looksLikePublicKey(_ string: String) -> Bool {
-    let prefixes = ["ssh-rsa", "ssh-ed25519", "ecdsa-sha2-", "sk-ssh-", "sk-ecdsa-"]
-    let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-    return prefixes.contains { trimmed.hasPrefix($0) }
 }
 
 /// A key shown in `code`, masked when private, with Load, Copy and Clear.
@@ -413,7 +349,7 @@ private struct KeyField: View {
     }
 
     func load() {
-        Mac.bridge?.openPanel(
+        UIBridge.openPanel(
             message: nil,
             prompt: nil,
             directory: URL(fileURLWithPath: "\(NSHomeDirectory())/.ssh/"),
@@ -431,14 +367,12 @@ private struct KeyField: View {
             if matches(string) {
                 text = string
             } else {
-                onMainThread(delay: 0.3) {
-                    UIBridge.requiresConfirmation(
-                        message: "This file does not look like a \(masked ? "private" : "public") key",
-                        informative: "Load it anyway?",
-                        confirmTitle: "Load"
-                    ) { confirmed in
-                        if confirmed { text = string }
-                    }
+                UIBridge.requiresConfirmation(
+                    message: "This file does not look like a \(masked ? "private" : "public") key",
+                    informative: "Load it anyway?",
+                    confirmTitle: "Load"
+                ) { confirmed in
+                    if confirmed { text = string }
                 }
             }
         }

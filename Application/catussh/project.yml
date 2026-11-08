@@ -1,11 +1,8 @@
-# The Mac app is a Mac Catalyst app ("Optimize for Mac" idiom) with an AppKit
-# bundle (MacBridge) for what UIKit cannot reach: window material, menu bar
-# items, activation policy and the legacy keychain.
+# Native macOS app (AppKit + SwiftUI).
 # Regenerate the project with: xcodegen generate
 name: catussh
 options:
   deploymentTarget:
-    iOS: "16.0"
     macOS: "13.0"
   createIntermediateGroups: true
   groupSortPosition: top
@@ -16,7 +13,6 @@ packages:
   MachineStatus: { path: ../../Foundation/MachineStatus }
   MachineStatusView: { path: ../../Foundation/MachineStatusView }
   SymbolPicker: { path: ../../Foundation/SymbolPicker }
-  CodeMirrorUI: { path: ../../External/CodeMirrorUI }
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -24,42 +20,13 @@ settings:
     CURRENT_PROJECT_VERSION: 52
     DEVELOPMENT_TEAM: ""
 targets:
-  MacBridge:
-    type: bundle
-    platform: macOS
-    sources: [Bridge, Shared]
-    settings:
-      base:
-        PRODUCT_NAME: MacBridge
-        CODE_SIGN_IDENTITY: "-"
-        PRODUCT_BUNDLE_IDENTIFIER: me.mizorewww.rayon.bridge
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_NSPrincipalClass: Bridge
-        SKIP_INSTALL: YES
-        SWIFT_VERSION: "5.0"
-  RTCHelper:
-    # The WebRTC page for UU Remote: Mac Catalyst's WebKit has no
-    # RTCPeerConnection, macOS's does. Run by the app, sandboxed with it.
-    type: tool
-    platform: macOS
-    sources: [RTCHelper]
-    settings:
-      base:
-        PRODUCT_NAME: catussh-rtc
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGN_ENTITLEMENTS: RTCHelper/RTCHelper.entitlements
-        ENABLE_HARDENED_RUNTIME: YES
-        PRODUCT_BUNDLE_IDENTIFIER: me.mizorewww.rayon.rtc
-        SKIP_INSTALL: YES
-        SWIFT_VERSION: "5.0"
   catussh:
     type: application
-    platform: iOS
+    platform: macOS
     sources:
       - Application
       - Extension
       - Interface
-      - Shared
       - path: ../../Resources/EULA
         buildPhase: resources
       - path: ../../Resources/LICENSE
@@ -70,14 +37,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: catussh
-        # Signed to run locally. Workflow/Scripts/build-macos.sh signs release
-        # builds with a development certificate when there is one.
         CODE_SIGN_IDENTITY: "-"
-        SUPPORTS_MACCATALYST: YES
-        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
-        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
-        TARGETED_DEVICE_FAMILY: "2,6"
-        DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: catussh
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         CODE_SIGN_ENTITLEMENTS: macOS/macOS.entitlements
@@ -87,9 +47,6 @@ targets:
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_CFBundleDisplayName: catussh
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2022 Lakr Aream. Copyright © 2026 mizorewww and catussh contributors."
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
-        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
         SWIFT_EMIT_LOC_STRINGS: YES
       configs:
         Debug:
@@ -97,9 +54,6 @@ targets:
         Release:
           PRODUCT_BUNDLE_IDENTIFIER: me.mizorewww.rayon
     postCompileScripts:
-      # The commit the app was built from, for Settings › About: the short
-      # hash, "-dirty" when the tree had changes. Written as a file of its
-      # own, so it never races Xcode's Info.plist processing.
       - name: Record Git Commit
         basedOnDependencyAnalysis: false
         script: |
@@ -117,21 +71,6 @@ targets:
       - package: MachineStatus
       - package: MachineStatusView
       - package: SymbolPicker
-      - package: CodeMirrorUI
-        product: CodeEditorUI
-      - target: MacBridge
-        embed: true
-        copy:
-          destination: plugins
-        platformFilter: macOS
-      - target: RTCHelper
-        embed: true
-        # Signed again with the app's identity, as MacBridge is: a helper that
-        # stays ad hoc fails notarization and may not start under the app.
-        codeSign: true
-        copy:
-          destination: executables
-        platformFilter: macOS
 schemes:
   catussh:
     build:

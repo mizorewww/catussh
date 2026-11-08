@@ -317,9 +317,7 @@ final class AppRouter: ObservableObject {
     /// or to the same Quick Connect command; elsewhere, the picker.
     @MainActor
     func newTerminal() {
-        guard CatusshUtil.topViewController()?.presentingViewController == nil,
-              Mac.bridge?.isShowingSheet() != true
-        else { return }
+        guard !CatusshUtil.isShowingSheetOrModal else { return }
         switch owner(of: route) {
         case let .server(id):
             openTerminal(machine: id, another: true)
@@ -333,13 +331,9 @@ final class AppRouter: ObservableObject {
     }
 
     /// ⌘W: closes the session page in front, as a browser closes its tab.
-    /// The window itself never closes from here (it is the whole app); on a
-    /// place, or with a sheet or alert up, the key does nothing.
     @MainActor
     func closeTabInFront() {
-        guard CatusshUtil.topViewController()?.presentingViewController == nil,
-              Mac.bridge?.isShowingSheet() != true
-        else { return }
+        guard !CatusshUtil.isShowingSheetOrModal else { return }
         switch route {
         case .terminal:
             if let terminal = terminalInFront { TerminalSessionActions.closeTab(terminal) }

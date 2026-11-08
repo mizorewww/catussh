@@ -16,10 +16,10 @@ APP_NAME="catussh.app"
 INSTALL_DIR="${INSTALL_DIR:-/Applications}"
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-$ROOT_DIR/DerivedData}"
 
-# 1. Build Release (Mac Catalyst, universal arm64/x86_64, signed, codesign-verified).
+# 1. Build Release (native macOS, universal arm64/x86_64, signed, codesign-verified).
 bash "$ROOT_DIR/Workflow/Scripts/build-macos.sh" Release
 
-APP_PATH="$DERIVED_DATA_PATH/Build/Products/Release-maccatalyst/$APP_NAME"
+APP_PATH="$DERIVED_DATA_PATH/Build/Products/Release/$APP_NAME"
 DEST="$INSTALL_DIR/$APP_NAME"
 
 if [[ ! -d "$APP_PATH" ]]; then

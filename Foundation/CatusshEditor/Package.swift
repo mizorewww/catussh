@@ -1,11 +1,10 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-/// The remote file editor: Runestone (UIKit, so iOS and Mac Catalyst) with
-/// tree-sitter highlighting for the languages found on servers.
+/// The remote file editor: Runestone on iOS, native NSTextView with line numbers and syntax highlighting on macOS.
 let package = Package(
     name: "CatusshEditor",
-    platforms: [.iOS(.v16)],
+    platforms: [.macOS(.v13), .iOS(.v16)],
     products: [
         .library(name: "CatusshEditor", targets: ["CatusshEditor"]),
     ],
@@ -18,29 +17,29 @@ let package = Package(
         .target(
             name: "CatusshEditor",
             dependencies: [
-                .product(name: "Runestone", package: "Runestone"),
                 .product(name: "CatusshDesign", package: "CatusshDesign"),
-                .product(name: "TreeSitterBashRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterJSONRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterYAMLRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterTOMLRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterPythonRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterJavaScriptRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterTypeScriptRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterGoRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterRustRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterCRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterCPPRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterLuaRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterRubyRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterPHPRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterPerlRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterHTMLRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterCSSRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterMarkdownRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterSQLRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterJavaRunestone", package: "TreeSitterLanguages"),
-                .product(name: "TreeSitterSwiftRunestone", package: "TreeSitterLanguages"),
+                .product(name: "Runestone", package: "Runestone", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterBashRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterJSONRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterYAMLRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterTOMLRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterPythonRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterJavaScriptRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterTypeScriptRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterGoRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterRustRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterCRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterCPPRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterLuaRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterRubyRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterPHPRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterPerlRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterHTMLRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterCSSRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterMarkdownRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterSQLRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterJavaRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
+                .product(name: "TreeSitterSwiftRunestone", package: "TreeSitterLanguages", condition: .when(platforms: [.iOS])),
             ]
         ),
         .testTarget(name: "CatusshEditorTests", dependencies: ["CatusshEditor"]),

@@ -2,43 +2,28 @@
 //  MenubarTool.swift
 //  catussh (macOS)
 //
-//  Created by Lakr Aream on 2022/3/1.
-//
 
-import Foundation
 import CatusshModule
+import Foundation
 
-/// The menu bar items and their persistence are main-thread state, like
-/// the AppKit items they model; the lock is the bridge's callback contract.
 @MainActor
 class MenubarTool {
-    let bootstrapLock = NSLock()
-
     static let shared = MenubarTool()
 
     var statusItem: [MenubarStatusItem] = []
-    var hasCat: Bool {
-        bootstrapLock.lock()
-        let ret = !statusItem.isEmpty
-        bootstrapLock.unlock()
-        return ret
-    }
+    var hasCat: Bool { !statusItem.isEmpty }
 
     private init() {}
 
-    /// Servers shown in the menu bar, so they come back after catussh restarts.
     private static let persistedKey = "me.mizorewww.rayon.menubarMachines"
 
     private func persist() {
-        bootstrapLock.lock()
         let ids = statusItem.map(\.machine.id.uuidString)
-        bootstrapLock.unlock()
         UserDefaults.standard.set(ids, forKey: Self.persistedKey)
+        AppDelegate.shared?.updateActivationPolicy()
     }
 
-    /// Puts back the menu bar items from the last run. A server that was deleted,
-    /// or lost its identity, is dropped without an alert.
-    @MainActor func restore() {
+    func restore() {
         let ids = UserDefaults.standard.stringArray(forKey: Self.persistedKey) ?? []
         for id in ids.compactMap(UUID.init(uuidString:)) {
             createRuncat(for: id, quiet: true)
@@ -58,8 +43,6 @@ class MenubarTool {
         @MainActor func createStatusItem() -> MenubarStatusItem? {
             let machine = CatusshStore.shared.machineGroup[machine]
             let identity = CatusshStore.shared.identityGroup[identity]
-            // Callers validate these invariants and present errors already;
-            // degrade gracefully instead of crashing the whole app.
             guard machine.isNotPlaceholder(), !identity.username.isEmpty else {
                 debugPrint("failed to create status item: malformed machine or identity")
                 return nil
@@ -68,15 +51,11 @@ class MenubarTool {
         }
     }
 
-    /// - Parameter quiet: restoring at launch; problems are skipped, not shown.
-    @MainActor func createRuncat(for machineId: RDMachine.ID, quiet: Bool = false) {
+    func createRuncat(for machineId: RDMachine.ID, quiet: Bool = false) {
         func fail(_ message: String) {
             if !quiet { UIBridge.presentError(with: message, delay: 0) }
         }
-        bootstrapLock.lock()
-        let copy = statusItem
-        bootstrapLock.unlock()
-        for item in copy where item.machine.id == machineId {
+        for item in statusItem where item.machine.id == machineId {
             fail("This server is already in the menu bar")
             return
         }
@@ -98,37 +77,25 @@ class MenubarTool {
         guard let item = compiler.createStatusItem() else {
             return
         }
-        bootstrapLock.lock()
         statusItem.append(item)
-        bootstrapLock.unlock()
         if !quiet { persist() }
     }
 
     #if DEBUG
-        /// Adds a sample server whose monitor never connects, and opens its
-        /// popover. Launch the debug build with CATUSSH_PREVIEW_MENUBAR=1 to check
-        /// the popover's layout. The sample is not saved.
-        @MainActor func showPreview() {
+        func showPreview() {
             let machine = RDMachine(remoteAddress: "203.0.113.10", remotePort: "22", name: "web-01")
             let item = MenubarStatusItem(machine: machine, identity: RDIdentity(), session: .preview(machine: machine))
-            bootstrapLock.lock()
             statusItem.append(item)
-            bootstrapLock.unlock()
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { item.togglePopover() }
         }
     #endif
 
     func item(withKey key: String) -> MenubarStatusItem? {
-        bootstrapLock.lock()
-        defer { bootstrapLock.unlock() }
-        return statusItem.first { $0.key == key }
+        statusItem.first { $0.key == key }
     }
 
     func remove(menubarItem: MenubarStatusItem.ID) {
-        bootstrapLock.lock()
-        statusItem = statusItem
-            .filter { $0.id != menubarItem }
-        bootstrapLock.unlock()
+        statusItem.removeAll { $0.id == menubarItem }
         persist()
     }
 }

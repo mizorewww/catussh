@@ -67,7 +67,7 @@ private struct RXButtonBody: View {
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.rxQuick, value: configuration.isPressed)
             .animation(.rxQuick, value: hovered)
-            #if os(macOS) || targetEnvironment(macCatalyst)
+            #if os(macOS)
             .onHover { hovered = $0 }
             #endif
     }
@@ -192,104 +192,23 @@ public struct RXSegmented<Value: Hashable>: View {
         self.fullWidth = fullWidth
     }
 
-    #if targetEnvironment(macCatalyst)
-        @Environment(\.rxControlsAtRest) private var atRest
-        @Namespace private var pill
-
-        // UIKit's segmented control is a full-width grey capsule; the Mac one is
-        // a compact track of equal segments with the selection in the accent colour.
-        public var body: some View {
-            RXEqualWidths {
-                ForEach(options.indices, id: \.self) { index in
-                    segment(index)
-                }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.primary.opacity(atRest ? 0.088 : 0.07))
-            )
-            .fixedSize()
-            .frame(maxWidth: fullWidth ? .infinity : nil)
-            // The selection slides to the segment that was clicked.
-            .animation(.rxMove, value: selection)
-            .accessibilityElement(children: .contain)
-        }
-
-        private func segment(_ index: Int) -> some View {
-            let option = options[index]
-            let isSelected = option.value == selection
-            // A hairline separates two neighbours when neither is the selection.
-            let separated = index + 1 < options.count && !isSelected && options[index + 1].value != selection
-            return HStack(spacing: 4) {
+    public var body: some View {
+        Picker("", selection: $selection) {
+            ForEach(options.indices, id: \.self) { index in
+                let option = options[index]
                 if let systemImage = option.systemImage {
-                    Image(systemName: systemImage)
-                }
-                Text(option.title)
-            }
-            .font(.system(size: 13))
-            .foregroundStyle(isSelected && !atRest ? Color.white : Color.primary.opacity(isSelected || atRest ? 1 : 0.85))
-            .lineLimit(1)
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
-            .background {
-                if isSelected {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(atRest ? Color.primary.opacity(0.142) : Color.rxAccent)
-                        .matchedGeometryEffect(id: "selection", in: pill)
+                    Label(option.title, systemImage: systemImage).tag(option.value)
+                } else {
+                    Text(option.title).tag(option.value)
                 }
             }
-            .overlay(alignment: .trailing) {
-                if separated {
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.26))
-                        .frame(width: 1, height: 14)
-                        .offset(x: 0.5)
-                }
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { selection = option.value }
-            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         }
-    #else
-        public var body: some View {
-            Picker("", selection: $selection) {
-                ForEach(options.indices, id: \.self) { index in
-                    let option = options[index]
-                    if let systemImage = option.systemImage {
-                        Label(option.title, systemImage: systemImage).tag(option.value)
-                    } else {
-                        Text(option.title).tag(option.value)
-                    }
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: fullWidth ? .infinity : nil)
-            .fixedSize(horizontal: !fullWidth, vertical: false)
-        }
-    #endif
-}
-
-#if targetEnvironment(macCatalyst)
-    /// Lays its subviews in a row, each as wide as the widest.
-    struct RXEqualWidths: Layout {
-        func sizeThatFits(proposal _: ProposedViewSize, subviews: Subviews, cache _: inout ()) -> CGSize {
-            let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-            let width = sizes.map(\.width).max() ?? 0
-            return CGSize(width: width * CGFloat(subviews.count), height: sizes.map(\.height).max() ?? 0)
-        }
-
-        func placeSubviews(in bounds: CGRect, proposal _: ProposedViewSize, subviews: Subviews, cache _: inout ()) {
-            let width = bounds.width / CGFloat(max(subviews.count, 1))
-            for (index, subview) in subviews.enumerated() {
-                subview.place(
-                    at: CGPoint(x: bounds.minX + CGFloat(index) * width, y: bounds.minY),
-                    proposal: ProposedViewSize(width: width, height: bounds.height)
-                )
-            }
-        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(maxWidth: fullWidth ? .infinity : nil)
+        .fixedSize(horizontal: !fullWidth, vertical: false)
     }
-#endif
+}
 
 // MARK: - Text fields
 

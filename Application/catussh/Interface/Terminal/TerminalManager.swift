@@ -1,26 +1,15 @@
 //
-//  TerminalManager.swift
+//  TerminalManager+App.swift
 //  catussh (macOS)
 //
-//  Created by Lakr Aream on 2022/3/10.
-//
 
-import Combine
-import Foundation
 import CatusshModule
+import Foundation
 
-/// The manager and its session list are main-thread state, like the
-/// interface showing them.
-@MainActor
-class TerminalManager: ObservableObject {
-    static let shared = TerminalManager()
-    private init() {}
-
-    @Published var sessionContexts: [Context] = []
-
+extension TerminalManager {
     func createSession(
         withMachineObject machine: RDMachine,
-        force: Bool = false,
+        force: Bool,
         resuming uuSession: UInt32? = nil,
         completion: @escaping (Context) -> Void = { _ in }
     ) {
@@ -31,17 +20,14 @@ class TerminalManager: ObservableObject {
                 confirmTitle: "Open Another"
             ) { confirmed in
                 if confirmed {
-                    self.createSession(withMachineObject: machine, force: true, completion: completion)
+                    MainActor.assumeIsolated {
+                        self.createSession(withMachineObject: machine, force: true, resuming: uuSession, completion: completion)
+                    }
                 }
             }
             return
         }
-        let context = Context(machine: machine)
-        // Read when the tab connects, after this.
-        context.uuSessionID = uuSession
-        sessionContexts.append(context)
-        CatusshStore.shared.storeRecentIfNeeded(from: machine.id)
-        completion(context)
+        createSession(withMachineObject: machine, resuming: uuSession, completion: completion)
     }
 
     func createSession(
@@ -56,47 +42,5 @@ class TerminalManager: ObservableObject {
             return
         }
         createSession(withMachineObject: machine, force: force, resuming: uuSession, completion: completion)
-    }
-
-    @discardableResult
-    func createSession(withCommand command: SSHCommandReader) -> Context {
-        let context = Context(command: command)
-        sessionContexts.append(context)
-        CatusshStore.shared.storeRecentIfNeeded(from: command)
-        return context
-    }
-
-    func sessionAlive(forContext contextId: Context.ID) -> Bool {
-        !(
-            sessionContexts
-                .first { $0.id == contextId }?
-                .closed ?? true
-        )
-    }
-
-    func closeSession(withMachineID machineId: RDMachine.ID) {
-        let index = sessionContexts.firstIndex { $0.machine.id == machineId }
-        if let index = index {
-            let context = sessionContexts.remove(at: index)
-            context.processShutdown()
-            context.shell.destroyPermanently()
-        }
-    }
-
-    func closeSession(withContextID contextId: Context.ID) {
-        let index = sessionContexts.firstIndex { $0.id == contextId }
-        if let index = index {
-            let context = sessionContexts.remove(at: index)
-            context.processShutdown()
-            context.shell.destroyPermanently()
-        }
-    }
-
-    func closeAll() {
-        for context in sessionContexts {
-            context.processShutdown()
-            context.shell.destroyPermanently()
-        }
-        sessionContexts = []
     }
 }

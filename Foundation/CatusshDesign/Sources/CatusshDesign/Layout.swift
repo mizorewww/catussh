@@ -43,64 +43,6 @@ import SwiftUI
         public func makeNSView(context _: Context) -> NSView { DragView() }
         public func updateNSView(_: NSView, context _: Context) {}
     }
-
-#elseif targetEnvironment(macCatalyst)
-    import UIKit
-
-    /// The window backdrop on Mac Catalyst. Content sits on the solid `window`
-    /// colour: as Apple's guidance has it, only the controls and navigation
-    /// that float above content are glass. With `material`, for a menu bar
-    /// popover, the view is clear and the AppKit material shows through.
-    /// Either way it keeps the UIKit views it sits in clear and hands its
-    /// window to `install`, where the app puts the material underneath, for
-    /// the sidebar.
-    public struct RXWindowBackground: UIViewRepresentable {
-        /// Called with every window a backdrop appears in.
-        @MainActor public static var install: ((UIWindow) -> Void)?
-        let material: Bool
-
-        public init(material: Bool = false) {
-            self.material = material
-        }
-
-        public final class ClearView: UIView {
-            override public func didMoveToWindow() {
-                super.didMoveToWindow()
-                clearAncestors()
-                if let window { RXWindowBackground.install?(window) }
-            }
-
-            override public func layoutSubviews() {
-                super.layoutSubviews()
-                clearAncestors()
-            }
-
-            override public func traitCollectionDidChange(_ previous: UITraitCollection?) {
-                super.traitCollectionDidChange(previous)
-                // Hosting views take their background colour back on a change
-                // of appearance.
-                DispatchQueue.main.async { [weak self] in self?.clearAncestors() }
-            }
-
-            private func clearAncestors() {
-                var next = superview
-                while let view = next {
-                    if view.backgroundColor != .clear { view.backgroundColor = .clear }
-                    view.isOpaque = false
-                    next = view.superview
-                }
-            }
-        }
-
-        public func makeUIView(context _: Context) -> ClearView {
-            let view = ClearView()
-            view.backgroundColor = material ? .clear : UIColor(Color.rxWindow)
-            view.isUserInteractionEnabled = false
-            return view
-        }
-
-        public func updateUIView(_: ClearView, context _: Context) {}
-    }
 #endif
 
 /// Wraps children onto new lines (toggle chips, tags).
@@ -229,7 +171,7 @@ public struct RXBackdrop: View {
     public init() {}
 
     public var body: some View {
-        #if os(macOS) || targetEnvironment(macCatalyst)
+        #if os(macOS)
             RXWindowBackground()
         #else
             ZStack {

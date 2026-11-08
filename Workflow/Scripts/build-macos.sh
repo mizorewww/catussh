@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Build the Mac app (Mac Catalyst, universal arm64/x86_64).
+# Build the Mac app (native macOS, universal arm64/x86_64).
 #
 # Signed with the first Apple Development certificate in the keychain, so the
 # signature, and the keychain's trust in it, survive rebuilds; ad hoc when
@@ -38,7 +38,7 @@ xcodebuild \
     -workspace "$ROOT_DIR/App.xcworkspace" \
     -scheme catussh \
     -configuration "$CONFIGURATION" \
-    -destination 'generic/platform=macOS,variant=Mac Catalyst' \
+    -destination 'generic/platform=macOS' \
     -derivedDataPath "$DERIVED_DATA_PATH" \
     ARCHS='arm64 x86_64' \
     ONLY_ACTIVE_ARCH=NO \
@@ -49,7 +49,7 @@ xcodebuild \
     PROVISIONING_PROFILE_SPECIFIER= \
     build
 
-APP_PATH="$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION-maccatalyst/catussh.app"
+APP_PATH="$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/catussh.app"
 
 # The profile goes into the app, and what it grants into the signature: the
 # app asks its own signature whether it may sync.

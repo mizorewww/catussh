@@ -1,18 +1,12 @@
 //
 //  DoubleConfirm.swift
-//  catussh
-//
-//  Created by Lakr Aream on 2022/2/9.
+//  catussh (macOS)
 //
 
 import CatusshModule
 import SwiftUI
 
 extension UIBridge {
-    /// ConfirmDialog: the title names the thing, one sentence of consequence,
-    /// a verb on the confirming button and Cancel. Skipped when
-    /// Settings › General › Ask before closing is off, unless `always`: losing
-    /// unsaved text is asked about whatever the setting.
     static func requiresConfirmation(
         message: String,
         informative: String? = nil,
@@ -21,26 +15,23 @@ extension UIBridge {
         always: Bool = false,
         confirmation: @escaping (Bool) -> Void
     ) {
-        // With confirmation disabled the callback fires synchronously;
-        // otherwise it comes from the AppKit alert on the main thread.
-        // Either way it never crosses to a worker queue.
         nonisolated(unsafe) let confirmation = confirmation
         if CatusshStore.shared.disableConformation, !always {
             confirmation(true)
             return
         }
-        guard let bridge = Mac.bridge else {
-            confirmation(false)
-            return
-        }
-        bridge.alert(
-            message: message,
-            informative: informative,
-            buttons: [confirmTitle, "Cancel"],
-            destructiveFirstButton: destructive,
-            textField: nil
-        ) { button, _ in
-            confirmation(button == 0)
+        onMainThread {
+            MainActor.assumeIsolated {
+                alert(
+                    message: message,
+                    informative: informative,
+                    buttons: [confirmTitle, "Cancel"],
+                    destructiveFirstButton: destructive,
+                    textField: nil
+                ) { button, _ in
+                    confirmation(button == 0)
+                }
+            }
         }
     }
 }
@@ -56,11 +47,8 @@ final class MacFileTransferUIHandler: FileTransferUIHandler {
     }
 
     func autoOpenInterface(_ context: FileTransferContext) {
-        // The contract calls this on the main thread; the class itself is
-        // not MainActor because it witnesses a nonisolated protocol.
         let id = context.id
         MainActor.assumeIsolated {
-            // Opened for the editor, the session stays on the editor.
             if AppRouter.shared.route == .editor(id) { return }
             AppRouter.shared.route = .transfer(id)
         }

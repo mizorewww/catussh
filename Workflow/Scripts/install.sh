@@ -78,19 +78,6 @@ report_former_mac_data() {
 
 install_mac() {
     step "Mac: building and installing to /Applications"
-    if pgrep -f "/Applications/catussh.app/Contents/MacOS/catussh" >/dev/null; then
-        printf 'catussh is running; asking it to quit.\n'
-        osascript -e 'tell application "/Applications/catussh.app" to quit' >/dev/null 2>&1 || true
-        for _ in $(seq 1 60); do
-            pgrep -f "/Applications/catussh.app/Contents/MacOS/catussh" >/dev/null || break
-            sleep 1
-        done
-        if pgrep -f "/Applications/catussh.app/Contents/MacOS/catussh" >/dev/null; then
-            printf 'catussh is still running (is it asking something?). Quit it and run again.\n' >&2
-            failed+=("Mac (catussh did not quit)")
-            return
-        fi
-    fi
     if bash "$ROOT_DIR/Workflow/Scripts/install-macos.sh"; then
         adopt_former_mac_data
         open "/Applications/catussh.app"

@@ -181,12 +181,7 @@ extension SessionTabs {
 }
 
 private struct SessionTab: View {
-    /// UIKit draws a bold xmark larger than AppKit does at the same size.
-    #if targetEnvironment(macCatalyst)
-        private static let closeGlyphSize: CGFloat = 7
-    #else
-        private static let closeGlyphSize: CGFloat = 9
-    #endif
+    private static let closeGlyphSize: CGFloat = 9
 
     @ObservedObject var context: TerminalManager.Context
     let selected: Bool

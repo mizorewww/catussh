@@ -1,5 +1,19 @@
-import Runestone
+import CatusshDesign
 import SwiftUI
+
+/// Where the caret is, for a status line.
+public struct EditorCaret: Equatable, Sendable {
+    public let line: Int
+    public let column: Int
+
+    public init(line: Int, column: Int) {
+        self.line = line
+        self.column = column
+    }
+}
+
+#if os(iOS)
+import Runestone
 import TreeSitterBashRunestone
 import TreeSitterCPPRunestone
 import TreeSitterCRunestone
@@ -52,19 +66,6 @@ extension EditorLanguage {
     }
 }
 
-/// Where the caret is, for a status line.
-public struct EditorCaret: Equatable, Sendable {
-    public let line: Int
-    public let column: Int
-
-    public init(line: Int, column: Int) {
-        self.line = line
-        self.column = column
-    }
-}
-
-/// A code editor for one file: line numbers, syntax highlighting, matching
-/// brackets and quotes, indentation that follows the file, and find (⌘F).
 public struct CodeEditor: UIViewRepresentable {
     @Binding var text: String
     let language: EditorLanguage
@@ -119,14 +120,13 @@ public struct CodeEditor: UIViewRepresentable {
     public func updateUIView(_ view: TextView, context: Context) {
         context.coordinator.parent = self
         if view.isLineWrappingEnabled != wrapsLines { view.isLineWrappingEnabled = wrapsLines }
-        // Only text set from outside (a reload) replaces the document; typing
-        // already put the view's own text in the binding.
-        if text != context.coordinator.lastText {
+        if text != context.coordinator.lastText || fontSize != context.coordinator.lastFontSize {
             context.coordinator.load(text, into: view)
         } else if language != context.coordinator.lastLanguage {
-            // Another syntax for the same text: the text, the caret and undo stay.
             context.coordinator.lastLanguage = language
-            view.setLanguageMode(language.treeSitter.map { TreeSitterLanguageMode(language: $0) } ?? PlainTextLanguageMode())
+            if context.coordinator.inFlightLoads == 0 {
+                view.setLanguageMode(language.treeSitter.map { TreeSitterLanguageMode(language: $0) } ?? PlainTextLanguageMode())
+            }
         }
     }
 
@@ -134,35 +134,37 @@ public struct CodeEditor: UIViewRepresentable {
         var parent: CodeEditor
         var lastText = ""
         var lastLanguage = EditorLanguage.plain
-        /// Counts loads, so one that was overtaken is dropped.
+        var lastFontSize: CGFloat = 13
         private var loads = 0
+        private(set) var inFlightLoads = 0
 
         init(_ parent: CodeEditor) {
             self.parent = parent
+            lastFontSize = parent.fontSize
         }
 
-        /// Parses on a background queue so a large file doesn't stall the UI.
         func load(_ text: String, into view: TextView) {
             lastText = text
             lastLanguage = parent.language
+            lastFontSize = parent.fontSize
             let theme = EditorTheme(size: parent.fontSize)
             let loaded = parent.language
             let language = loaded.treeSitter
             nonisolated(unsafe) let weakView = WeakBox(view)
-            // Nothing can be typed into the view until its text is in it: a
-            // keystroke before then would stand for the whole file.
             view.isEditable = false
             loads += 1
+            inFlightLoads += 1
             let load = loads
             DispatchQueue.global(qos: .userInitiated).async {
                 let state: TextViewState = language.map { TextViewState(text: text, theme: theme, language: $0) }
                     ?? TextViewState(text: text, theme: theme)
                 nonisolated(unsafe) let ready = state
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, self.loads == load, let view = weakView.value else { return }
+                    guard let self else { return }
+                    self.inFlightLoads = max(0, self.inFlightLoads - 1)
+                    guard self.loads == load, let view = weakView.value else { return }
                     view.setState(ready)
                     view.isEditable = true
-                    // The syntax was changed while this one was being parsed.
                     if self.lastLanguage != loaded {
                         view.setLanguageMode(self.lastLanguage.treeSitter.map { TreeSitterLanguageMode(language: $0) } ?? PlainTextLanguageMode())
                     }
@@ -196,3 +198,252 @@ private final class WeakBox<Value: AnyObject> {
     weak var value: Value?
     init(_ value: Value) { self.value = value }
 }
+
+#elseif os(macOS)
+import AppKit
+
+/// Native AppKit code editor with monospaced typography, syntax highlighting,
+/// line wrapping toggle, find bar (⌘F), and live caret line/column tracking.
+public struct CodeEditor: NSViewRepresentable {
+    @Binding var text: String
+    let language: EditorLanguage
+    let wrapsLines: Bool
+    let fontSize: CGFloat
+    let onCaretChange: (EditorCaret) -> Void
+
+    public init(
+        text: Binding<String>,
+        language: EditorLanguage,
+        wrapsLines: Bool = false,
+        fontSize: CGFloat = 13,
+        onCaretChange: @escaping (EditorCaret) -> Void = { _ in }
+    ) {
+        _text = text
+        self.language = language
+        self.wrapsLines = wrapsLines
+        self.fontSize = fontSize
+        self.onCaretChange = onCaretChange
+    }
+
+    public func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    public func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = !wrapsLines
+        scrollView.autohidesScrollers = true
+        scrollView.borderType = .noBorder
+
+        let textView = NSTextView()
+        textView.delegate = context.coordinator
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.allowsUndo = true
+        textView.usesFindBar = true
+        textView.isIncrementalSearchingEnabled = true
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.drawsBackground = false
+        textView.textContainerInset = NSSize(width: 10, height: 10)
+        textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        textView.textColor = NSColor(Color.rxInk)
+        textView.insertionPointColor = NSColor(Color.rxAccent)
+
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = !wrapsLines
+        textView.autoresizingMask = wrapsLines ? [.width] : [.width, .height]
+        textView.textContainer?.containerSize = NSSize(
+            width: wrapsLines ? scrollView.contentSize.width : CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.textContainer?.widthTracksTextView = wrapsLines
+
+        scrollView.documentView = textView
+        context.coordinator.textView = textView
+        context.coordinator.applyContent(text, language: language, fontSize: fontSize, to: textView)
+        return scrollView
+    }
+
+    public func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+
+        if scrollView.hasHorizontalScroller == wrapsLines {
+            scrollView.hasHorizontalScroller = !wrapsLines
+            textView.isHorizontallyResizable = !wrapsLines
+            textView.textContainer?.widthTracksTextView = wrapsLines
+            textView.textContainer?.containerSize = NSSize(
+                width: wrapsLines ? scrollView.contentSize.width : CGFloat.greatestFiniteMagnitude,
+                height: CGFloat.greatestFiniteMagnitude
+            )
+        }
+
+        if text != context.coordinator.lastText
+            || language != context.coordinator.lastLanguage
+            || fontSize != context.coordinator.lastFontSize
+        {
+            context.coordinator.applyContent(text, language: language, fontSize: fontSize, to: textView)
+        }
+    }
+
+    @MainActor
+    public final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: CodeEditor
+        weak var textView: NSTextView?
+        var lastText = ""
+        var lastLanguage: EditorLanguage = .plain
+        var lastFontSize: CGFloat = 13
+        private var isUpdating = false
+
+        init(_ parent: CodeEditor) {
+            self.parent = parent
+            lastFontSize = parent.fontSize
+            super.init()
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(focusFindBar),
+                name: Notification.Name("me.mizorewww.rayon.focusEditorFind"),
+                object: nil
+            )
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+
+        @objc private func focusFindBar() {
+            guard let textView, textView.window?.isKeyWindow == true else { return }
+            let item = NSMenuItem()
+            item.tag = Int(NSTextFinder.Action.showFindInterface.rawValue)
+            textView.performFindPanelAction(item)
+        }
+
+        func applyContent(_ newText: String, language: EditorLanguage, fontSize: CGFloat, to textView: NSTextView) {
+            isUpdating = true
+            defer { isUpdating = false }
+            let selectedRanges = textView.selectedRanges
+            if textView.string != newText {
+                textView.string = newText
+            }
+            lastText = newText
+            lastLanguage = language
+            lastFontSize = fontSize
+            let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+            textView.font = font
+            highlight(textView: textView, language: language, font: font)
+            if let first = selectedRanges.first?.rangeValue, first.location + first.length <= (newText as NSString).length {
+                textView.selectedRanges = selectedRanges
+            }
+        }
+
+        public func textDidChange(_ notification: Notification) {
+            guard !isUpdating, let textView = notification.object as? NSTextView else { return }
+            let current = textView.string
+            lastText = current
+            parent.text = current
+            let font = NSFont.monospacedSystemFont(ofSize: parent.fontSize, weight: .regular)
+            highlight(textView: textView, language: parent.language, font: font)
+        }
+
+        public func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            let location = textView.selectedRange().location
+            let nsString = textView.string as NSString
+            let clamped = min(max(0, location), nsString.length)
+            let prefix = nsString.substring(to: clamped)
+            var line = 1
+            var lastNewlineIndex = 0
+            for (idx, ch) in prefix.utf16.enumerated() where ch == 0x0A {
+                line += 1
+                lastNewlineIndex = idx + 1
+            }
+            let column = max(1, prefix.utf16.count - lastNewlineIndex + 1)
+            parent.onCaretChange(EditorCaret(line: line, column: column))
+        }
+
+        private func highlight(textView: NSTextView, language: EditorLanguage, font: NSFont) {
+            guard let storage = textView.textStorage else { return }
+            let fullText = textView.string
+            let nsLen = (fullText as NSString).length
+            guard nsLen > 0, nsLen <= 512 * 1024 else { return }
+            let fullRange = NSRange(location: 0, length: nsLen)
+
+            storage.beginEditing()
+            storage.setAttributes([
+                .font: font,
+                .foregroundColor: NSColor(Color.rxInk),
+            ], range: fullRange)
+
+            if language != .plain {
+                for rule in MacSyntaxHighlighter.rules(for: language) {
+                    rule.regex.enumerateMatches(in: fullText, options: [], range: fullRange) { match, _, _ in
+                        guard let range = match?.range else { return }
+                        storage.addAttribute(.foregroundColor, value: rule.color, range: range)
+                    }
+                }
+            }
+            storage.endEditing()
+        }
+    }
+}
+
+private enum MacSyntaxHighlighter {
+    struct Rule {
+        let regex: NSRegularExpression
+        let color: NSColor
+    }
+
+    private static let keywordColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.99, green: 0.37, blue: 0.64, alpha: 1)
+            : NSColor(srgbRed: 0.61, green: 0.14, blue: 0.58, alpha: 1)
+    }
+
+    private static let stringColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.99, green: 0.42, blue: 0.36, alpha: 1)
+            : NSColor(srgbRed: 0.77, green: 0.10, blue: 0.09, alpha: 1)
+    }
+
+    private static let numberColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.82, green: 0.75, blue: 0.41, alpha: 1)
+            : NSColor(srgbRed: 0.11, green: 0.00, blue: 0.81, alpha: 1)
+    }
+
+    private static let commentColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.50, green: 0.55, blue: 0.60, alpha: 1)
+            : NSColor(srgbRed: 0.36, green: 0.42, blue: 0.47, alpha: 1)
+    }
+
+    private static let cachedRules: [Rule] = {
+        var list: [Rule] = []
+        if let num = try? NSRegularExpression(pattern: #"\b\d+(?:\.\d+)?\b"#) {
+            list.append(Rule(regex: num, color: numberColor))
+        }
+        if let kw = try? NSRegularExpression(pattern: #"\b(?:if|then|else|elif|fi|for|while|do|done|case|esac|function|return|in|export|local|sudo|set|unset|true|false|null|nil|let|var|func|struct|class|enum|import|from|def|async|await|try|catch|throw|pub|fn|impl|use|mod|package|interface|type|const)\b"#) {
+            list.append(Rule(regex: kw, color: keywordColor))
+        }
+        if let str = try? NSRegularExpression(pattern: #""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'"#) {
+            list.append(Rule(regex: str, color: stringColor))
+        }
+        if let cmt = try? NSRegularExpression(pattern: #"(?m)(?:#|//).*$"#) {
+            list.append(Rule(regex: cmt, color: commentColor))
+        }
+        return list
+    }()
+
+    static func rules(for _: EditorLanguage) -> [Rule] {
+        cachedRules
+    }
+}
+#endif

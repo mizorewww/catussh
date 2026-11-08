@@ -1,62 +1,52 @@
 //
 //  Generic.swift
-//  catussh
+//  catussh (macOS)
 //
-//  Created by Lakr Aream on 2022/2/11.
+//  Native AppKit sheet presentation and picker panels.
 //
 
-import Foundation
+import AppKit
 import CatusshModule
 import SwiftUI
 
 enum CatusshUtil {
-    /// The window scene the user is working in: the main window, never a
-    /// menu bar popover's.
-    @MainActor static func mainScene() -> UIWindowScene? {
-        let scenes = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .filter { !($0.delegate is TraySceneDelegate) }
-        return scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
-    }
-
-    /// The view controller a sheet goes on: the topmost one in the main window.
-    @MainActor static func topViewController() -> UIViewController? {
-        let window = mainScene().flatMap { scene in scene.windows.first { $0.isKeyWindow } ?? scene.windows.first }
-        var top = window?.rootViewController
-        while let presented = top?.presentedViewController, !presented.isBeingDismissed {
-            top = presented
-        }
-        return top
+    @MainActor static var isShowingSheetOrModal: Bool {
+        if NSApp.modalWindow != nil { return true }
+        return MainWindow.ordinaryWindows.contains { $0.attachedSheet != nil }
     }
 }
 
-/// Presents SwiftUI content as a sheet on the frontmost window from code that
-/// has no view to hang a `.sheet` on (router actions, menu bar).
+/// Presents SwiftUI content as a native AppKit sheet on the frontmost window.
 enum SheetPresenter {
     @MainActor
     static func present<Content: View>(
         size: CGSize? = nil,
         @ViewBuilder content: @escaping (_ dismiss: @escaping () -> Void) -> Content
     ) {
-        weak var presented: UIViewController?
+        guard let parentWindow = UIBridge.sheetParentWindow else { return }
+        weak var sheetWindowRef: NSWindow?
         let dismiss = {
-            presented?.dismiss(animated: true)
-            presented = nil
+            if let sheetWindow = sheetWindowRef {
+                sheetWindow.sheetParent?.endSheet(sheetWindow)
+            }
         }
         let root = content(dismiss)
             .environmentObject(CatusshStore.shared)
             .frame(width: size?.width, height: size?.height)
-        let controller = UIHostingController(rootView: root)
-        controller.modalPresentationStyle = .formSheet
-        // The sheet is as large as its content, as a SwiftUI sheet is.
-        controller.sizingOptions = .preferredContentSize
-        presented = controller
-        CatusshUtil.topViewController()?.present(controller, animated: true)
+        let controller = NSHostingController(rootView: root)
+        if #available(macOS 13.0, *) {
+            controller.sizingOptions = .preferredContentSize
+        }
+        let sheetWindow = NSWindow(contentViewController: controller)
+        sheetWindow.styleMask = [.titled, .fullSizeContentView]
+        sheetWindow.titleVisibility = .hidden
+        sheetWindow.titlebarAppearsTransparent = true
+        sheetWindowRef = sheetWindow
+        parentWindow.beginSheet(sheetWindow)
     }
 }
 
 enum ServerPickerPanel {
-    /// The multi-select server picker used by Open Terminals, Run snippet and Port Forward.
     @MainActor
     static func present(
         title: String,

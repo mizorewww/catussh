@@ -342,24 +342,17 @@ struct ServerToolSwitcher: View {
     }
 
     var body: some View {
-        if #available(iOS 26.0, *) {
-            RXToolbarSegmented(
-                selection: current,
-                options: tools.map { .init($0, $0.title, help: $0.help(for: CatusshStore.shared.machineGroup[machine])) }
-            ) { $0.show(machine) }
-        } else {
-            Picker("View", selection: Binding(get: { current }, set: { $0.show(machine) })) {
-                ForEach(tools) { tool in
-                    Text(tool.title)
-                        .help(tool.help(for: CatusshStore.shared.machineGroup[machine]))
-                        .tag(tool)
-                }
+        Picker("View", selection: Binding(get: { current }, set: { $0.show(machine) })) {
+            ForEach(tools) { tool in
+                Text(tool.title)
+                    .help(tool.help(for: CatusshStore.shared.machineGroup[machine]))
+                    .tag(tool)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .help("Switch between this server's terminal, files, editor and monitor")
         }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("Switch between this server's terminal, files, editor and monitor")
     }
 }
 

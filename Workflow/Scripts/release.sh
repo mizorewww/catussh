@@ -110,7 +110,7 @@ release_mac() {
         exit 1
     }
 
-    local built="$DERIVED_DATA_PATH/Build/Products/Release-maccatalyst/catussh.app"
+    local built="$DERIVED_DATA_PATH/Build/Products/Release/catussh.app"
     local version stage app
     version="$(version_of "$built/Contents/Info.plist")"
     stage="$OUTPUT_DIR/mac"

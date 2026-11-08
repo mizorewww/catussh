@@ -1,40 +1,29 @@
 //
 //  CatusshApp.swift
-//  Shared
-//
-//  Created by Lakr Aream on 2022/2/8.
+//  catussh (macOS)
 //
 
-import CodeEditorUI
+import AppKit
 import Combine
 import CatusshModule
-import os
 import CatusshTerminal
+import os
 import SwiftUI
-import UIKit
 
 @main
 struct CatusshApp: App {
     @StateObject private var store = CatusshStore.shared
-
-    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     init() {
         #if DEBUG
             NSLog(CommandLine.arguments.joined(separator: "\n"))
         #endif
-        // Before the store: it reads the master key as it loads.
-        Mac.installLegacyKeyStore()
         _ = CatusshStore.shared
         CloudSync.shared.start()
 
-        // Shared file-transfer core lives in CatusshModule; register the
-        // platform UI handler it delegates to.
+        PortForwardBackend.shared.onError = { UIBridge.presentError(with: $0) }
         FileTransferInterface.uiHandler = MacFileTransferUIHandler()
-
-        // The window material is AppKit's; the backdrop view reports the
-        // windows it is in.
-        RXWindowBackground.install = { window in MainWindow.prepare(window) }
 
         NSLog("static main completed")
     }
@@ -44,6 +33,7 @@ struct CatusshApp: App {
             MainView()
                 .environmentObject(store)
         }
+        .windowToolbarStyle(.unified)
         .commands {
             SidebarCommands()
             CatusshCommands()
@@ -51,16 +41,11 @@ struct CatusshApp: App {
     }
 }
 
-/// Menu commands: New Server, Settings (Settings is a sidebar destination), navigation.
-/// On a session, ⌘W closes the tab in front instead of the window, and ⌘1–⌘9
-/// pick a tab (⌘9 the last, as in Safari) instead of a sidebar place.
 struct CatusshCommands: Commands {
     @ObservedObject private var router = AppRouter.shared
-    /// For the tabs: terminals open and close without the route changing.
     @ObservedObject private var terminals = TerminalManager.shared
 
     private var terminal: TerminalManager.Context? { router.terminalInFront }
-    /// For the Desktop menu: sessions open and close without the route changing.
     @ObservedObject private var desktops = RemoteDesktopManager.shared
 
     var body: some Commands {
@@ -71,27 +56,17 @@ struct CatusshCommands: Commands {
         CommandGroup(after: .newItem) {
             Button("New Server…") { AppRouter.shared.presentNewServer = true }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
-            // The key itself is caught by MacBridge (Ghostty binds ⌘T).
             Button("New Terminal") { AppRouter.shared.newTerminal() }
                 .keyboardShortcut("t", modifiers: .command)
             Button("Open Terminals…") { AppRouter.shared.openTerminals() }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
         }
-        // Takes the place of the window's Close and Close All while a session
-        // is in front. The key itself is caught by MacBridge before the menu
-        // (see AppDelegate), so this is the item to click.
         if router.route.isSession {
             CommandGroup(replacing: .saveItem) {
                 Button("Close Tab") { AppRouter.shared.closeTabInFront() }
                     .keyboardShortcut("w", modifiers: .command)
             }
         }
-        #if targetEnvironment(macCatalyst)
-            CommandGroup(after: .textEditing) {
-                Button("Find") { NotificationCenter.default.post(name: .rxFocusToolbarSearch, object: nil) }
-                    .keyboardShortcut("f", modifiers: .command)
-            }
-        #endif
         if let desktop = router.desktopInFront {
             CommandMenu("Desktop") {
                 DesktopCommands(session: desktop)
@@ -120,20 +95,14 @@ struct CatusshCommands: Commands {
         }
     }
 
-    /// A sidebar place; its ⌘ number goes to the terminal's tabs while one is in front.
     private func place(_ title: String, _ route: Route, key: KeyEquivalent) -> some View {
         Button(title) { AppRouter.shared.route = route }
             .keyboardShortcut(terminal == nil ? KeyboardShortcut(key, modifiers: .command) : nil)
     }
 }
 
-/// The Desktop menu, while a remote desktop is in front: the stage's controls
-/// with keys to them.
 private struct DesktopCommands: View {
     let session: RemoteDesktopSession
-    /// Not the session itself: it changes with every frame, and each change
-    /// rebuilds the whole menu bar, which kept the main thread too busy to
-    /// finish quitting.
     @StateObject private var state: DesktopMenuState
 
     init(session: RemoteDesktopSession) {
@@ -146,12 +115,16 @@ private struct DesktopCommands: View {
         Button("Send Ctrl+Alt+Delete") { session.sendKeys(RemoteDesktopSpecialKeys.ctrlAltDelete) }
             .disabled(!connected || state.viewOnly)
         Button("Paste Clipboard to Remote") {
-            if let text = UIPasteboard.general.string, !text.isEmpty { session.pushClipboard(text) }
+            if let text = NSPasteboard.general.string(forType: .string), !text.isEmpty {
+                session.pushClipboard(text)
+            }
         }
         .keyboardShortcut("v", modifiers: [.command, .shift])
         .disabled(!connected)
-        Button("Copy Remote Clipboard") { UIPasteboard.general.string = session.remoteClipboard }
-            .disabled(!state.hasRemoteClipboard)
+        Button("Copy Remote Clipboard") {
+            UIBridge.sendPasteboard(str: session.remoteClipboard)
+        }
+        .disabled(!state.hasRemoteClipboard)
         Divider()
         Toggle("View Only", isOn: Binding(get: { state.viewOnly }, set: { session.viewOnly = $0 }))
         Button("Refresh Screen") { session.refresh() }
@@ -167,7 +140,6 @@ private struct DesktopCommands: View {
     }
 }
 
-/// The few things the Desktop menu shows, published only when one changes.
 @MainActor
 private final class DesktopMenuState: ObservableObject {
     @Published private(set) var connected = false
@@ -199,76 +171,42 @@ private final class DesktopMenuState: ObservableObject {
     }
 }
 
-/// What a main window needs from UIKit and AppKit that SwiftUI does not offer
-/// on Mac Catalyst.
 enum MainWindow {
     static let minimumSize = CGSize(width: 940, height: 600)
 
-    @MainActor static func prepare(_ window: UIWindow) {
-        if let scene = window.windowScene, !(scene.delegate is TraySceneDelegate) {
-            // The toolbar holds page controls only; the page title is in the content.
-            scene.titlebar?.titleVisibility = .hidden
-            scene.titlebar?.toolbarStyle = .unified
-            scene.sizeRestrictions?.minimumSize = minimumSize
+    @MainActor static var ordinaryWindows: [NSWindow] {
+        NSApp.windows.filter { window in
+            window.canBecomeMain && !window.className.contains("NSPopover") && !window.className.contains("NSStatusBar")
         }
-        Mac.bridge?.installBackdrop(for: window)
     }
 
-    /// Brings the main window forward, reopening it if it was closed.
     @MainActor static func show() {
-        if let scene = CatusshUtil.mainScene() {
-            Mac.bridge?.activate(window: scene.windows.first)
-            return
-        }
-        Mac.bridge?.activate(window: nil)
-        let closed = UIApplication.shared.openSessions.first { $0.scene == nil && !TraySceneDelegate.owns($0) }
-        if #available(iOS 17.0, *) {
-            let request = closed.map { UISceneSessionActivationRequest(session: $0) }
-                ?? UISceneSessionActivationRequest(role: .windowApplication)
-            UIApplication.shared.activateSceneSession(for: request)
-        } else {
-            UIApplication.shared.requestSceneSessionActivation(closed, userActivity: nil, options: nil)
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = ordinaryWindows.first {
+            window.makeKeyAndOrderFront(nil)
         }
     }
 }
 
-class AppDelegate: NSObject, UIApplicationDelegate {
-    /// Set once at launch on the main thread; read there ever after.
-    @MainActor private(set) static var shared: AppDelegate!
+@MainActor
+class AppDelegate: NSObject, NSApplicationDelegate {
+    private(set) static var shared: AppDelegate!
+    private var shortcutMonitor: Any?
+    private var windowObservers: [NSObjectProtocol] = []
 
     override init() {
         super.init()
-        debugPrint("\(self) \(#function)")
-        assert(AppDelegate.shared == nil, "duplicated init of AppDelegate")
         AppDelegate.shared = self
-
-        let timer = Timer(
-            timeInterval: 1,
-            target: self,
-            selector: #selector(windowStatusWatcher),
-            userInfo: nil,
-            repeats: true
-        )
-        CFRunLoopAddTimer(CFRunLoopGetMain(), timer, .commonModes)
     }
 
-    func application(_: UIApplication, didFinishLaunchingWithOptions _: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+    func applicationDidFinishLaunching(_: Notification) {
         AppearancePreference.applyStored()
-        UITextField.drawPlaceholdersAsAppKit()
-        Mac.bridge?.setTerminationGuard { AppDelegate.shared.mayTerminate() }
-        Mac.bridge?.setOpenAppHandler { MainActor.assumeIsolated { MainWindow.show() } }
-        // ⌘W closes the tab in front and never the main window: with one
-        // window, closing it looks like the app quitting.
-        Mac.bridge?.setCloseShortcutHandler {
-            MainActor.assumeIsolated { AppRouter.shared.closeTabInFront() }
-            return true
-        }
-        Mac.bridge?.setNewTerminalShortcutHandler {
-            MainActor.assumeIsolated { AppRouter.shared.newTerminal() }
-            return true
-        }
-        TraySceneDelegate.discardLeftovers()
+        installShortcutMonitor()
+        installWindowPolicyObservers()
         MenubarTool.shared.restore()
+        updateActivationPolicy()
+
         #if DEBUG
             if ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_TERMINAL"] != nil,
                let command = SSHCommandReader(command: "ssh demo@203.0.113.10")
@@ -276,11 +214,9 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 AppRouter.shared.openTerminal(command: command)
                 AppRouter.shared.route = .terminal(TerminalManager.shared.sessionContexts.last!.id)
             }
-            // "colors" opens Settings there; "general,colors" goes on to the second.
             if let categories = ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_SETTINGS"]?.split(separator: ",").map(String.init) {
                 for (index, category) in categories.enumerated() {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1 + Double(index) * 2) {
-                        // "@terminal" leaves Settings for the preview terminal.
                         if category == "@terminal", let session = TerminalManager.shared.sessionContexts.last {
                             AppRouter.shared.route = .terminal(session.id)
                         } else {
@@ -289,7 +225,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                     }
                 }
             }
-            // "key=value" makes that edit six seconds in and takes it back ten later.
             if let pair = ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_EDIT"]?.split(separator: "=", maxSplits: 1).map(String.init), pair.count == 2 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
                     let old = ConfigBenchmark.value(pair[0])
@@ -301,13 +236,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 MenubarTool.shared.showPreview()
             }
             Bench.runIfRequested()
-            // "servers" or "desktops": that page in front, for screenshots.
             if let page = ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_ROUTE"] {
                 let routes: [String: Route] = ["servers": .servers, "desktops": .desktops, "home": .home]
                 if let route = routes[page] { AppRouter.shared.route = route }
             }
-            // A UU session file (in the debug container) to sign in with, and
-            // "terminal:<alias>" or "desktop:<alias>" to open on that device.
             if let path = ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_UU_SESSION"] {
                 let open = ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_OPEN"]?.split(separator: ":", maxSplits: 1).map(String.init)
                 Task { @MainActor in
@@ -325,8 +257,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             if ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_UU_SIGNIN"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { FolderActions.linkUURemote() }
             }
-            // Sample folders: an empty local one and a UU Remote one with two
-            // devices. Saved in the debug build's own container.
             if ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_FOLDERS"] != nil {
                 let store = CatusshStore.shared
                 if store.folder(named: "Lab") == nil { store.createFolder(named: "Lab") }
@@ -348,89 +278,116 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { AppRouter.shared.showEditorPreview() }
             }
         #endif
-        return true
     }
 
-    func application(
-        _: UIApplication,
-        configurationForConnecting session: UISceneSession,
-        options: UIScene.ConnectionOptions
-    ) -> UISceneConfiguration {
-        let configuration = UISceneConfiguration(name: nil, sessionRole: session.role)
-        if TraySceneDelegate.claims(session, options: options) {
-            configuration.delegateClass = TraySceneDelegate.self
+    private func installWindowPolicyObservers() {
+        let names: [Notification.Name] = [
+            NSWindow.didBecomeKeyNotification,
+            NSWindow.willCloseNotification,
+            NSWindow.didMiniaturizeNotification,
+            NSWindow.didDeminiaturizeNotification,
+        ]
+        for name in names {
+            windowObservers.append(
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        self?.updateActivationPolicy()
+                    }
+                }
+            )
         }
-        return configuration
     }
 
-    /// Set once the user agreed to quit, so the quit that follows goes through.
-    @MainActor private var quitConfirmed = false
-    /// The quit question is on screen; another quit waits for its answer.
-    @MainActor private var quitAsked = false
-    /// When it was asked: with no window to hang it on, the alert opens a
-    /// run-loop turn later, and until then it is neither a sheet nor modal.
-    @MainActor private var quitAskedAt = Date.distantPast
+    func updateActivationPolicy() {
+        guard !terminating else { return }
+        let hasVisibleWindow = MainWindow.ordinaryWindows.contains { $0.isVisible || $0.isMiniaturized }
+        let accessory = !hasVisibleWindow && MenubarTool.shared.hasCat
+        let policy: NSApplication.ActivationPolicy = accessory ? .accessory : .regular
+        if NSApp.activationPolicy() != policy {
+            NSApp.setActivationPolicy(policy)
+        }
+    }
 
+    private func installShortcutMonitor() {
+        guard shortcutMonitor == nil else { return }
+        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.handleShortcut(event) else { return event }
+            return nil
+        }
+    }
+
+    private func handleShortcut(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+              NSApp.modalWindow == nil
+        else { return false }
+        let key: String
+        switch (event.keyCode, event.charactersIgnoringModifiers?.lowercased()) {
+        case (12, _), (_, "q"): key = "q"
+        case (13, _), (_, "w"): key = "w"
+        case (17, _), (_, "t"): key = "t"
+        default: return false
+        }
+        switch key {
+        case "q":
+            NSApp.terminate(nil)
+            return true
+        case "t":
+            if CatusshUtil.isShowingSheetOrModal { return true }
+            let window = event.window ?? NSApp.keyWindow
+            guard let window, MainWindow.ordinaryWindows.contains(window) else { return false }
+            if event.isARepeat { return true }
+            AppRouter.shared.newTerminal()
+            return true
+        case "w":
+            if CatusshUtil.isShowingSheetOrModal { return true }
+            let window = event.window ?? NSApp.keyWindow
+            guard let window, MainWindow.ordinaryWindows.contains(window) else { return false }
+            if event.isARepeat { return true }
+            AppRouter.shared.closeTabInFront()
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var quitConfirmed = false
+    private var quitAsked = false
+    private var terminating = false
     private static let quitLog = Logger(subsystem: "me.mizorewww.rayon", category: "quit")
 
-    /// Asked when the app is about to quit. With terminals open or unsaved
-    /// text, the answer is no for now, and the question goes to the user.
-    @MainActor func mayTerminate() -> Bool {
-        let allowed = answerTermination()
-        if allowed {
-            // From here AppKit hides the windows on its way out; the watcher
-            // must not take that for "only the menu bar is left" and switch
-            // the activation policy, which UIKit reads as a relaunch to the
-            // foreground: the quit then stalled until its watchdog killed
-            // the app (seconds; with menu bar items, possibly never).
+    func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
+        if quitConfirmed {
             terminating = true
-            // A quit cancelled further on gives the watcher back.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 15) { self.terminating = false }
+            return .terminateNow
         }
-        return allowed
-    }
-
-    /// The app is on its way out; the window watcher stands still.
-    @MainActor private var terminating = false
-
-    @MainActor private func answerTermination() -> Bool {
-        // The question was answered; this is the quit that follows it.
-        if quitConfirmed { return true }
-        if quitAsked {
-            // Still on screen: this quit waits for its answer. Gone without
-            // one (its window closed under it): ask again rather than refuse
-            // every quit from now on.
-            if Mac.bridge?.isShowingSheet() == true || Mac.bridge?.hasModalWindow() == true
-                || Date().timeIntervalSince(quitAskedAt) < 2
-            {
-                Self.quitLog.info("quit waits for the open question")
-                return false
-            }
-            Self.quitLog.error("quit question lost without an answer; asking again")
-            quitAsked = false
+        if quitAsked, CatusshUtil.isShowingSheetOrModal {
+            return .terminateCancel
         }
+        quitAsked = false
+
         let terminals = !TerminalManager.shared.sessionContexts.isEmpty
-        // A UU Remote device keeps its sessions; an SSH server does not.
         let kept = TerminalManager.shared.sessionContexts.filter(\.machine.isUURemoteDevice).count
         let terminalConsequence = switch kept {
         case 0: "Open terminal sessions will be closed."
         case TerminalManager.shared.sessionContexts.count: "UU Remote sessions keep running on their devices, to resume next time."
         default: "SSH sessions will be closed; UU Remote sessions keep running on their devices, to resume next time."
         }
-        // Unsaved text is always asked about, whatever the setting.
         let unsaved = EditorCenter.shared.workspaces.contains(where: \.hasUnsavedChanges)
         Self.quitLog.info("quit requested: terminals \(terminals), unsaved \(unsaved)")
-        guard terminals || unsaved else { return true }
+        guard terminals || unsaved else {
+            terminating = true
+            return .terminateNow
+        }
         if CatusshStore.shared.disableConformation, !unsaved {
+            terminating = true
             TerminalManager.shared.closeAll()
-            return true
+            return .terminateNow
         }
         let consequences = [
             unsaved ? "Unsaved changes in the editor will be lost." : nil,
             terminals ? terminalConsequence : nil,
         ]
         quitAsked = true
-        quitAskedAt = Date()
         UIBridge.requiresConfirmation(
             message: "Quit catussh?",
             informative: consequences.compactMap { $0 }.joined(separator: " "),
@@ -438,20 +395,15 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             destructive: true,
             always: unsaved
         ) { confirmed in
-            MainActor.assumeIsolated { self.quitAsked = false }
-            guard confirmed else { return }
-            MainActor.assumeIsolated { self.quitConfirmed = true }
-            TerminalManager.shared.closeAll()
-            Mac.bridge?.terminate()
+            MainActor.assumeIsolated {
+                self.quitAsked = false
+                guard confirmed else { return }
+                self.quitConfirmed = true
+                self.terminating = true
+                TerminalManager.shared.closeAll()
+                NSApp.terminate(nil)
+            }
         }
-        return false
-    }
-
-    /// With every window closed and a server in the menu bar, catussh leaves the
-    /// Dock and stays in the menu bar.
-    @objc
-    func windowStatusWatcher() {
-        guard let bridge = Mac.bridge, !terminating else { return }
-        bridge.setAccessory(!bridge.hasVisibleWindow() && MenubarTool.shared.hasCat)
+        return .terminateCancel
     }
 }

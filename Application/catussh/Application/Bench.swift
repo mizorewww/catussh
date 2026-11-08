@@ -2,27 +2,19 @@
 //  Bench.swift
 //  catussh (macOS)
 //
-//  Measurements for the Files page, in debug builds only. Launch with
-//  CATUSSH_BENCH_FILES=<count> to fill a page with that many entries and time
-//  showing them, selecting, filtering, a transfer's progress ticks and scrolling.
-//  Results go to the log, one "BENCH" line each.
-//
 
 #if DEBUG
-    import NSRemoteShell
+    import AppKit
     import CatusshModule
     import CatusshTerminal
-import SwiftUI
-    import UIKit
+    import NSRemoteShell
+    import QuartzCore
+    import SwiftUI
 
     extension Notification.Name {
-        /// userInfo: "select" (Int, an index into the sorted list) or "filter" (String).
         static let benchFiles = Notification.Name("me.mizorewww.rayon.bench.files")
     }
 
-    /// What the run loop observer in `settle` records: written on the main
-    /// run loop only, read after the observer is removed. The box hands the
-    /// capture to the C callback as one Sendable object.
     private final class RunLoopLoad: @unchecked Sendable {
         var busy = 0.0
         var stretch = 0.0
@@ -42,10 +34,6 @@ import SwiftUI
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { Task { await files(count) } }
         }
 
-        /// How long the main thread worked in the 0.4 s after the action: the
-        /// state change, SwiftUI's update, layout and the commit to the render
-        /// server, wherever in that window they ran.
-        /// The longest single stretch of work in the last `settle`: the hitch.
         static var longest = 0.0
 
         static func settle(_ action: () -> Void) async -> Double {
@@ -69,13 +57,11 @@ import SwiftUI
             NSLog("BENCH %@ median %.2f ms  max %.2f ms  n=%d", name, median, sorted.last ?? 0, samples.count)
         }
 
-        /// A Files page with no server behind it, to be filled by hand.
         static func emptyFilesPage() async -> FileTransferContext {
             let machine = RDMachine(remoteAddress: "203.0.113.10", remotePort: "22", name: "web-01")
             let context = FileTransferContext(machine: machine)
             FileTransferManager.shared.transfers.append(context)
             AppRouter.shared.route = .transfer(context.id)
-            // Once the connection attempt has given up.
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             while context.processConnection { try? await Task.sleep(nanoseconds: 200_000_000) }
             try? await Task.sleep(nanoseconds: 500_000_000)
@@ -85,8 +71,6 @@ import SwiftUI
             return context
         }
 
-        /// A folder of sample entries: launch with CATUSSH_PREVIEW_FILES=1 to check
-        /// the table's layout.
         static func previewFiles() async {
             let context = await emptyFilesPage()
             context.currentDir = "/var/log"
@@ -109,34 +93,10 @@ import SwiftUI
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
             NotificationCenter.default.post(name: .benchFiles, object: nil, userInfo: ["select": 6])
-            if ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_TOUR"] != nil { await tour(context) }
-        }
-
-        /// Goes back and forth between Files and the Editor, and from folder to
-        /// folder, so the motion between them can be watched or captured.
-        static func tour(_ context: FileTransferContext) async {
-            _ = EditorCenter.shared.workspace(for: context)
-            let list = context.currentFileList
-            for step in 0 ..< 8 {
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                NSLog("TOUR step %d", step)
-                switch step % 4 {
-                case 0: AppRouter.shared.route = .editor(context.id)
-                case 1: AppRouter.shared.route = .transfer(context.id)
-                case 2:
-                    context.currentDir = "/var/log/nginx"
-                    context.currentFileList = Array(list.prefix(7))
-                default:
-                    context.currentDir = "/var/log"
-                    context.currentFileList = list
-                }
-            }
-            NSLog("TOUR done")
         }
 
         static func files(_ count: Int) async {
             let context = await emptyFilesPage()
-
             let base = URL(fileURLWithPath: "/var/log")
             var generator = SystemRandomNumberGenerator()
             let list = (0 ..< count).map { _ in
@@ -144,197 +104,14 @@ import SwiftUI
                 return FileTransferContext.RemoteFile(base: base, name: name, fstat: NSRemoteFile(filename: name))
             }
             report("show \(count)", [await settle { context.currentFileList = list }])
-            try? await Task.sleep(nanoseconds: 500_000_000)
-
-            var samples: [Double] = []
-            for index in 0 ..< 6 {
-                samples.append(await settle {
-                    context.currentDir = "/var/log/\(index)"
-                    context.currentFileList = list.shuffled()
-                })
-            }
-            report("enter folder", samples)
-
-            samples = []
-            for index in 0 ..< 20 {
-                samples.append(await settle {
-                    NotificationCenter.default.post(name: .benchFiles, object: nil, userInfo: ["select": index % 12])
-                })
-            }
-            report("select", samples)
-
-            samples = []
-            for index in 0 ..< 20 {
-                samples.append(await settle { context.currentSpeed = 1000 + index })
-            }
-            report("progress tick", samples)
-
-            samples = []
-            for text in Array(repeating: ["1", "12", "123", "12", "1", ""], count: Int(ProcessInfo.processInfo.environment["CATUSSH_BENCH_REPEAT"] ?? "1") ?? 1).flatMap({ $0 }) {
-                samples.append(await settle {
-                    NotificationCenter.default.post(name: .benchFiles, object: nil, userInfo: ["filter": text])
-                })
-            }
-            report("filter keystroke", samples)
-
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            report("idle 0.4 s", [await settle {}, await settle {}, await settle {}])
-            await scroll()
             NSLog("BENCH done")
         }
 
-        /// Opens Settings, goes through its categories and scrolls the longest.
         static func settings() async {
             let router = AppRouter.shared
             router.settingsSelection = "general"
             report("open settings", [await settle { router.route = .settings }])
-            report("open settings hitch", [longest])
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            let ids = ["general", "connection", "text", "colors", "cursor", "window", "input", "keyboard", "advanced", "about"]
-            var samples: [Double] = []
-            var hitches: [Double] = []
-            let rounds = Int(ProcessInfo.processInfo.environment["CATUSSH_BENCH_REPEAT"] ?? "2") ?? 2
-            for id in Array(repeating: ids, count: rounds).flatMap({ $0 }) {
-                let sample = await settle { router.settingsSelection = id }
-                NSLog("BENCH category %@ %.2f ms  hitch %.2f ms", id, sample, longest)
-                samples.append(sample)
-                hitches.append(longest)
-            }
-            report("switch category", samples)
-            report("switch category hitch", hitches)
-            await edits()
-            var reopen: [Double] = []
-            // CATUSSH_BENCH_BLANK leaves for a page with nothing on it, so what
-            // is measured is Settings going and coming and nothing else.
-            let away: Route = ProcessInfo.processInfo.environment["CATUSSH_BENCH_BLANK"] != nil ? .terminal(UUID()) : .servers
-            var leave: [Double] = []
-            var leaveHitch: [Double] = []
-            var reopenHitch: [Double] = []
-            for _ in 0 ..< (Int(ProcessInfo.processInfo.environment["CATUSSH_BENCH_REOPEN"] ?? "3") ?? 3) {
-                leave.append(await settle { router.route = away })
-                leaveHitch.append(longest)
-                reopen.append(await settle { router.route = .settings })
-                reopenHitch.append(longest)
-            }
-            if ProcessInfo.processInfo.environment["CATUSSH_BENCH_NOPLACES"] == nil { await places() }
-            report("leave settings", leave)
-            report("leave settings hitch", leaveHitch)
-            report("reopen settings", reopen)
-            report("reopen settings hitch", reopenHitch)
-            router.settingsSelection = "advanced"
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            report("idle 0.4 s", [await settle {}, await settle {}, await settle {}])
-            await scroll()
-            router.settingsSelection = "colors"
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            await scroll()
             NSLog("BENCH done")
-        }
-
-        /// Goes between the places of the sidebar that are not Settings.
-        static func places() async {
-            let router = AppRouter.shared
-            var samples: [Double] = []
-            var hitches: [Double] = []
-            for route in [Route.home, .servers, .identities, .snippets, .home, .servers, .identities, .snippets] {
-                let sample = await settle { router.route = route }
-                NSLog("BENCH place %@ %.2f ms  hitch %.2f ms", String(describing: route), sample, longest)
-                samples.append(sample)
-                hitches.append(longest)
-            }
-            report("change place", samples)
-            report("change place hitch", hitches)
-        }
-
-        /// Changes a setting again and again, as dragging its control would,
-        /// then puts back what it had.
-        static func edits() async {
-            let router = AppRouter.shared
-            router.settingsSelection = "cursor"
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            let key = "cursor-opacity"
-            let before = ConfigBenchmark.value(key)
-            var samples: [Double] = []
-            var hitches: [Double] = []
-            let count = Int(ProcessInfo.processInfo.environment["CATUSSH_BENCH_EDITS"] ?? "12") ?? 12
-            for step in 0 ..< count {
-                let value = String(format: "%.2f", 0.4 + Double(step % 6) * 0.1)
-                samples.append(await settle { ConfigBenchmark.edit(key, value) })
-                hitches.append(longest)
-            }
-            report("edit a setting", samples)
-            report("edit a setting hitch", hitches)
-            ConfigBenchmark.edit(key, before)
-            try? await Task.sleep(nanoseconds: 800_000_000)
-        }
-
-        /// Scrolls the file list from top to bottom and back at a steady pace
-        /// and reports how long frames took.
-        static func scroll() async {
-            guard let window = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
-                .flatMap(\.windows).first(where: { $0.bounds.width > 900 }),
-                let scroller = largestScrollView(in: window)
-            else { return NSLog("BENCH scroll: no scroll view") }
-            NSLog("BENCH scroll view %@ content %.0f", String(describing: type(of: scroller)), scroller.contentSize.height)
-            let recorder = FrameRecorder()
-            // A fast flick, about 6000 pt a second, rather than the whole list.
-            let distance = min(12000, max(0, scroller.contentSize.height - scroller.bounds.height))
-            let duration = 4.0
-            recorder.start { progress in
-                // There and back.
-                let phase = progress < 0.5 ? progress * 2 : (1 - progress) * 2
-                scroller.contentOffset.y = distance * phase
-            }
-            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-            let frames = recorder.stop()
-            guard frames.count > 2 else { return }
-            let sorted = frames.sorted()
-            let slow = frames.filter { $0 > 1000.0 / 60 * 1.5 }.count
-            NSLog(
-                "BENCH scroll %.0f pt  frames %d  median %.2f ms  p95 %.2f ms  max %.2f ms  slow(>25ms) %d",
-                distance, frames.count, sorted[sorted.count / 2], sorted[Int(Double(sorted.count) * 0.95)], sorted.last ?? 0, slow
-            )
-        }
-
-        private static func largestScrollView(in view: UIView) -> UIScrollView? {
-            var best: UIScrollView?
-            var stack = [view]
-            while let next = stack.popLast() {
-                if let scroll = next as? UIScrollView, scroll.contentSize.height > (best?.contentSize.height ?? 0) { best = scroll }
-                stack.append(contentsOf: next.subviews)
-            }
-            return best
-        }
-    }
-
-    @MainActor
-    private final class FrameRecorder: NSObject {
-        private var link: CADisplayLink?
-        private var step: ((Double) -> Void)?
-        private var begin = 0.0
-        private var last = 0.0
-        private var frames: [Double] = []
-
-        func start(duration: Double = 4, step: @escaping (Double) -> Void) {
-            self.step = step
-            self.duration = duration
-            link = CADisplayLink(target: self, selector: #selector(tick))
-            link?.add(to: .main, forMode: .common)
-        }
-
-        private var duration = 4.0
-
-        @objc private func tick(_: CADisplayLink) {
-            // Wall time between callbacks: a stalled main thread shows as a long frame.
-            let now = CACurrentMediaTime()
-            if begin == 0 { begin = now } else { frames.append((now - last) * 1000) }
-            last = now
-            step?(min(1, (now - begin) / duration))
-        }
-
-        func stop() -> [Double] {
-            link?.invalidate()
-            return frames
         }
     }
 #endif

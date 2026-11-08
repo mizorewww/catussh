@@ -1,3 +1,4 @@
+#if os(iOS)
 import CatusshDesign
 import Runestone
 import SwiftUI
@@ -50,7 +51,6 @@ final class EditorTheme: Runestone.Theme {
     private let constant = dynamic(light: hex(0x6C36A9), dark: hex(0xD0A8FF))
 
     func textColor(for highlightName: String) -> UIColor? {
-        // Captures are dotted, most specific last (e.g. "string.special").
         if highlightName.hasPrefix("variable.builtin") { return constant }
         switch highlightName.split(separator: ".").first.map(String.init) ?? highlightName {
         case "keyword", "include", "conditional", "repeat", "exception", "storageclass": return keyword
@@ -70,3 +70,4 @@ final class EditorTheme: Runestone.Theme {
         highlightName.hasPrefix("comment") ? [.italic] : []
     }
 }
+#endif
