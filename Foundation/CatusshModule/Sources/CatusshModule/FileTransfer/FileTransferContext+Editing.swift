@@ -36,6 +36,14 @@ public extension FileTransferContext {
 
     /// Reads a remote file as UTF-8 text on the context's serial `workerQueue`.
     func readText(at remotePath: String) async throws -> String {
+        if !connected && !processConnection {
+            processBootstrap()
+            _ = await $connected
+                .combineLatest($processConnection)
+                .timeout(.seconds(30), scheduler: DispatchQueue.main)
+                .values
+                .first(where: { $0 || !$1 || self.destroyedSession })
+        }
         guard connected else { throw RemoteTextFileError.notConnected }
         let folder = try Self.makeScratchFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -56,6 +64,9 @@ public extension FileTransferContext {
             }
         }
         guard succeeded else {
+            if !shell.isConnected || !shell.isConnectedFileTransfer {
+                onMainThread { self.processShutdown() }
+            }
             throw RemoteTextFileError.transfer(shell.getLastFileTransferError() ?? "Couldn't read \(remotePath).")
         }
         let data = try Data(contentsOf: local)

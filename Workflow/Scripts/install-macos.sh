@@ -27,17 +27,17 @@ if [[ ! -d "$APP_PATH" ]]; then
     exit 1
 fi
 
-# 2. A catussh still running from the old copy would keep running it from
-#    the Trash, and a later `open` could bring that copy back. Ask it to quit
-#    (it asks about open terminals, as for any quit) and wait for it.
-running() { pgrep -f "^$DEST/Contents/MacOS/catussh\$" >/dev/null 2>&1; }
+# 2. A catussh still running from the old copy (or DerivedData) would keep running
+#    from the Trash or shadow the new install. Ask it to quit and wait for it.
+running() { pgrep -f "/catussh\.app/Contents/MacOS/catussh$" >/dev/null 2>&1; }
 if running; then
     printf 'Quitting the running catussh…\n'
     osascript -e 'tell application id "me.mizorewww.rayon" to quit' >/dev/null 2>&1 || true
-    for _ in $(seq 1 60); do running || break; sleep 1; done
+    osascript -e 'tell application id "me.mizorewww.rayon.debug" to quit' >/dev/null 2>&1 || true
+    for _ in $(seq 1 10); do running || break; sleep 1; done
     if running; then
-        printf 'error: catussh is still running (answer its quit question, or quit it), then run this again.\n' >&2
-        exit 1
+        pkill -f "/catussh\.app/Contents/MacOS/catussh$" 2>/dev/null || true
+        sleep 1
     fi
 fi
 
@@ -57,6 +57,16 @@ ditto "$APP_PATH" "$DEST"
 # Locally built apps carry no quarantine attribute, but clear it in case
 # the derived-data path ever does (e.g. after transferring an archive).
 xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
+
+# 5. Ensure LaunchServices points me.mizorewww.rayon to /Applications/catussh.app
+#    rather than any DerivedData build product.
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
+if [[ -x "$LSREGISTER" ]]; then
+    for stale in "$DERIVED_DATA_PATH"/Build/Products/*/"$APP_NAME"; do
+        [[ -d "$stale" ]] && "$LSREGISTER" -u "$stale" 2>/dev/null || true
+    done
+    "$LSREGISTER" -f -R -trusted "$DEST" 2>/dev/null || true
+fi
 
 printf '\nInstalled: %s\n' "$DEST"
 printf 'Launch with: open %s\n' "$DEST"

@@ -1604,127 +1604,107 @@ continue; \
         [self unsafeFileTransferSetErrorForFile:localFile.path pathIsRemote:NO failureReason:@"failed to read"];
         return NO;
     }
-    LIBSSH2_CHANNEL *channel = NULL;
-    NSDate *date = [[NSDate alloc] initWithTimeIntervalSinceNow:[self.operationTimeout intValue]];
-    while (true) {
-        if ([date timeIntervalSinceNow] < 0) {
-            libssh2_session_set_last_error(session, LIBSSH2_ERROR_TIMEOUT, NULL);
-            break;
+        if (!self.isConnectedFileTransfer) {
+            [self unsafeFileTransferSetErrorForFile:localFile.path pathIsRemote:NO failureReason:@"connection broken"];
+            fclose(f);
+            return NO;
         }
-        LIBSSH2_CHANNEL *channelBuilder = libssh2_scp_send64(session,
-                                                             [remoteFile.path UTF8String],
-                                                             fi.st_mode & 0777,
-                                                             (unsigned long)fi.st_size,
-                                                             0,
-                                                             0);
-        if (channelBuilder) {
-            libssh2_session_set_last_error(session, 0, NULL);
-            channel = channelBuilder;
-            break;
+        LIBSSH2_SFTP *sftp = self.associatedFileTransfer;
+        LIBSSH2_SFTP_HANDLE *sftpHandle = [self unsafeFileTransferOpenFileHandlerWithSession:session
+                                                                                    withSFTP:sftp
+                                                                                    withPath:remoteFile.path
+                                                                                    withFlag:LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_TRUNC
+                                                                                    withMode:fi.st_mode & 0777];
+        if (!sftpHandle) {
+            fclose(f);
+            return NO;
         }
-        long rc = libssh2_session_last_errno(session);
-        if (rc == LIBSSH2_ERROR_EAGAIN) {
-            usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
-            continue;
+        
+        NSDate *begin = [[NSDate alloc] init];
+        NSDate *previousProgressSent = [[NSDate alloc] initWithTimeIntervalSince1970:0];
+        
+        char *buff = (char*)malloc(SFTP_BUFFER_SIZE);
+        if (!buff) {
+            fclose(f);
+            libssh2_sftp_close_handle(sftpHandle);
+            [self unsafeFileTransferSetErrorForFile:localFile.path pathIsRemote:NO failureReason:@"failed to allocate transfer buffer"];
+            return NO;
         }
-        break;
-    }
-    [self unsafeReadLastError];
-    if (!channel) {
-        fclose(f);
-        [self unsafeFileTransferSetErrorForFile:localFile.path pathIsRemote:NO failureReason:self.lastError ?: @"SCP send initialization failed"];
-        return NO;
-    }
-    
-    NSDate *begin = [[NSDate alloc] init];
-    NSDate *previousProgressSent = [[NSDate alloc] initWithTimeIntervalSince1970:0];
-    
-    // 128k per transfer does not belong on the event loop thread stack
-    char *buff = (char*)malloc(SFTP_BUFFER_SIZE);
-    if (!buff) {
-        fclose(f);
-        LIBSSH2_CHANNEL_SHUTDOWN(channel);
-        [self unsafeFileTransferSetErrorForFile:localFile.path pathIsRemote:NO failureReason:@"failed to allocate transfer buffer"];
-        return NO;
-    }
-    size_t read_size;
-    char *ptr;
-    NSUInteger sent_size = 0;
-    NSUInteger total_size = fi.st_size;
-    while (sent_size < total_size) {
-        if (continuationBlock && !continuationBlock()) { break; }
-        if (!self.isConnectedFileTransfer) { break; }
-        read_size = fread(buff, 1, SFTP_BUFFER_SIZE, f);
-        if (read_size <= 0) {
-            break; // done or error
+        size_t read_size;
+        char *ptr;
+        NSUInteger sent_size = 0;
+        NSUInteger total_size = fi.st_size;
+        NSDate *date;
+        while (sent_size < total_size) {
+            if (continuationBlock && !continuationBlock()) { break; }
+            if (!self.isConnectedFileTransfer) { break; }
+            read_size = fread(buff, 1, SFTP_BUFFER_SIZE, f);
+            if (read_size <= 0) {
+                break;
+            }
+            ptr = buff;
+            long long rc = LIBSSH2_ERROR_EAGAIN;
+            date = [[NSDate alloc] initWithTimeIntervalSinceNow:[self.operationTimeout intValue]];
+            while (rc == LIBSSH2_ERROR_EAGAIN || read_size) {
+                if ([date timeIntervalSinceNow] < 0) {
+                    libssh2_session_set_last_error(session, LIBSSH2_ERROR_TIMEOUT, NULL);
+                    rc = LIBSSH2_ERROR_TIMEOUT;
+                    break;
+                }
+                rc = libssh2_sftp_write(sftpHandle, ptr, read_size);
+                if (rc == LIBSSH2_ERROR_EAGAIN) {
+                    usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
+                    continue;
+                } else if (rc > 0) {
+                    sent_size += rc;
+                    ptr += rc;
+                    read_size -= rc;
+                    date = [[NSDate alloc] initWithTimeIntervalSinceNow:[self.operationTimeout intValue]];
+                } else {
+                    break;
+                }
+            }
+            if (rc < 0 && rc != LIBSSH2_ERROR_EAGAIN) {
+                break;
+            }
+            if (onProgress && [previousProgressSent timeIntervalSinceNow] < -0.2) {
+                previousProgressSent = [[NSDate alloc] init];
+                NSTimeInterval interval = [[[NSDate alloc] init] timeIntervalSinceDate:begin];
+                double speed = interval != 0 ? (sent_size / interval) : 0;
+                NSProgress *progress = [[NSProgress alloc] init];
+                [progress setTotalUnitCount:total_size];
+                [progress setCompletedUnitCount:sent_size];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    onProgress(atPath, progress, speed);
+                });
+            }
         }
-        ptr = buff;
-        long long rc = LIBSSH2_ERROR_EAGAIN;
+        free(buff);
         date = [[NSDate alloc] initWithTimeIntervalSinceNow:[self.operationTimeout intValue]];
-        while (rc == LIBSSH2_ERROR_EAGAIN || read_size) {
-            if ([date timeIntervalSinceNow] < 0) {
-                libssh2_session_set_last_error(session, LIBSSH2_ERROR_TIMEOUT, NULL);
-                rc = LIBSSH2_ERROR_TIMEOUT;
-                break;
-            }
-            rc = libssh2_channel_write(channel, ptr, read_size);
-            if (rc == LIBSSH2_ERROR_EAGAIN) {
-                usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
-                continue;
-            } else if (rc > 0) {
-                // rc indicates how many bytes were written this time
-                sent_size += rc;
-                ptr += rc;
-                read_size -= rc;
-            } else {
-                // has error
-                break;
-            }
-        };
-        if (rc < 0 && rc != LIBSSH2_ERROR_EAGAIN) {
-            break;
+        while (libssh2_sftp_close_handle(sftpHandle) == LIBSSH2_ERROR_EAGAIN) {
+            if ([date timeIntervalSinceNow] < 0) { break; }
+            usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
         }
-        if (onProgress && [previousProgressSent timeIntervalSinceNow] < -0.2) {
-            previousProgressSent = [[NSDate alloc] init];
-            NSTimeInterval interval = [[[NSDate alloc] init] timeIntervalSinceDate:begin];
-            double speed = 0;
-            if (interval != 0) {
-                speed = sent_size / interval;
-            }
+        [self unsafeReadLastError];
+        
+        if (sent_size < total_size) {
+            [self unsafeFileTransferSetErrorForFile:localFile.path
+                                       pathIsRemote:NO
+                                      failureReason:NSRemoteSFTPFailureDescription(sftp, @"transport sent did not write enough data")];
+        }
+        
+        fclose(f);
+        if (onProgress) {
             NSProgress *progress = [[NSProgress alloc] init];
             [progress setTotalUnitCount:total_size];
-            [progress setCompletedUnitCount:sent_size];
+            [progress setCompletedUnitCount:total_size];
+            NSTimeInterval interval = [[[NSDate alloc] init] timeIntervalSinceDate:begin];
+            double speed = interval != 0 ? (sent_size / interval) : 0;
             dispatch_async(dispatch_get_main_queue(), ^{
                 onProgress(atPath, progress, speed);
             });
         }
-    };
-    free(buff);
-    [self unsafeReadLastError];
-    
-    if (sent_size < total_size) {
-        [self unsafeFileTransferSetErrorForFile:localFile.path
-                                   pathIsRemote:NO
-                                  failureReason:@"transport sent did not write enough data"];
-    }
-    
-    fclose(f);
-    LIBSSH2_CHANNEL_SHUTDOWN(channel);
-//    NSRLog(@"upload %@ to %@ done", localFile.path, remoteFile.path);
-    if (onProgress) {
-        NSProgress *progress = [[NSProgress alloc] init];
-        [progress setTotalUnitCount:total_size];
-        [progress setCompletedUnitCount:total_size];
-        NSTimeInterval interval = [[[NSDate alloc] init] timeIntervalSinceDate:begin];
-        double speed = 0;
-        if (interval != 0) {
-            speed = sent_size / interval;
-        }
-        dispatch_async(dispatch_get_main_queue(), ^{
-            onProgress(atPath, progress, speed);
-        });
-    }
-    return sent_size == total_size;
+        return sent_size == total_size;
 }
 
 - (BOOL)unsafeUploadRecursiveForFile:(NSString*)atPath
@@ -1974,38 +1954,35 @@ continue; \
         return NO;
     }
     LIBSSH2_SESSION *session = self.associatedSession;
-    
-    struct stat fi;
-    memset(&fi, 0, sizeof(fi));
-    LIBSSH2_CHANNEL *channel = NULL;
+    LIBSSH2_SFTP *sftp = self.associatedFileTransfer;
+    LIBSSH2_SFTP_HANDLE *handle = [self unsafeFileTransferOpenFileHandlerWithSession:session
+                                                                            withSFTP:sftp
+                                                                            withPath:atPath
+                                                                            withFlag:LIBSSH2_FXF_READ
+                                                                            withMode:0];
+    if (!handle) {
+        return NO;
+    }
+
+    LIBSSH2_SFTP_ATTRIBUTES fileAttributes = { 0 };
     NSDate *date = [[NSDate alloc] initWithTimeIntervalSinceNow:[self.operationTimeout intValue]];
     while (true) {
         if ([date timeIntervalSinceNow] < 0) {
             libssh2_session_set_last_error(session, LIBSSH2_ERROR_TIMEOUT, NULL);
             break;
         }
-        LIBSSH2_CHANNEL *channelBuilder = libssh2_scp_recv(session, [atPath UTF8String], &fi);
-        if (channelBuilder) {
-            libssh2_session_set_last_error(session, 0, NULL);
-            channel = channelBuilder;
-            break;
-        }
-        long long rc = libssh2_session_last_errno(session);
-        if (rc == LIBSSH2_ERROR_EAGAIN) {
+        ssize_t statRc = libssh2_sftp_fstat(handle, &fileAttributes);
+        if (statRc == LIBSSH2_ERROR_EAGAIN) {
             usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
             continue;
         }
         break;
     }
-    [self unsafeReadLastError];
-    if (!channel) {
-        [self unsafeFileTransferSetErrorForFile:atFullPath pathIsRemote:YES failureReason:self.lastError ?: @"SCP receive initialization failed"];
-        return NO;
-    }
-    
+    long long expectedSize = (fileAttributes.flags & LIBSSH2_SFTP_ATTR_SIZE) ? (long long)fileAttributes.filesize : 0;
+
     int f = open([localFile.path UTF8String], O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (f < 0) {
-        LIBSSH2_CHANNEL_SHUTDOWN(channel);
+        libssh2_sftp_close_handle(handle);
         [self unsafeFileTransferSetErrorForFile:localFile.path pathIsRemote:NO failureReason:@"failed to open local destination file"];
         return NO;
     }
@@ -2017,19 +1994,16 @@ continue; \
     char *buff = (char*)malloc(SFTP_BUFFER_SIZE);
     if (!buff) {
         close(f);
-        LIBSSH2_CHANNEL_SHUTDOWN(channel);
+        libssh2_sftp_close_handle(handle);
         [self unsafeFileTransferSetErrorForFile:atFullPath pathIsRemote:YES failureReason:@"failed to allocate transfer buffer"];
         return NO;
     }
+    BOOL hitEOF = NO;
     date = [[NSDate alloc] initWithTimeIntervalSinceNow:[self.operationTimeout intValue]];
-    while (recv_size < fi.st_size) {
+    while (true) {
         if (continuationBlock && !continuationBlock()) { break; }
         if (!self.isConnectedFileTransfer) { break; }
-        long long recv_decision = SFTP_BUFFER_SIZE;
-        if ((fi.st_size - recv_size) < recv_decision) {
-            recv_decision = (size_t)(fi.st_size - recv_size);
-        }
-        long long recv_write_size = libssh2_channel_read(channel, buff, recv_decision);
+        ssize_t recv_write_size = libssh2_sftp_read(handle, buff, SFTP_BUFFER_SIZE);
         if (recv_write_size < 0) {
             if (recv_write_size == LIBSSH2_ERROR_EAGAIN) {
                 if ([date timeIntervalSinceNow] < 0) {
@@ -2042,18 +2016,15 @@ continue; \
             break;
         }
         if (recv_write_size == 0) {
+            hitEOF = YES;
             break;
         }
         if (recv_write_size > 0) {
             long long f_write_size = write(f, buff, recv_write_size);
-            if (f_write_size < 0) {
-                NSRLog(@"failed to write returns %lld", f_write_size);
-                break;
-            }
-            if (f_write_size < recv_write_size) {
-                NSRLog(@"write call failed to write all buffer, required %lld returns %lld",
-                      f_write_size,
-                      recv_write_size);
+            if (f_write_size != recv_write_size) {
+                NSRLog(@"write call failed to write all buffer, required %zd returns %lld",
+                      recv_write_size,
+                      f_write_size);
                 break;
             }
             recv_size += f_write_size;
@@ -2064,12 +2035,9 @@ continue; \
             if ([now timeIntervalSinceDate:lastProgress] > 0.1) {
                 lastProgress = now;
                 NSTimeInterval interval = [now timeIntervalSinceDate:begin];
-                long long speed = 0;
-                if (interval) {
-                    speed = recv_size / interval;
-                }
+                long long speed = interval ? (recv_size / interval) : 0;
                 NSProgress *progress = [[NSProgress alloc] init];
-                [progress setTotalUnitCount:fi.st_size];
+                [progress setTotalUnitCount:expectedSize > 0 ? expectedSize : recv_size];
                 [progress setCompletedUnitCount:recv_size];
                 dispatch_async(dispatch_get_main_queue(), ^{
                     onProgress(remoteFile.path, progress, speed);
@@ -2078,30 +2046,30 @@ continue; \
         }
     }
     free(buff);
+    close(f);
+    date = [[NSDate alloc] initWithTimeIntervalSinceNow:[self.operationTimeout intValue]];
+    while (libssh2_sftp_close_handle(handle) == LIBSSH2_ERROR_EAGAIN) {
+        if ([date timeIntervalSinceNow] < 0) { break; }
+        usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
+    }
     [self unsafeReadLastError];
     if (onProgress) {
         NSProgress *progress = [[NSProgress alloc] init];
-        [progress setTotalUnitCount:fi.st_size];
+        [progress setTotalUnitCount:expectedSize > 0 ? expectedSize : recv_size];
         [progress setCompletedUnitCount:recv_size];
         NSTimeInterval interval = [[[NSDate alloc] init] timeIntervalSinceDate:begin];
-        long long speed = 0;
-        if (interval) {
-            speed = recv_size / interval;
-        }
+        long long speed = interval ? (recv_size / interval) : 0;
         dispatch_async(dispatch_get_main_queue(), ^{
             onProgress(remoteFile.path, progress, speed);
         });
     }
-    if (recv_size != fi.st_size) {
+    BOOL ok = hitEOF && (expectedSize == 0 || recv_size == expectedSize);
+    if (!ok) {
         [self unsafeFileTransferSetErrorForFile:atFullPath
                                    pathIsRemote:YES
-                                  failureReason:@"transport receive did not write full data"];
+                                  failureReason:NSRemoteSFTPFailureDescription(sftp, @"transport receive did not write full data")];
     }
-    [self unsafeReadLastError];
-    
-    close(f);
-    LIBSSH2_CHANNEL_SHUTDOWN(channel);
-    return recv_size == fi.st_size;
+    return ok;
 }
 
 - (BOOL)unsafeDownloadRecursiveAtPath:(NSString*)atPath
