@@ -32,9 +32,9 @@ public struct GhosttyConfigurationView: View {
     @State private var showPreview = true
     @State private var resetConfirm = false
     /// Width beside the category column; the preview sits beside the settings
-    /// only when both fit, and above them otherwise.
+    /// only when both fit, and above them (pinned) otherwise.
     @State private var detailWidth: CGFloat = 1200
-    private var previewBeside: Bool { detailWidth >= 500 }
+    private var previewBeside: Bool { detailWidth >= 740 }
     private let onApplied: ((Double?) -> Void)?
     private let embedded: Bool
     /// False while the app keeps Settings out of sight: it then adds nothing
@@ -110,7 +110,7 @@ public struct GhosttyConfigurationView: View {
             VStack(spacing: 0) {
                 HStack(alignment: .top, spacing: RX.Space.s3) {
                     content
-                        .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
                     ConfigPreviewBeside(
                         categories: categories, navigation: navigation, model: model,
                         visible: showPreview && previewBeside && search.isEmpty

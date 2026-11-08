@@ -124,22 +124,49 @@ private struct PageToolbar<Leading: View, Trailing: View>: ViewModifier {
     @Environment(\.isActivePage) private var isActive
     @Environment(\.serverToolSwitch) private var toolSwitch
 
+    private var hasTrailing: Bool { Trailing.self != EmptyView.self }
+
     func body(content: Content) -> some View {
-        content.toolbar {
-            if isActive {
-                ToolbarItemGroup(placement: .navigation) { leading }
-                if let toolSwitch {
-                    ToolbarItem(placement: .principal) {
-                        ServerToolSwitcher(machine: toolSwitch.machine, current: toolSwitch.current)
+        if #available(macOS 26.0, *) {
+            content.toolbar {
+                if isActive {
+                    ToolbarItemGroup(placement: .navigation) { leading }
+                    if let toolSwitch {
+                        ToolbarItem(placement: .principal) {
+                            ServerToolSwitcher(machine: toolSwitch.machine, current: toolSwitch.current)
+                        }
+                    }
+                    if hasTrailing {
+                        ToolbarItemGroup(placement: .automatic) {
+                            trailing
+                        }
+                    }
+                    if hasTrailing, primary != nil {
+                        ToolbarSpacer(.fixed)
+                    }
+                    if let primary {
+                        ToolbarItem(placement: .primaryAction) {
+                            primary
+                        }
                     }
                 }
-                ToolbarItemGroup(placement: .automatic) {
-                    trailing
-                }
-                if let primary {
-                    ToolbarItem(placement: .primaryAction) {
-                        primary
-                            .padding(.leading, 6)
+            }
+        } else {
+            content.toolbar {
+                if isActive {
+                    ToolbarItemGroup(placement: .navigation) { leading }
+                    if let toolSwitch {
+                        ToolbarItem(placement: .principal) {
+                            ServerToolSwitcher(machine: toolSwitch.machine, current: toolSwitch.current)
+                        }
+                    }
+                    ToolbarItemGroup(placement: .automatic) {
+                        trailing
+                    }
+                    if let primary {
+                        ToolbarItem(placement: .primaryAction) {
+                            primary
+                        }
                     }
                 }
             }

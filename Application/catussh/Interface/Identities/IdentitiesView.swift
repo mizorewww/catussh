@@ -240,7 +240,7 @@ struct IdentityForm: View {
     @EnvironmentObject var store: CatusshStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: RX.Space.s4) {
                 RXField("Username") {
                     TextField("root", text: $draft.username)
@@ -259,39 +259,45 @@ struct IdentityForm: View {
                 ], caps: false, fullWidth: true)
             }
             if draft.method == .keyPair {
-                HStack(alignment: .top, spacing: RX.Space.s4) {
-                    RXField("Private key") {
-                        KeyField(
-                            text: $draft.privateKey,
-                            masked: true,
-                            placeholder: "No private key",
-                            loadTitle: "Load…",
-                            matches: RDIdentity.looksLikePrivateKey
-                        )
-                    }
-                    RXField("Public key", help: "Optional") {
-                        KeyField(
-                            text: $draft.publicKey,
-                            masked: false,
-                            placeholder: "No public key",
-                            loadTitle: "Load…",
-                            matches: RDIdentity.looksLikePublicKey
-                        )
-                    }
+                RXField("Private key") {
+                    KeyField(
+                        text: $draft.privateKey,
+                        masked: true,
+                        placeholder: "No private key loaded",
+                        loadTitle: "Load…",
+                        matches: RDIdentity.looksLikePrivateKey
+                    )
                 }
-                RXField("Passphrase") {
-                    SecureField("None", text: $draft.passphrase)
-                        .textFieldStyle(.rx)
+                RXField("Public key", help: "Optional") {
+                    KeyField(
+                        text: $draft.publicKey,
+                        masked: false,
+                        placeholder: "No public key loaded",
+                        loadTitle: "Load…",
+                        matches: RDIdentity.looksLikePublicKey
+                    )
+                }
+                HStack(alignment: .top, spacing: RX.Space.s4) {
+                    RXField("Passphrase") {
+                        SecureField("None", text: $draft.passphrase)
+                            .textFieldStyle(.rx)
+                    }
+                    RXField("Comment") {
+                        TextField("Optional", text: $draft.comment)
+                            .textFieldStyle(.rx)
+                    }
                 }
             } else {
-                RXField("Password") {
-                    SecureField("Required", text: $draft.password)
-                        .textFieldStyle(.rx)
+                HStack(alignment: .top, spacing: RX.Space.s4) {
+                    RXField("Password") {
+                        SecureField("Required", text: $draft.password)
+                            .textFieldStyle(.rx)
+                    }
+                    RXField("Comment") {
+                        TextField("Optional", text: $draft.comment)
+                            .textFieldStyle(.rx)
+                    }
                 }
-            }
-            RXField("Comment") {
-                TextField("Optional", text: $draft.comment)
-                    .textFieldStyle(.rx)
             }
             Hairline()
             SwitchRow(

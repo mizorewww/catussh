@@ -550,24 +550,29 @@ public struct RXMenuButton<MenuContent: View>: View {
     }
 }
 
-private struct RXPopoverMenuItemStyle: ButtonStyle {
+private struct RXPopoverMenuItemStyle: PrimitiveButtonStyle {
     let dismiss: () -> Void
     @State private var hovered = false
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.rxBody)
-            .foregroundStyle(configuration.role == .destructive ? Color.rxDanger : Color.rxInk)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(hovered || configuration.isPressed ? Color.rxRowHover : Color.clear)
-            )
-            .contentShape(Rectangle())
-            .onHover { hovered = $0 }
-            .simultaneousGesture(TapGesture().onEnded { dismiss() })
+        Button(role: configuration.role) {
+            dismiss()
+            configuration.trigger()
+        } label: {
+            configuration.label
+                .font(.rxBody)
+                .foregroundStyle(configuration.role == .destructive ? Color.rxDanger : Color.rxInk)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .frame(height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(hovered ? Color.rxRowHover : Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
     }
 }
 

@@ -125,32 +125,38 @@ struct ConfigCategoryContent: View {
     @ObservedObject var state: ConfigPageState
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: RX.Space.s6) {
-                    PageTitle(category.title)
-                    if state.previewAbove, category.previews {
-                        ConfigPreview(model: model)
-                            .rxCard(padding: 0)
-                            .transition(.opacity)
-                    }
-                    if category.id == "keyboard" {
-                        ConfigKeybindingList(model: model)
-                    } else {
-                        ForEach(category.groups) { group in
-                            ConfigGroupCard(group: group, hostSections: hostSections, model: model)
+        VStack(alignment: .leading, spacing: 0) {
+            if state.previewAbove, category.previews {
+                ConfigPreview(model: model, compact: true)
+                    .rxCard(padding: 0)
+                    .padding(.horizontal, RX.Space.s4)
+                    .padding(.top, RX.Space.s3)
+                    .padding(.bottom, RX.Space.s2)
+                    .transition(.opacity)
+                Hairline()
+            }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: RX.Space.s6) {
+                        PageTitle(category.title)
+                        if category.id == "keyboard" {
+                            ConfigKeybindingList(model: model)
+                        } else {
+                            ForEach(category.groups) { group in
+                                ConfigGroupCard(group: group, hostSections: hostSections, model: model)
+                            }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, RX.Space.s4)
+                    .padding(.top, RX.Space.s3)
+                    .padding(.bottom, RX.Space.s6)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, RX.Space.s4)
-                .padding(.top, RX.Space.s3)
-                .padding(.bottom, RX.Space.s6)
-            }
-            .task(id: state.jump) {
-                guard let jump = state.jump, jump.category == category.id else { return }
-                await Task.yield()
-                proxy.scrollTo(jump.key, anchor: .top)
+                .task(id: state.jump) {
+                    guard let jump = state.jump, jump.category == category.id else { return }
+                    await Task.yield()
+                    proxy.scrollTo(jump.key, anchor: .top)
+                }
             }
         }
     }
