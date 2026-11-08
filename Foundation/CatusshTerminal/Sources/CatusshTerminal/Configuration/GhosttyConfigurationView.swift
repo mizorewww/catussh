@@ -187,27 +187,11 @@ public struct GhosttyConfigurationView: View {
     // MARK: Content
 
     @ViewBuilder private var content: some View {
-        #if targetEnvironment(macCatalyst)
-            ZStack {
-                ConfigPageDeck(
-                    categories: categories, navigation: navigation, hostSections: hostSections, model: model,
-                    previewAbove: pageState.previewAbove, jump: pageState.jump, active: active
-                )
-                    .ignoresSafeArea(.container, edges: .vertical)
-                    .opacity(search.isEmpty ? 1 : 0)
-                    .allowsHitTesting(search.isEmpty)
-                    .accessibilityHidden(!search.isEmpty)
-                if !search.isEmpty {
-                    searchContent
-                }
-            }
-        #else
-            if !search.isEmpty {
-                searchContent
-            } else {
-                ConfigSelectedCategory(categories: categories, navigation: navigation, hostSections: hostSections, model: model, state: pageState)
-            }
-        #endif
+        if !search.isEmpty {
+            searchContent
+        } else {
+            ConfigSelectedCategory(categories: categories, navigation: navigation, hostSections: hostSections, model: model, state: pageState)
+        }
     }
 
     // MARK: Search
@@ -372,15 +356,15 @@ public struct GhosttyConfigurationView: View {
     }
 #endif
 
-#if os(macOS) || targetEnvironment(macCatalyst)
+#if os(macOS)
 private extension View {
     @ViewBuilder
     func configSearch(text: Binding<String>, active: Bool) -> some View {
-        #if targetEnvironment(macCatalyst)
-            rxToolbarSearch(text: text, prompt: "Search settings", active: active)
-        #else
+        if active {
             searchable(text: text, placement: .toolbar, prompt: "Search settings")
-        #endif
+        } else {
+            self
+        }
     }
 }
 
@@ -397,45 +381,22 @@ private struct ConfigToolbar<Leading: View, Trailing: View>: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        #if targetEnvironment(macCatalyst)
-            if #available(iOS 26.0, *) {
-                // UIKit gives each button a circle of its own; AppKit's back and
-                // forward share a capsule (see CatusshDesign's Toolbar.swift).
-                // The condition sits inside the toolbar: outside it, Settings
-                // would be built again each time it came into sight.
-                content.toolbar {
-                    if active {
-                        ToolbarItem(placement: .navigation) {
-                            RXToolbarCapsule(spacing: 13, minSlot: 32) { leading }
-                        }
-                        .sharedBackgroundVisibility(.hidden)
-                        ToolbarSpacer(.flexible)
-                        ToolbarItem(placement: .automatic) {
-                            RXToolbarCapsule { trailing }
-                        }
-                        .sharedBackgroundVisibility(.hidden)
-                    }
-                }
-            } else {
-                content.toolbar {
-                    ToolbarItemGroup(placement: .navigation) { leading }
-                    ToolbarItemGroup(placement: .automatic) { trailing }
-                }
-            }
-        #else
-            if #available(macOS 26.0, iOS 26.0, *) {
-                content.toolbar {
+        if #available(macOS 26.0, iOS 26.0, *) {
+            content.toolbar {
+                if active {
                     ToolbarItemGroup(placement: .navigation) { leading }
                     ToolbarSpacer(.flexible)
                     ToolbarItemGroup(placement: .automatic) { trailing }
                 }
-            } else {
-                content.toolbar {
+            }
+        } else {
+            content.toolbar {
+                if active {
                     ToolbarItemGroup(placement: .navigation) { leading }
                     ToolbarItemGroup(placement: .automatic) { trailing }
                 }
             }
-        #endif
+        }
     }
 }
 #endif

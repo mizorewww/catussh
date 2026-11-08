@@ -13,17 +13,13 @@
 		500D727527CF43CE00149A43 /* FilePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500D727427CF43CE00149A43 /* FilePicker.swift */; };
 		5013B51927E4B14E00EF01C4 /* FileTransferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5013B51827E4B14E00EF01C4 /* FileTransferView.swift */; };
 		501B334227DF0DD100EB6261 /* LogRedirect.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501B334127DF0DD100EB6261 /* LogRedirect.swift */; };
-		501B334427DF138200EB6261 /* StripedTextTable in Frameworks */ = {isa = PBXBuildFile; productRef = 501B334327DF138200EB6261 /* StripedTextTable */; };
 		501B334827DF16AA00EB6261 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501B334727DF16AA00EB6261 /* LogView.swift */; };
 		501B334A27DF1B6F00EB6261 /* SymbolPicker in Frameworks */ = {isa = PBXBuildFile; productRef = 501B334927DF1B6F00EB6261 /* SymbolPicker */; };
 		501FF78B27CEFADD00380D59 /* mCatusshApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501FF78A27CEFADD00380D59 /* mCatusshApp.swift */; };
 		501FF78D27CEFADD00380D59 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501FF78C27CEFADD00380D59 /* ContentView.swift */; };
 		501FF78F27CEFADD00380D59 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 501FF78E27CEFADD00380D59 /* Assets.xcassets */; };
 		501FF79B27CEFC6300380D59 /* CatusshModule in Frameworks */ = {isa = PBXBuildFile; productRef = 501FF79A27CEFC6300380D59 /* CatusshModule */; };
-		50420731287D967300D62044 /* CodeEditorUI in Frameworks */ = {isa = PBXBuildFile; productRef = 50420730287D967300D62044 /* CodeEditorUI */; };
 		5047BE9D27DCCC8B008887A7 /* EditPortForwardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5047BE9C27DCCC8B008887A7 /* EditPortForwardView.swift */; };
-		5047BE9F27DECE48008887A7 /* SPIndicator in Frameworks */ = {isa = PBXBuildFile; productRef = 5047BE9E27DECE48008887A7 /* SPIndicator */; };
-		5047BEA127DED78A008887A7 /* PortForwardBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5047BEA027DED78A008887A7 /* PortForwardBackend.swift */; };
 		505E326327D2602E00054573 /* CatusshTerminal in Frameworks */ = {isa = PBXBuildFile; productRef = 505E326227D2602E00054573 /* CatusshTerminal */; };
 		892A403F73E1CA99F2A5AA16 /* CatusshEditor in Frameworks */ = {isa = PBXBuildFile; productRef = 6EEF525F28F23079A251397E /* CatusshEditor */; };
 		7F45A79934808873CB99B543 /* RemoteFileEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71D95B9630ECB74E05487376 /* RemoteFileEditorView.swift */; };
@@ -73,7 +69,6 @@
 		501FF78E27CEFADD00380D59 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		501FF79827CEFAFA00380D59 /* mCatussh.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = mCatussh.entitlements; sourceTree = "<group>"; };
 		5047BE9C27DCCC8B008887A7 /* EditPortForwardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditPortForwardView.swift; sourceTree = "<group>"; };
-		5047BEA027DED78A008887A7 /* PortForwardBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortForwardBackend.swift; sourceTree = "<group>"; };
 		5082A1C227D087FB00C71C0F /* Util.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Util.swift; sourceTree = "<group>"; };
 		5082A1C727D09D1700C71C0F /* MonitorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitorView.swift; sourceTree = "<group>"; };
 		5082A1CB27D0AC0900C71C0F /* TerminalContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalContext.swift; sourceTree = "<group>"; };
@@ -113,9 +108,6 @@
 				505E326327D2602E00054573 /* CatusshTerminal in Frameworks */,
 				892A403F73E1CA99F2A5AA16 /* CatusshEditor in Frameworks */,
 				505E326727D2626900054573 /* MachineStatus in Frameworks */,
-				501B334427DF138200EB6261 /* StripedTextTable in Frameworks */,
-				50420731287D967300D62044 /* CodeEditorUI in Frameworks */,
-				5047BE9F27DECE48008887A7 /* SPIndicator in Frameworks */,
 				501B334A27DF1B6F00EB6261 /* SymbolPicker in Frameworks */,
 				505E326927D2642700054573 /* MachineStatusView in Frameworks */,
 				501FF79B27CEFC6300380D59 /* CatusshModule in Frameworks */,
@@ -286,7 +278,6 @@
 			children = (
 				50C90B1427CF18D500F60B51 /* PortForwardView.swift */,
 				5047BE9C27DCCC8B008887A7 /* EditPortForwardView.swift */,
-				5047BEA027DED78A008887A7 /* PortForwardBackend.swift */,
 			);
 			path = PortForward;
 			sourceTree = "<group>";
@@ -332,10 +323,7 @@
 				6EEF525F28F23079A251397E /* CatusshEditor */,
 				505E326627D2626900054573 /* MachineStatus */,
 				505E326827D2642700054573 /* MachineStatusView */,
-				5047BE9E27DECE48008887A7 /* SPIndicator */,
-				501B334327DF138200EB6261 /* StripedTextTable */,
 				501B334927DF1B6F00EB6261 /* SymbolPicker */,
-				50420730287D967300D62044 /* CodeEditorUI */,
 			);
 			productName = mCatussh;
 			productReference = 501FF78727CEFADD00380D59 /* mCatussh.app */;
@@ -419,7 +407,6 @@
 				501FF78B27CEFADD00380D59 /* mCatusshApp.swift in Sources */,
 				5082A1C827D09D1700C71C0F /* MonitorView.swift in Sources */,
 				50D3AEFD27D063A30085F899 /* PickIdentityView.swift in Sources */,
-				5047BEA127DED78A008887A7 /* PortForwardBackend.swift in Sources */,
 				50C90B1127CF18C100F60B51 /* TerminalView.swift in Sources */,
 				50C90AF727CF12E000F60B51 /* UIWindow.swift in Sources */,
 				50C90B0727CF15B000F60B51 /* IdentityView.swift in Sources */,
@@ -679,10 +666,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		501B334327DF138200EB6261 /* StripedTextTable */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = StripedTextTable;
-		};
 		501B334927DF1B6F00EB6261 /* SymbolPicker */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SymbolPicker;
@@ -690,14 +673,6 @@
 		501FF79A27CEFC6300380D59 /* CatusshModule */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CatusshModule;
-		};
-		50420730287D967300D62044 /* CodeEditorUI */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CodeEditorUI;
-		};
-		5047BE9E27DECE48008887A7 /* SPIndicator */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = SPIndicator;
 		};
 		505E326227D2602E00054573 /* CatusshTerminal */ = {
 			isa = XCSwiftPackageProductDependency;

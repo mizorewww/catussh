@@ -11,31 +11,27 @@ import Foundation
 import ObjectiveC
 
 extension TerminalContext {
-    /// Keystrokes and size changes go out every 15 ms, as the SSH loop
-    /// picks them up.
-    private static let pumpInterval: TimeInterval = 0.015
-
-    /// Blocks until the terminal ends or the tab closes.
+    /// Event-driven UU Remote terminal loop: wakes immediately on keystrokes,
+    /// resize, or connection close, with a 1s liveness check instead of 66Hz polling.
     func runUURemoteTerminal() {
         putInformation("[*] Connecting through UU Remote")
         let finished = DispatchSemaphore(value: 0)
-        // The worker queue waits on `finished`; the context outlives this.
         nonisolated(unsafe) let context = self
         let machine = machine
         let initial = terminalSize
 
         onMainThread {
             MainActor.assumeIsolated {
-                let link = UUTerminalLink(machine: machine, finished: finished)
+                let link = UUTerminalLink(machine: machine, finished: finished, wake: context.uuWakeSemaphore)
                 context.uuTerminalLink = link
                 link.connect(context: context, size: initial)
             }
         }
 
-        // The pump: what is typed goes out, the size follows the view, and
-        // a connection that drops ends the tab.
         while !closed {
-            if finished.wait(timeout: .now() + Self.pumpInterval) == .success { break }
+            if finished.wait(timeout: .now()) == .success { break }
+            _ = uuWakeSemaphore.wait(timeout: .now() + 1.0)
+            if finished.wait(timeout: .now()) == .success || closed { break }
             let typed = getBuffer()
             let size = terminalSize
             onMainThread {
@@ -65,13 +61,11 @@ extension TerminalContext {
     }
 }
 
-/// One tab's terminal on a device's UU connection. Everything here runs on
-/// the main thread, so the connection is released exactly once: by `end`,
-/// or by `connect` itself when the tab closed while it was connecting.
 @MainActor
 private final class UUTerminalLink {
     let machine: RDMachine
     let finished: DispatchSemaphore
+    let wake: DispatchSemaphore
     private var driver: UURemoteDriver?
     private var terminalID: UInt32?
     private var sentSize: CGSize = .zero
@@ -79,25 +73,25 @@ private final class UUTerminalLink {
     private var ended = false
     private let decoder = UTF8StreamDecoder()
 
-    init(machine: RDMachine, finished: DispatchSemaphore) {
+    init(machine: RDMachine, finished: DispatchSemaphore, wake: DispatchSemaphore) {
         self.machine = machine
         self.finished = finished
+        self.wake = wake
     }
 
     func connect(context: TerminalContext, size: CGSize) {
-        Task { @MainActor in
+        Task { @MainActor [weak self, weak context] in
+            guard let self, let context else { return }
             do {
-                let connection = try await UURemoteConnections.shared.acquire(for: machine)
-                guard !ended else {
-                    UURemoteConnections.shared.release(machine, driver: connection)
+                let connection = try await UURemoteConnections.shared.acquire(for: self.machine)
+                guard !self.ended else {
+                    UURemoteConnections.shared.release(self.machine, driver: connection)
                     return
                 }
-                driver = connection
-                sentSize = size
+                self.driver = connection
+                self.sentSize = size
                 let attaching = context.uuSessionID
-                // Attaching: the shell is already up, and its screen is
-                // redrawn from the size change below.
-                openedAt = attaching == nil ? Date() : .distantPast
+                self.openedAt = attaching == nil ? Date() : .distantPast
                 let id = connection.openTerminal(
                     sessionID: attaching,
                     cols: Int(max(size.width, 8)), rows: Int(max(size.height, 8))
@@ -105,19 +99,19 @@ private final class UUTerminalLink {
                     guard let self, let context else { return }
                     self.handle(frame, context: context)
                 }
-                terminalID = id
+                self.terminalID = id
                 context.uuSessionID = id
                 if attaching != nil {
-                    context.putInformation("[*] Resumed the session on \(machine.name)")
-                    // A full-screen program repaints on SIGWINCH; the size
-                    // has to change for the host to send one.
+                    context.putInformation("[*] Resumed the session on \(self.machine.name)")
                     let cols = Int(max(size.width, 8)), rows = Int(max(size.height, 8))
                     connection.sendTerminalResize(cols: cols, rows: max(rows - 1, 8), sessionID: id)
                     connection.sendTerminalResize(cols: cols, rows: rows, sessionID: id)
                 }
+                self.wake.signal()
             } catch {
                 context.putInformation("[!] " + error.localizedDescription)
-                finished.signal()
+                self.finished.signal()
+                self.wake.signal()
             }
         }
     }
@@ -132,15 +126,17 @@ private final class UUTerminalLink {
                 context.putInformation("[!] The device refused the terminal: \(reply.message) (\(reply.code))")
                 context.uuSessionID = nil
                 finished.signal()
+                wake.signal()
             }
         case .exit:
             let code = UUTerminalJSON.decodeExit(frame.payload).map { " (exit \($0))" } ?? ""
             context.putInformation("\r\n[*] Shell ended\(code)")
-            // Gone from the host: a reconnect starts a new one.
             context.uuSessionID = nil
             finished.signal()
+            wake.signal()
         case .close:
             finished.signal()
+            wake.signal()
         default:
             break
         }
@@ -151,10 +147,9 @@ private final class UUTerminalLink {
         if driver.isClosed {
             context.putInformation("\r\n[!] The UU Remote connection dropped.")
             finished.signal()
+            wake.signal()
             return
         }
-        // Just after it opens, the terminal's answers to the host's start-up
-        // queries reach a shell already at its prompt, which prints them.
         let input = Date().timeIntervalSince(openedAt) < Self.startupReplyWindow ? TerminalReplies.dropping(from: typed) : typed
         if !input.isEmpty { driver.sendTerminalStdin(Data(input.utf8), sessionID: id) }
         if size != sentSize, size.width >= 8, size.height >= 8 {
@@ -165,10 +160,6 @@ private final class UUTerminalLink {
 
     static let startupReplyWindow: TimeInterval = 3
 
-    /// The tab closed (or catussh quit): the session stays on the host, to
-    /// resume later, as UU Remote's own clients leave it; it ends only when
-    /// asked to from the session list. A dropped connection sends nothing,
-    /// and the host detaches the session itself.
     func end() {
         guard !ended else { return }
         ended = true
@@ -184,28 +175,32 @@ final class UTF8StreamDecoder: @unchecked Sendable {
 
     func decode(_ chunk: Data) -> String {
         pending.append(chunk)
-        // An empty frame, with nothing held back: nothing to decode (and no
-        // range of trailing bytes to look at).
         guard !pending.isEmpty else { return "" }
-        // Hold back an incomplete character at the end, at most 3 bytes.
         var end = pending.count
         for back in 1 ... min(3, pending.count) {
             let byte = pending[pending.startIndex + pending.count - back]
-            if byte & 0xC0 == 0x80 { continue } // continuation: look further
-            let needed = byte >= 0xF0 ? 4 : byte >= 0xE0 ? 3 : byte >= 0xC0 ? 2 : 1
+            if byte & 0xC0 == 0x80 { continue }
+            let needed: Int
+            switch byte {
+            case 0xC2...0xDF: needed = 2
+            case 0xE0...0xEF: needed = 3
+            case 0xF0...0xF4: needed = 4
+            default: needed = 1
+            }
             if needed > back { end = pending.count - back }
             break
         }
         let complete = pending.prefix(end)
-        pending = Data(pending.dropFirst(end))
+        if end == pending.count {
+            pending.removeAll(keepingCapacity: true)
+        } else {
+            pending = Data(pending.dropFirst(end))
+        }
         return String(decoding: complete, as: UTF8.self)
     }
 }
 
-/// The terminal's answers to a program's queries, told apart from typing.
 enum TerminalReplies {
-    /// The terminal's own answers (device attributes, version, colours),
-    /// whole, out of what is about to be sent; what a person typed stays.
     static func dropping(from text: String) -> String {
         guard text.contains("\u{1B}") else { return text }
         return replyPattern.stringByReplacingMatches(
@@ -214,10 +209,9 @@ enum TerminalReplies {
     }
 
     private static let replyPattern = try! NSRegularExpression(pattern: [
-        "\u{1B}\\[[?>=][0-9;]*c", // DA1, DA2, DA3
-        "\u{1B}P>\\|[^\u{1B}]*\u{1B}\\\\", // XTVERSION
-        "\u{1B}\\][0-9]+;rgb:[^\u{07}\u{1B}]*(\u{07}|\u{1B}\\\\)", // OSC 10/11/12 colours
-        "\u{1B}\\[\\?[0-9;]*\\$y", // DECRPM
+        "\u{1B}\\[[?>=][0-9;]*c",
+        "\u{1B}P>\\|[^\u{1B}]*\u{1B}\\\\",
+        "\u{1B}\\][0-9]+;rgb:[^\u{07}\u{1B}]*(\u{07}|\u{1B}\\\\)",
+        "\u{1B}\\[\\?[0-9;]*\\$y",
     ].joined(separator: "|"))
 }
-

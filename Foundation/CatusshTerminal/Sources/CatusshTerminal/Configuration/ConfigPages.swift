@@ -48,9 +48,7 @@ public final class ConfigNavigation: ObservableObject, @unchecked Sendable {
         updateChrome()
     }
 
-    /// The toolbar follows a moment after the page: handing its items to
-    /// AppKit again costs more than showing the page, and need not delay it.
-    private func updateChrome(now: Bool = false) {
+    private func updateChrome(now _: Bool = false) {
         let category = ConfigLayout.categories.first { $0.id == selection }
         let state = Chrome.State(
             canGoBack: index > 0,
@@ -59,13 +57,8 @@ public final class ConfigNavigation: ObservableObject, @unchecked Sendable {
             previews: category?.previews == true
         )
         pendingChrome = state
-        if now {
+        if chrome.state != state {
             chrome.state = state
-        } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                guard let self, pendingChrome == state, chrome.state != state else { return }
-                chrome.state = state
-            }
         }
     }
 }
@@ -336,43 +329,17 @@ struct ConfigCategoryContent: View {
 
         var body: some View {
             let terminal = searching || chrome.state.terminal
-            #if targetEnvironment(macCatalyst)
-                // Plain buttons, drawn in one capsule by the toolbar: one item
-                // for AppKit to place instead of one per control.
+            ControlGroup {
                 undo(terminal)
                 redo(terminal)
-                reset(terminal)
-                Button {
-                    withAnimation(.easeInOut(duration: 0.25)) { showPreview.toggle() }
-                } label: {
-                    Label {
-                        Text("Preview")
-                    } icon: {
-                        // Tinted only while showing: any colour given here
-                        // would also replace the dimming of a disabled button.
-                        if showPreview, terminal, chrome.state.previews {
-                            Image(systemName: "sidebar.right").foregroundStyle(Color.rxAccent)
-                        } else {
-                            Image(systemName: "sidebar.right")
-                        }
-                    }
-                }
-                .disabled(!terminal || !chrome.state.previews)
-                .help(showPreview ? "Hide the live terminal preview" : "Show a live terminal preview beside the settings")
-                .accessibilityAddTraits(showPreview ? .isSelected : [])
-            #else
-                ControlGroup {
-                    undo(terminal)
-                    redo(terminal)
-                }
-                reset(terminal)
-                Toggle(isOn: $showPreview.animation(.easeInOut(duration: 0.25))) {
-                    Label("Preview", systemImage: "sidebar.right")
-                }
-                .toggleStyle(.button)
-                .disabled(!terminal || !chrome.state.previews)
-                .help(showPreview ? "Hide the live terminal preview" : "Show a live terminal preview beside the settings")
-            #endif
+            }
+            reset(terminal)
+            Toggle(isOn: $showPreview.animation(.easeInOut(duration: 0.25))) {
+                Label("Preview", systemImage: "sidebar.right")
+            }
+            .toggleStyle(.button)
+            .disabled(!terminal || !chrome.state.previews)
+            .help(showPreview ? "Hide the live terminal preview" : "Show a live terminal preview beside the settings")
         }
 
         private func undo(_ terminal: Bool) -> some View {
@@ -397,166 +364,21 @@ struct ConfigCategoryContent: View {
     }
 #endif
 
-#if !targetEnvironment(macCatalyst)
-    /// The selected category's page, built when it is selected.
-    struct ConfigSelectedCategory: View {
-        let categories: [ConfigLayout.Category]
-        @ObservedObject var navigation: ConfigNavigation
-        let hostSections: [String: ConfigHostSettingsSection]
-        let model: ConfigEditorModel
-        let state: ConfigPageState
+/// The selected category's page, built when it is selected.
+struct ConfigSelectedCategory: View {
+    let categories: [ConfigLayout.Category]
+    @ObservedObject var navigation: ConfigNavigation
+    let hostSections: [String: ConfigHostSettingsSection]
+    let model: ConfigEditorModel
+    let state: ConfigPageState
 
-        var body: some View {
-            if let category = categories.first(where: { $0.id == navigation.selection }) {
-                ConfigCategoryContent(category: category, hostSections: hostSections, model: model, state: state)
-                    .id(category.id)
-            } else {
-                EmptyStateView("Choose a category", systemImage: "slider.horizontal.3")
-                    .frame(maxHeight: .infinity)
-            }
+    var body: some View {
+        if let category = categories.first(where: { $0.id == navigation.selection }) {
+            ConfigCategoryContent(category: category, hostSections: hostSections, model: model, state: state)
+                .id(category.id)
+        } else {
+            EmptyStateView("Choose a category", systemImage: "slider.horizontal.3")
+                .frame(maxHeight: .infinity)
         }
     }
-#endif
-
-#if targetEnvironment(macCatalyst)
-    import UIKit
-
-    /// The categories' pages, each built once and kept: going to a category
-    /// shows its page instead of building it again, and the pages not yet
-    /// visited are built one at a time while Settings sits idle.
-    struct ConfigPageDeck: UIViewControllerRepresentable {
-        let categories: [ConfigLayout.Category]
-        let navigation: ConfigNavigation
-        let hostSections: [String: ConfigHostSettingsSection]
-        let model: ConfigEditorModel
-        let previewAbove: Bool
-        let jump: ConfigPageState.Jump?
-        /// Whether Settings is the page in the window.
-        let active: Bool
-
-        func makeUIViewController(context _: Context) -> Deck { Deck() }
-
-        func updateUIViewController(_ deck: Deck, context: Context) {
-            let hostSections = hostSections, model = model, state = deck.state
-            if state.previewAbove != previewAbove { state.previewAbove = previewAbove }
-            if state.jump != jump { state.jump = jump }
-            deck.categories = categories
-            deck.make = { category in
-                AnyView(ConfigCategoryContent(category: category, hostSections: hostSections, model: model, state: state))
-            }
-            deck.animated = !context.environment.accessibilityReduceMotion
-            deck.follow(navigation)
-            if deck.active != active { deck.active = active }
-        }
-
-        final class Deck: UIViewController {
-            var categories: [ConfigLayout.Category] = []
-            var make: ((ConfigLayout.Category) -> AnyView)?
-            private var pages: [String: UIHostingController<AnyView>] = [:]
-            private var shown: String?
-            private var warming: DispatchWorkItem?
-            /// What the pages share; they are made once, with this.
-            let state = ConfigPageState()
-            var animated = true
-            /// Out of sight, Settings keeps no field being typed in and
-            /// builds no more pages.
-            var active = true {
-                didSet {
-                    guard active != oldValue else { return }
-                    if active {
-                        warm(after: 0.5)
-                    } else {
-                        warming?.cancel()
-                        view.endEditing(true)
-                    }
-                }
-            }
-            private weak var navigation: ConfigNavigation?
-            private var following: AnyCancellable?
-
-            /// The page changes as the selection does, without waiting for
-            /// SwiftUI to come round to it.
-            func follow(_ navigation: ConfigNavigation) {
-                guard navigation !== self.navigation else { return }
-                self.navigation = navigation
-                following = navigation.$selection.sink { [weak self] id in
-                    MainActor.assumeIsolated {
-                        guard let self else { return }
-                        self.show(id, animated: self.animated)
-                    }
-                }
-            }
-
-            override func viewDidLoad() {
-                super.viewDidLoad()
-                view.backgroundColor = .clear
-            }
-
-            func show(_ id: String, animated: Bool) {
-                guard id != shown, let page = page(id) else { return }
-                let previous = shown.flatMap { pages[$0] }
-                shown = id
-                // Its size is settled with the deck's, which may be about to change.
-                view.setNeedsLayout()
-                // A field left with the caret in it would go on taking keys.
-                previous?.view.endEditing(true)
-                previous.map { set($0, visible: false) }
-                set(page, visible: true)
-                if animated, previous != nil {
-                    page.view.alpha = 0
-                    UIView.animate(withDuration: 0.14, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
-                        page.view.alpha = 1
-                    }
-                }
-                warm(after: 0.5)
-            }
-
-            /// A page out of sight is transparent, not hidden: a hidden hosting
-            /// view draws itself again from nothing when it comes back.
-            private func set(_ page: UIHostingController<AnyView>, visible: Bool) {
-                page.view.layer.removeAllAnimations()
-                page.view.alpha = visible ? 1 : 0
-                page.view.isUserInteractionEnabled = visible
-                page.view.accessibilityElementsHidden = !visible
-            }
-
-            private func page(_ id: String) -> UIHostingController<AnyView>? {
-                if let page = pages[id] { return page }
-                guard let category = categories.first(where: { $0.id == id }), let make else { return nil }
-                let page = UIHostingController(rootView: make(category))
-                page.view.backgroundColor = .clear
-                set(page, visible: false)
-                addChild(page)
-                page.view.frame = view.bounds
-                view.addSubview(page.view)
-                page.didMove(toParent: self)
-                pages[id] = page
-                return page
-            }
-
-            override func viewDidLayoutSubviews() {
-                super.viewDidLayoutSubviews()
-                // Only the page on screen follows the window; the others take
-                // its size when they are shown.
-                if let shown, let page = pages[shown], page.view.frame != view.bounds {
-                    page.view.frame = view.bounds
-                }
-            }
-
-            /// Builds the pages not yet visited, one at a time, while the
-            /// selection rests: each takes about as long as a visit used to.
-            private func warm(after delay: TimeInterval) {
-                warming?.cancel()
-                let work = DispatchWorkItem { [weak self] in
-                    guard let self, active, view.window != nil,
-                          let next = categories.first(where: { self.pages[$0.id] == nil })
-                    else { return }
-                    page(next.id)?.view.layoutIfNeeded()
-                    warm(after: 0.15)
-                }
-                warming = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
-            }
-        }
-    }
-#endif
+}

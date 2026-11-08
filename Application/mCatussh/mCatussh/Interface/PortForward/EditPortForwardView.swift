@@ -13,17 +13,29 @@ struct EditPortForwardView: View {
 
     let inEditWith: UUID?
 
+    @State var forwardOrientation: RDPortForward.ForwardOrientation
+    @State var bindPort: String
+    @State var targetHost: String
+    @State var targetPort: String
+    @State var usingMachine: RDMachine.ID?
+
     init(requestPortForward: UUID? = nil) {
         inEditWith = requestPortForward
+        if let edit = requestPortForward {
+            let read = CatusshStore.shared.portForwardGroup[edit]
+            _forwardOrientation = State(initialValue: read.forwardOrientation)
+            _bindPort = State(initialValue: String(read.bindPort))
+            _targetHost = State(initialValue: read.targetHost)
+            _targetPort = State(initialValue: String(read.targetPort))
+            _usingMachine = State(initialValue: read.usingMachine)
+        } else {
+            _forwardOrientation = State(initialValue: .listenLocal)
+            _bindPort = State(initialValue: "3000")
+            _targetHost = State(initialValue: "127.0.0.1")
+            _targetPort = State(initialValue: "3000")
+            _usingMachine = State(initialValue: nil)
+        }
     }
-
-    @State var initializedOnce = false
-
-    @State var forwardOrientation: RDPortForward.ForwardOrientation = .listenLocal
-    @State var bindPort: String = "3000"
-    @State var targetHost: String = "127.0.0.1"
-    @State var targetPort: String = "3000"
-    @State var usingMachine: RDMachine.ID? = nil
 
     var parsedBindPort: Int? {
         guard let value = Int(bindPort), (0 ... 65535).contains(value) else { return nil }
@@ -108,24 +120,6 @@ struct EditPortForwardView: View {
                 } else {
                     Text("Ports must be numbers between 0 and 65535")
                         .foregroundStyle(.rxDanger)
-                }
-            }
-        }
-        .onAppear {
-            if initializedOnce { return }
-            initializedOnce = true
-            // Writing the fields synchronously in onAppear races the
-            // sheet's own first update: on iOS 15 the values could be
-            // swallowed and the form stayed empty. One runloop hop lets
-            // the current update cycle finish before the state changes.
-            DispatchQueue.main.async {
-                if let edit = inEditWith {
-                    let read = CatusshStore.shared.portForwardGroup[edit]
-                    forwardOrientation = read.forwardOrientation
-                    bindPort = String(read.bindPort)
-                    targetHost = read.targetHost
-                    targetPort = String(read.targetPort)
-                    usingMachine = read.usingMachine
                 }
             }
         }

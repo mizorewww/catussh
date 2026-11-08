@@ -36,7 +36,10 @@ struct SnippetElementView: View {
                 Spacer()
                 Menu {
                     Button {
-                        guard !snippet.code.isEmpty else { return }
+                        guard !snippet.code.isEmpty else {
+                            UIBridge.presentError(with: "This snippet has no command to run.")
+                            return
+                        }
                         CatusshUtil.createExecuteFor(snippet: snippet)
                     } label: {
                         Label("Run…", systemImage: "play")

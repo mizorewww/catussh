@@ -4,10 +4,6 @@
 //
 //  Created by Lakr Aream on 2022/3/2.
 //
-//  A Ghostty terminal for one session. The key bar above the software keyboard
-//  (esc, tab, sticky ctrl/alt/cmd, arrows, symbols, paste) comes from Ghostty's
-//  UITerminalView; the toolbar holds the session actions.
-//
 
 import CatusshModule
 import CatusshTerminal
@@ -18,8 +14,6 @@ struct TerminalView: View {
 
     @State var interfaceToken = UUID()
 
-    @State var terminalSize: CGSize = TerminalContext.defaultTerminalSize
-
     @ObservedObject var store = CatusshStore.shared
 
     @Environment(\.dismiss) private var dismiss
@@ -29,13 +23,6 @@ struct TerminalView: View {
             if context.interfaceToken == interfaceToken {
                 GeometryReader { r in
                     context.termInterface
-                        .onChange(of: r.size) { _ in
-                            guard context.interfaceToken == interfaceToken else {
-                                debugPrint("interface token mismatch")
-                                return
-                            }
-                            updateTerminalSize()
-                        }
                         .onAppear {
                             context.termInterface.setTerminalFontSize(with: store.terminalFontSize, preferConfigured: true)
                         }
@@ -52,8 +39,6 @@ struct TerminalView: View {
                 )
             }
         }
-        // No opaque fill behind the surface: Ghostty paints its own background,
-        // so a translucent terminal shows the page backdrop.
         .background(RXBackdrop().ignoresSafeArea())
         .onAppear {
             debugPrint("set interface token \(interfaceToken)")
@@ -93,29 +78,9 @@ struct TerminalView: View {
                 informative: "Anything running in it is stopped.",
                 confirmTitle: "Close Session"
             ) { yes in
-                if yes { context.processShutdown() }
-            }
-        }
-    }
-
-    func updateTerminalSize() {
-        let core = context.termInterface
-        let origSize = terminalSize
-        DispatchQueue.global().async {
-            let newSize = core.requestTerminalSize()
-            guard newSize.width > 5, newSize.height > 5 else {
-                debugPrint("ignoring malformed terminal size: \(newSize)")
-                return
-            }
-            if newSize != origSize {
-                onMainThread {
-                    guard context.interfaceToken == interfaceToken else {
-                        debugPrint("interface token mismatch")
-                        return
-                    }
-                    debugPrint("new terminal size: \(newSize)")
-                    terminalSize = newSize
-                    context.shell.explicitRequestStatusPickup()
+                if yes {
+                    dismiss()
+                    TerminalManager.shared.end(for: context.id)
                 }
             }
         }

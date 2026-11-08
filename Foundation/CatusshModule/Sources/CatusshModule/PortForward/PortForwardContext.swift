@@ -10,7 +10,7 @@
 import Foundation
 import NSRemoteShell
 
-public class PortForwardContext: ObservableObject, Identifiable {
+public class PortForwardContext: ObservableObject, Identifiable, @unchecked Sendable {
     public var id = UUID()
     public let info: RDPortForward
     public let machine: RDMachine
@@ -20,7 +20,7 @@ public class PortForwardContext: ObservableObject, Identifiable {
     /// match on this instead of the former hint strings, so a copy edit
     /// cannot silently drop a state onto a default branch; the raw values
     /// keep the former hint text for logs.
-    public enum Lifecycle: String, CaseIterable {
+    public enum Lifecycle: String, CaseIterable, Sendable {
         case awaitingConnect = "awaiting connect"
         case openingChannel = "opening channel"
         case forwardRunning = "forward running"
@@ -71,7 +71,9 @@ public class PortForwardContext: ObservableObject, Identifiable {
     }
 
     func putLifecycle(_ state: Lifecycle) {
-        lifecycle = state
+        onMainThread { [weak self] in
+            self?.lifecycle = state
+        }
         lifecycleHandler?(state)
     }
 

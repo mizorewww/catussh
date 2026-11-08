@@ -17,19 +17,21 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(name: "PropertyWrapper", path: "../PropertyWrapper"),
         .package(name: "NSRemoteShell", path: "../../External/NSRemoteShell"),
         .package(name: "Keychain", path: "../Keychain"),
         .package(name: "CatusshDesign", path: "../CatusshDesign"),
+        .package(name: "CatusshEditor", path: "../CatusshEditor"),
+        .package(name: "CatusshTerminal", path: "../CatusshTerminal"),
     ],
     targets: [
         .target(
             name: "CatusshModule",
             dependencies: [
-                "PropertyWrapper",
                 "NSRemoteShell",
                 "Keychain",
                 "CatusshDesign",
+                "CatusshEditor",
+                "CatusshTerminal",
             ]
         ),
         .testTarget(

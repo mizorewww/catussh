@@ -5,7 +5,6 @@
 //  Created by Lakr Aream on 2022/3/2.
 //
 
-import CodeEditorUI
 import CatusshModule
 import SwiftUI
 import CatusshTerminal
@@ -22,6 +21,7 @@ struct mCatusshApp: App {
         // Shared file-transfer core lives in CatusshModule; register the
         // platform UI handler it delegates to.
         FileTransferInterface.uiHandler = IOSFileTransferUIHandler()
+        TerminalInterface.uiHandler = IOSTerminalUIHandler()
 
         _ = LogRedirect.shared
         _ = CatusshStore.shared
@@ -45,21 +45,8 @@ struct mCatusshApp: App {
                 }
                 #endif
                 .onAppear {
-                    // Warm the shared WebKit process pool so the first
-                    // editor (snippet or remote file) skips the cold
-                    // start. SCodeEditor builds its web view lazily now,
-                    // so nothing else pays this at launch; the hidden view
-                    // gets a second to finish its page load before being
-                    // released, or the load would be cancelled and the
-                    // warm-up defeated.
-                    let prewarm = CodeEditorView()
                     AppearancePreference.applyStored()
                     checkAgreement()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                        withExtendedLifetime(prewarm) {
-                            debugPrint("editor \(prewarm) prewarm done")
-                        }
-                    }
                 }
                 .onChange(of: store.licenseAgreed) { _ in
                     checkAgreement()

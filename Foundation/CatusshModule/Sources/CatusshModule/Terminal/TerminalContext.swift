@@ -22,7 +22,7 @@ public protocol TerminalSessionSurface: AnyObject {
     func setupSizeChain(_ callback: @escaping (CGSize) -> Void)
 }
 
-open class TerminalContext: ObservableObject, Identifiable, Equatable {
+open class TerminalContext: ObservableObject, Identifiable, Equatable, @unchecked Sendable {
     public var id: UUID = .init()
 
     public var navigationTitle: String {
@@ -43,10 +43,19 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
 
     @Published public var navigationSubtitle: String = ""
 
-    private var title: String = "" {
-        didSet {
-            onMainThread {
-                self.navigationSubtitle = self.title
+    private var _title: String = ""
+    private var title: String {
+        get {
+            stateAccessLock.lock()
+            defer { stateAccessLock.unlock() }
+            return _title
+        }
+        set {
+            stateAccessLock.lock()
+            _title = newValue
+            stateAccessLock.unlock()
+            onMainThread { [weak self] in
+                self?.navigationSubtitle = newValue
             }
         }
     }
@@ -62,9 +71,7 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
     public let command: SSHCommandReader?
     public var shell: NSRemoteShell = .init()
 
-    /// On a UU Remote device: the host's session this tab shows. Set before
-    /// the tab connects to attach to a detached one; kept across
-    /// reconnects, which attach to it again. Main thread.
+    /// On a UU Remote device: the host's session this tab shows.
     public var uuSessionID: UInt32?
 
     /// The renderer this session writes output to and takes input from.
@@ -79,13 +86,10 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
 
     public static let defaultTerminalSize = CGSize(width: 80, height: 40)
 
-    // The parser thread writes terminalSize and the shell IO thread reads
-    // it; main and the bootstrap thread write continueDecision and the IO
-    // thread reads it. One lock covers both, as bufferAccessLock does
-    // _dataBuffer. Side effects run outside the critical section.
     private let stateAccessLock = NSLock()
     private var _terminalSize: CGSize = defaultTerminalSize
     private var _continueDecision: Bool = true
+    internal let uuWakeSemaphore = DispatchSemaphore(value: 0)
 
     public var terminalSize: CGSize {
         get {
@@ -98,6 +102,7 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
             _terminalSize = newValue
             stateAccessLock.unlock()
             shell.explicitRequestStatusPickup()
+            uuWakeSemaphore.signal()
         }
     }
 
@@ -114,12 +119,14 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
 
     public func insertBuffer(_ str: String) {
         bufferAccessLock.lock()
-        defer { bufferAccessLock.unlock() }
-        guard !closed else { return }
-        _dataBuffer += str
-        Self.queue.async { [weak self] in
-            self?.shell.explicitRequestStatusPickup()
+        guard !closed else {
+            bufferAccessLock.unlock()
+            return
         }
+        _dataBuffer += str
+        bufferAccessLock.unlock()
+        shell.explicitRequestStatusPickup()
+        uuWakeSemaphore.signal()
     }
 
     public var continueDecision: Bool {
@@ -132,8 +139,10 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
             stateAccessLock.lock()
             _continueDecision = newValue
             stateAccessLock.unlock()
-            onMainThread {
-                self.interfaceDisabled = !self.continueDecision
+            uuWakeSemaphore.signal()
+            onMainThread { [weak self] in
+                guard let self else { return }
+                self.interfaceDisabled = !newValue
             }
         }
     }
@@ -149,7 +158,7 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
         self.machine = machine
         command = nil
         remoteType = .machine
-        title = machine.name
+        _title = machine.name
         self.surface = surface
         Self.queue.async {
             self.processBootstrap()
@@ -159,7 +168,7 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
     public init(command: SSHCommandReader, surface: TerminalSessionSurface) {
         machine = command.machine
         self.command = command
-        title = command.command
+        _title = command.command
         remoteType = .command
         self.surface = surface
         Self.queue.async {
@@ -168,7 +177,6 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
     }
 
     public func setupShellData() {
-        // Called on the session's worker queue; reads the worker snapshot.
         shell.applyConnection(for: machine, timeout: CatusshStore.shared.workerTimeoutNumber)
     }
 
@@ -193,7 +201,6 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
         }
 
         setupShellData()
-        // A reconnect starts clean: nothing typed for the old session.
         discardPendingInput()
 
         debugPrint("\(self) \(#function) \(machine.id)")
@@ -213,7 +220,6 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
             self?.terminalSize = size
         }
 
-        // A UU Remote device has a shell of its own, reached through UU.
         if machine.isUURemoteDevice {
             runUURemoteTerminal()
             return
@@ -258,8 +264,11 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
             }
             var read = CatusshStore.shared.machineGroup[self.machine.id]
             if read.isNotPlaceholder() {
-                read.lastBanner = self.shell.remoteBanner ?? "No Banner"
-                CatusshStore.shared.machineGroup[self.machine.id] = read
+                let newBanner = self.shell.remoteBanner ?? "No Banner"
+                if read.lastBanner != newBanner {
+                    read.lastBanner = newBanner
+                    CatusshStore.shared.machineGroup[self.machine.id] = read
+                }
             }
         }
 
@@ -269,45 +278,33 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable {
         } withTerminalSize: { [weak self] in
             var size = self?.terminalSize ?? TerminalContext.defaultTerminalSize
             if size.width < 8 || size.height < 8 {
-                // something went wrong
                 size = TerminalContext.defaultTerminalSize
             }
             return size
         } withWriteDataBuffer: { [weak self] in
             self?.getBuffer() ?? ""
         } withOutputDataBuffer: { [weak self] output in
-            // The main queue is FIFO, so writes stay ordered without
-            // blocking the shell IO thread on the UI run loop.
-            onMainThread {
-                self?.surface.write(output)
-            }
+            // TerminalOutputBuffer and CatusshTerminalView.write are thread-safe;
+            // write directly from the SSH worker thread to avoid flooding the main queue.
+            self?.surface.write(output)
         } withContinuationHandler: { [weak self] in
             self?.continueDecision ?? false
         }
 
-        // leave loop
         debugPrint("\(self) \(#function) defer \(machine.id)")
     }
 
-    /// Terminal modes a full-screen program may have left on: the alternate
-    /// screen, mouse and focus reports, bracketed paste, kitty keyboard
-    /// flags, modifyOtherKeys, application keys, a hidden cursor. A program
-    /// that exits turns them off itself; one whose connection drops cannot,
-    /// and every mouse move and key would then arrive as escape sequences.
-    /// Not a full reset (ESC c), which would also wipe the screen.
     static let modeReset = [
-        "\u{1B}[=0;1u", // kitty keyboard flags off, on the alternate screen
-        "\u{1B}[?1049l", // back to the main screen
-        "\u{1B}[=0;1u", // and off there too
+        "\u{1B}[=0;1u",
+        "\u{1B}[?1049l",
+        "\u{1B}[=0;1u",
         "\u{1B}[?1000l\u{1B}[?1002l\u{1B}[?1003l\u{1B}[?1005l\u{1B}[?1006l\u{1B}[?1015l\u{1B}[?1016l",
         "\u{1B}[?1004l\u{1B}[?2004l\u{1B}[?2026l",
-        "\u{1B}[>4;0m", // modifyOtherKeys off
-        "\u{1B}[?1l\u{1B}>", // normal cursor keys and keypad
+        "\u{1B}[>4;0m",
+        "\u{1B}[?1l\u{1B}>",
         "\u{1B}[?25h\u{1B}[0m",
     ].joined()
 
-    /// Drops what was typed and not yet sent, so it never reaches the next
-    /// session.
     func discardPendingInput() {
         bufferAccessLock.lock()
         _dataBuffer = ""

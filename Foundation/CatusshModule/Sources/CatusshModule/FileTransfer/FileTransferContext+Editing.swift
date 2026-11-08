@@ -34,26 +34,22 @@ public extension FileTransferContext {
     /// Files larger than this are downloaded rather than opened in the editor.
     static let editableSizeLimit: Int64 = 4 * 1024 * 1024
 
-    /// Reads a remote file as UTF-8 text.
+    /// Reads a remote file as UTF-8 text on the context's serial `workerQueue`.
     func readText(at remotePath: String) async throws -> String {
         guard connected else { throw RemoteTextFileError.notConnected }
         let folder = try Self.makeScratchFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
         let local = folder.appendingPathComponent(URL(fileURLWithPath: remotePath).lastPathComponent)
-        // NSRemoteShell serializes its own work; the rest of the transfer code
-        // also calls it from background queues.
         nonisolated(unsafe) let shell = shell
-        // Asked first, so a file that is too large is never fetched. The
-        // answer follows a link to the file it names.
         let size: Int64? = await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            workerQueue.async {
                 continuation.resume(returning: shell.requestFileInfo(at: remotePath)?.size?.int64Value)
             }
         }
         if let size, size > Self.editableSizeLimit {
             throw RemoteTextFileError.tooLarge(bytes: size, limit: Self.editableSizeLimit)
         }
-        let succeeded = await Self.background {
+        let succeeded = await runOnWorker {
             shell.requestDownload(fromFileAndWait: remotePath, toLocalPath: local.path) { _, _, _ in
             } withContinuationHandler: {
                 true
@@ -72,21 +68,17 @@ public extension FileTransferContext {
         return text
     }
 
-    /// Replaces a remote file's contents with `text` (UTF-8). An existing file
-    /// keeps its permissions.
+    /// Replaces a remote file's contents with `text` (UTF-8) on the context's serial `workerQueue`.
     func writeText(_ text: String, to remotePath: String) async throws {
         guard connected else { throw RemoteTextFileError.notConnected }
         let folder = try Self.makeScratchFolder()
         defer { try? FileManager.default.removeItem(at: folder) }
         let remote = URL(fileURLWithPath: remotePath)
-        // Upload keeps the local file's name, so the scratch copy carries the remote one.
         let local = folder.appendingPathComponent(remote.lastPathComponent)
         try Data(text.utf8).write(to: local)
         let directory = remote.deletingLastPathComponent().path
-        // NSRemoteShell serializes its own work; the rest of the transfer code
-        // also calls it from background queues.
         nonisolated(unsafe) let shell = shell
-        let succeeded = await Self.background {
+        let succeeded = await runOnWorker {
             shell.requestUpload(forFileAndWait: local.path, toDirectory: directory) { _, _, _ in
             } withContinuationHandler: {
                 true
@@ -104,10 +96,9 @@ public extension FileTransferContext {
         return folder
     }
 
-    /// Runs a blocking shell call off the main thread.
-    private static func background(_ work: @escaping @Sendable () -> Bool) async -> Bool {
+    private func runOnWorker(_ work: @escaping @Sendable () -> Bool) async -> Bool {
         await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            workerQueue.async {
                 continuation.resume(returning: work())
             }
         }

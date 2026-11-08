@@ -12,7 +12,12 @@ final class TerminalCallbacks: @unchecked Sendable {
     private var requestedFontSize = 14
     private var decoder = TerminalInputDecoder()
 
-    func setInput(_ callback: ((String) -> Void)?) { lock.withLock { input = callback } }
+    func setInput(_ callback: ((String) -> Void)?) {
+        lock.withLock {
+            input = callback
+            decoder.reset()
+        }
+    }
     func setTitle(_ callback: ((String) -> Void)?) { lock.withLock { title = callback } }
     func setBell(_ callback: (() -> Void)?) { lock.withLock { bell = callback } }
     func setResize(_ callback: ((CGSize) -> Void)?) {
@@ -28,7 +33,6 @@ final class TerminalCallbacks: @unchecked Sendable {
     func setFontSize(_ value: Int) { lock.withLock { requestedFontSize = value } }
 
     func receiveInput(_ data: Data) {
-        // Decode on the delivery queue so split UTF-8 sequences retain byte order.
         DispatchQueue.main.async { [self] in
             let (callback, text) = lock.withLock { (input, decoder.append(data)) }
             if !text.isEmpty { callback?(text) }
@@ -56,23 +60,33 @@ final class TerminalCallbacks: @unchecked Sendable {
 struct TerminalInputDecoder {
     private var pending = Data()
 
+    mutating func reset() {
+        pending.removeAll(keepingCapacity: false)
+    }
+
     mutating func append(_ data: Data) -> String {
         pending.append(data)
-        let bytes = Array(pending)
-        var end = bytes.count
-        if let lead = bytes.indices.last(where: { bytes[$0] & 0xC0 != 0x80 }) {
-            let first = bytes[lead]
+        guard !pending.isEmpty else { return "" }
+        var end = pending.count
+        for back in 1 ... min(3, pending.count) {
+            let byte = pending[pending.startIndex + pending.count - back]
+            if byte & 0xC0 == 0x80 { continue }
             let count: Int
-            switch first {
+            switch byte {
             case 0xC2...0xDF: count = 2
             case 0xE0...0xEF: count = 3
             case 0xF0...0xF4: count = 4
             default: count = 1
             }
-            if bytes.count - lead < count { end = lead }
+            if count > back { end = pending.count - back }
+            break
         }
         let text = String(decoding: pending.prefix(end), as: UTF8.self)
-        pending = Data(pending.dropFirst(end))
+        if end == pending.count {
+            pending.removeAll(keepingCapacity: true)
+        } else {
+            pending = Data(pending.dropFirst(end))
+        }
         return text
     }
 }

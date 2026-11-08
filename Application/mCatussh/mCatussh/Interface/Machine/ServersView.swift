@@ -297,14 +297,10 @@ enum ServerActions {
 
     /// Pick servers, then open a terminal for each.
     static func batchStartup() {
-        Task {
+        Task { @MainActor in
             let machines = await CatusshUtil.selectMachine()
-            // Terminals present themselves through PresentationQueue once
-            // connected, so the picker sheet still animating out is fine.
-            onMainThread {
-                for machine in machines {
-                    TerminalManager.shared.begin(for: machine, force: true)
-                }
+            for machine in machines {
+                TerminalManager.shared.begin(for: machine, force: true)
             }
         }
     }

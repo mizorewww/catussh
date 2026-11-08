@@ -13,37 +13,77 @@ struct EditMachineView: View {
 
     let inEditWith: UUID?
 
-    init(requestMachine: UUID? = nil) {
-        inEditWith = requestMachine
-    }
-
-    @State var initializedOnce = false
-
-    @State var remoteAddress = ""
-    @State var remotePort = ""
-    @State var name = ""
-    @State var group = ""
-    @State var comment = ""
-    @State var associatedIdentity: UUID? = nil
-    @State var transport: RDMachine.Transport = .direct
-    @State var serviceTokenID = ""
-    @State var serviceTokenSecret = ""
+    @State var remoteAddress: String
+    @State var remotePort: String
+    @State var name: String
+    @State var group: String
+    @State var comment: String
+    @State var associatedIdentity: UUID?
+    @State var transport: RDMachine.Transport
+    @State var serviceTokenID: String
+    @State var serviceTokenSecret: String
 
     // Remote Desktop
-    @State var remoteDesktopProtocol: RDMachine.RemoteDesktopProtocolType = .none
-    @State var vncPort = "5900"
-    @State var vncPassword = ""
-    @State var vncUsername = ""
-    @State var vncOverSSH = false
-    @State var vncShared = true
-    @State var uuDeviceID = ""
-    @State var uuAssistID = ""
-    @State var uuAssistCode = ""
+    @State var remoteDesktopProtocol: RDMachine.RemoteDesktopProtocolType
+    @State var vncPort: String
+    @State var vncPassword: String
+    @State var vncUsername: String
+    @State var vncOverSSH: Bool
+    @State var vncShared: Bool
+    @State var uuDeviceID: String
+    @State var uuAssistID: String
+    @State var uuAssistCode: String
     @State var openUUAccount = false
     @ObservedObject var uuAccount = UURemoteAccountStore.shared
 
     // Extra
-    @State var fileTransferLoginPath: String = "/"
+    @State var fileTransferLoginPath: String
+
+    init(requestMachine: UUID? = nil) {
+        inEditWith = requestMachine
+        if let edit = requestMachine {
+            let read = CatusshStore.shared.machineGroup[edit]
+            _remoteAddress = State(initialValue: read.remoteAddress)
+            _remotePort = State(initialValue: read.remotePort.isEmpty ? "22" : read.remotePort)
+            _name = State(initialValue: read.name)
+            _group = State(initialValue: read.group)
+            _comment = State(initialValue: read.comment)
+            _associatedIdentity = State(initialValue: read.associatedIdentity.flatMap(UUID.init(uuidString:)))
+            _transport = State(initialValue: read.transport)
+            _serviceTokenID = State(initialValue: read.cloudflareServiceTokenID)
+            _serviceTokenSecret = State(initialValue: read.cloudflareServiceTokenSecret)
+            _remoteDesktopProtocol = State(initialValue: read.remoteDesktopProtocol)
+            _vncPort = State(initialValue: read.vncPort)
+            _vncPassword = State(initialValue: read.vncPassword)
+            _vncUsername = State(initialValue: read.vncUsername)
+            _vncOverSSH = State(initialValue: read.vncOverSSH)
+            _vncShared = State(initialValue: read.vncShared)
+            _uuDeviceID = State(initialValue: read.uuDeviceID)
+            _uuAssistID = State(initialValue: read.uuAssistID)
+            _uuAssistCode = State(initialValue: read.uuAssistCode)
+            _fileTransferLoginPath = State(initialValue: read.fileTransferLoginPath)
+        } else {
+            _remoteAddress = State(initialValue: "")
+            _remotePort = State(initialValue: "22")
+            _name = State(initialValue: "")
+            _group = State(initialValue: "")
+            _comment = State(initialValue: "")
+            _associatedIdentity = State(initialValue: nil)
+            _transport = State(initialValue: .direct)
+            _serviceTokenID = State(initialValue: "")
+            _serviceTokenSecret = State(initialValue: "")
+            _remoteDesktopProtocol = State(initialValue: .none)
+            _vncPort = State(initialValue: "5900")
+            _vncPassword = State(initialValue: "")
+            _vncUsername = State(initialValue: "")
+            _vncOverSSH = State(initialValue: false)
+            _vncShared = State(initialValue: true)
+            _uuDeviceID = State(initialValue: "")
+            _uuAssistID = State(initialValue: "")
+            _uuAssistCode = State(initialValue: "")
+            _fileTransferLoginPath = State(initialValue: "/")
+        }
+    }
 
     var body: some View {
         List {
@@ -208,46 +248,6 @@ struct EditMachineView: View {
                 }
             }
         }
-        .onAppear {
-            if initializedOnce { return }
-            initializedOnce = true
-            // Writing the fields synchronously in onAppear races the
-            // sheet's own first update: on iOS 15 the values could be
-            // swallowed and the form stayed empty. One runloop hop lets
-            // the current update cycle finish before the state changes.
-            DispatchQueue.main.async {
-                if let edit = inEditWith {
-                    let read = CatusshStore.shared.machineGroup[edit]
-                    remoteAddress = read.remoteAddress
-                    remotePort = read.remotePort
-                    name = read.name
-                    group = read.group
-                    comment = read.comment
-                    fileTransferLoginPath = read.fileTransferLoginPath
-                    transport = read.transport
-                    serviceTokenID = read.cloudflareServiceTokenID
-                    serviceTokenSecret = read.cloudflareServiceTokenSecret
-                    remoteDesktopProtocol = read.remoteDesktopProtocol
-                    vncPort = read.vncPort
-                    vncPassword = read.vncPassword
-                    vncUsername = read.vncUsername
-                    vncOverSSH = read.vncOverSSH
-                    vncShared = read.vncShared
-                    uuDeviceID = read.uuDeviceID
-                    uuAssistID = read.uuAssistID
-                    uuAssistCode = read.uuAssistCode
-                    if let aid = read.associatedIdentity {
-                        associatedIdentity = UUID(uuidString: aid)
-                    }
-                }
-                if comment.isEmpty {
-                    comment = "Created at: " + Date().formatted()
-                }
-                if remotePort.isEmpty {
-                    remotePort = "22"
-                }
-            }
-        }
         .rxGroupedList()
         .sheet(isPresented: $openUUAccount) {
             NavigationStack {
@@ -276,10 +276,6 @@ struct EditMachineView: View {
     }
 
     func completeSheet() {
-        guard !name.isEmpty else {
-            UIBridge.presentError(with: "Empty Name")
-            return
-        }
         guard !remoteAddress.isEmpty else {
             UIBridge.presentError(with: "Empty Address")
             return
@@ -294,12 +290,13 @@ struct EditMachineView: View {
         }
 
         let id = inEditWith ?? UUID()
+        let finalName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? remoteAddress : name
 
         var newMachine = RDMachine(
             id: id,
             remoteAddress: remoteAddress,
             remotePort: remotePort,
-            name: name,
+            name: finalName,
             group: group,
             comment: comment,
             associatedIdentity: associatedIdentity?.uuidString

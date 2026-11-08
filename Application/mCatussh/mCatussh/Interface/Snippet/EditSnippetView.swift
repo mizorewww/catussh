@@ -5,7 +5,7 @@
 //  Created by Lakr Aream on 2022/3/3.
 //
 
-import CodeEditorUI
+import CatusshEditor
 import CatusshModule
 import SwiftUI
 import SymbolPicker
@@ -15,23 +15,30 @@ struct EditSnippetView: View {
 
     let inEditWith: UUID?
 
+    @State var name: String
+    @State var group: String
+    @State var code: String
+    @State var comment: String
+    @State var avatar: String
+    @State var openSymbolPicker: Bool = false
+
     init(requestSnippet: UUID? = nil) {
         inEditWith = requestSnippet
+        if let edit = requestSnippet {
+            let read = CatusshStore.shared.snippetGroup[edit]
+            _name = State(initialValue: read.name)
+            _group = State(initialValue: read.group)
+            _code = State(initialValue: read.code.isEmpty ? "#!/bin/bash\n\n" : read.code)
+            _comment = State(initialValue: read.comment)
+            _avatar = State(initialValue: read.getSFAvatar())
+        } else {
+            _name = State(initialValue: "")
+            _group = State(initialValue: "")
+            _code = State(initialValue: "#!/bin/bash\n\n")
+            _comment = State(initialValue: "")
+            _avatar = State(initialValue: "")
+        }
     }
-
-    // Pinned in state so the editor's factory and its view stay paired while
-    // SwiftUI recreates this view.
-    @State var editor = SCodeEditor()
-
-    @State var initializedOnce = false
-
-    @State var name: String = ""
-    @State var group: String = ""
-    @State var code: String = ""
-    @State var comment: String = ""
-    @State var avatar: String = ""
-
-    @State var openSymbolPicker: Bool = false
 
     var body: some View {
         List {
@@ -53,9 +60,13 @@ struct EditSnippetView: View {
             }
 
             Section {
-                editor
-                    .onContentChange { code = $0 }
-                    .frame(height: 250)
+                CodeEditor(
+                    text: $code,
+                    language: .bash,
+                    wrapsLines: true,
+                    fontSize: CGFloat(CatusshStore.shared.terminalFontSize)
+                )
+                .frame(height: 250)
             } header: {
                 RXSectionHeader("Code")
             }
@@ -75,32 +86,6 @@ struct EditSnippetView: View {
                         Label("Delete Snippet", systemImage: "trash")
                             .foregroundColor(.red)
                     }
-                }
-            }
-        }
-        .onAppear {
-            if initializedOnce { return }
-            initializedOnce = true
-            // Writing the fields synchronously in onAppear races the
-            // sheet's own first update: on iOS 15 the values could be
-            // swallowed and the form stayed empty. One runloop hop lets
-            // the current update cycle finish before the state changes.
-            DispatchQueue.main.async {
-                if let edit = inEditWith {
-                    let read = CatusshStore.shared.snippetGroup[edit]
-                    name = read.name
-                    group = read.group
-                    code = read.code
-                    comment = read.comment
-                    avatar = read.getSFAvatar()
-                }
-                if comment.isEmpty {
-                    comment = "Created at: " + Date().formatted()
-                }
-                if code.isEmpty {
-                    editor.setDocumentData("#!/bin/bash\n\n")
-                } else {
-                    editor.setDocumentData(code)
                 }
             }
         }

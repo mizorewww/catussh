@@ -13,21 +13,37 @@ struct EditIdentityView: View {
 
     let inEditWith: UUID?
 
-    init(requestIdentity: UUID? = nil) {
-        inEditWith = requestIdentity
-    }
-
-    @State var initializedOnce = false
-
-    @State var username: String = ""
-    @State var password: String = ""
-    @State var privateKey: String = ""
-    @State var publicKey: String = ""
-    @State var comment: String = ""
-    @State var group: String = ""
-    @State var autoAuth: Bool = true
+    @State var username: String
+    @State var password: String
+    @State var privateKey: String
+    @State var publicKey: String
+    @State var comment: String
+    @State var group: String
+    @State var autoAuth: Bool
 
     @State var showPassword = false
+
+    init(requestIdentity: UUID? = nil) {
+        inEditWith = requestIdentity
+        if let edit = requestIdentity {
+            let read = CatusshStore.shared.identityGroup[edit]
+            _username = State(initialValue: read.username)
+            _password = State(initialValue: read.password)
+            _privateKey = State(initialValue: read.privateKey)
+            _publicKey = State(initialValue: read.publicKey)
+            _comment = State(initialValue: read.comment)
+            _group = State(initialValue: read.group)
+            _autoAuth = State(initialValue: read.authenticAutomatically)
+        } else {
+            _username = State(initialValue: "")
+            _password = State(initialValue: "")
+            _privateKey = State(initialValue: "")
+            _publicKey = State(initialValue: "")
+            _comment = State(initialValue: "")
+            _group = State(initialValue: "")
+            _autoAuth = State(initialValue: true)
+        }
+    }
 
     var body: some View {
         List {
@@ -121,29 +137,6 @@ struct EditIdentityView: View {
                 }
             }
         }
-        .onAppear {
-            if initializedOnce { return }
-            initializedOnce = true
-            // Writing the fields synchronously in onAppear races the
-            // sheet's own first update: on iOS 15 the values could be
-            // swallowed and the form stayed empty. One runloop hop lets
-            // the current update cycle finish before the state changes.
-            DispatchQueue.main.async {
-                if let edit = inEditWith {
-                    let read = CatusshStore.shared.identityGroup[edit]
-                    username = read.username
-                    password = read.password
-                    privateKey = read.privateKey
-                    publicKey = read.publicKey
-                    comment = read.comment
-                    group = read.group
-                    autoAuth = read.authenticAutomatically
-                }
-                if comment.isEmpty {
-                    comment = "Created at: " + Date().formatted()
-                }
-            }
-        }
         .rxGroupedList()
         .navigationTitle(inEditWith == nil ? "New Identity" : "Edit Identity")
         .toolbar {
@@ -234,7 +227,7 @@ struct EditIdentityView: View {
             UIBridge.presentError(with: "Unable to read")
             return
         }
-        if str.contains("PRIVATE KEY") {
+        if RDIdentity.looksLikePrivateKey(str) {
             privateKey = str
         } else {
             UIBridge.requiresConfirmation(
@@ -250,7 +243,7 @@ struct EditIdentityView: View {
             UIBridge.presentError(with: "Unable to read")
             return
         }
-        if str.contains("ssh-") {
+        if RDIdentity.looksLikePublicKey(str) {
             publicKey = str
         } else {
             UIBridge.requiresConfirmation(

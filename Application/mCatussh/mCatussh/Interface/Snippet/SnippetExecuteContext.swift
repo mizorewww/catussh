@@ -6,16 +6,19 @@
 //  context keeps the batch: terminals, progress and per-server close.
 //
 
-import NSRemoteShell
 import CatusshModule
-import SwiftUI
 import CatusshTerminal
+import NSRemoteShell
+import SwiftUI
 
-class SnippetExecuteContext: ObservableObject {
+final class SnippetExecuteContext: ObservableObject, @unchecked Sendable {
     let snippet: RDSnippet
     let machineGroup: [RDMachine]
-    var shellGroup: [NSRemoteShell]
     let terminalGroup: [CatusshTerminalView]
+
+    private let lock = NSLock()
+    private var activeShells: [RDMachine.ID: NSRemoteShell] = [:]
+    private var shouldContinue: [RDMachine.ID: Bool] = [:]
 
     @Published var interfaceAllocated = false
 
@@ -31,13 +34,16 @@ class SnippetExecuteContext: ObservableObject {
         self.snippet = snippet
         self.machineGroup = machineGroup
         var buildTermUI = [CatusshTerminalView]()
-        machineGroup.forEach { _ in
-            buildTermUI.append(.init())
+        let fontSize = CatusshStore.shared.terminalFontSize
+        for machine in machineGroup {
+            let view = CatusshTerminalView()
+            view.setTerminalFontSize(with: fontSize)
+            buildTermUI.append(view)
+            activeShells[machine.id] = NSRemoteShell.configured(for: machine, timeout: CatusshStore.shared.timeoutNumber)
+            shouldContinue[machine.id] = true
         }
         terminalGroup = buildTermUI
         totalProgress = Float(machineGroup.count)
-        shellGroup = machineGroup
-            .map { NSRemoteShell.configured(for: $0, timeout: CatusshStore.shared.timeoutNumber) }
     }
 
     deinit {
@@ -50,8 +56,8 @@ class SnippetExecuteContext: ObservableObject {
         updateProgress()
         for idx in 0 ..< machineGroup.count {
             let machine = machineGroup[idx]
-            let shell = shellGroup[idx]
             let term = terminalGroup[idx]
+            guard let shell = lock.withLock({ activeShells[machine.id] }) else { continue }
             SnippetExecuteContext.queue.async {
                 self.createExecute(for: machine, shell: shell, term: term)
             }
@@ -59,23 +65,21 @@ class SnippetExecuteContext: ObservableObject {
     }
 
     func updateProgress() {
-        onMainThread { [self] in
-            debugPrint("\(self) \(completed.count)")
-            completedProgress = Float(completed.count)
-            totalProgress = Float(machineGroup.count)
+        onMainThread { [weak self] in
+            guard let self else { return }
+            self.completedProgress = Float(self.completed.count)
+            self.totalProgress = Float(self.machineGroup.count)
         }
     }
 
     func reportError() {
-        onMainThread { self.hasError = true }
+        onMainThread { [weak self] in self?.hasError = true }
     }
 
     func createExecute(for machine: RDMachine, shell: NSRemoteShell, term: CatusshTerminalView) {
         defer {
             moveToComplete(for: machine.id)
         }
-        // Runs on the exec queue; the store read is its worker snapshot.
-        term.setTerminalFontSize(with: CatusshStore.shared.workerTerminalFontSize)
         term.write("[*] connecting to host...\r\n")
         let outcome = SnippetExecSession(machine: machine, shell: shell).execute(
             snippet.code,
@@ -85,8 +89,8 @@ class SnippetExecuteContext: ObservableObject {
             onOutput: { output in
                 term.write(output)
             },
-            withContinuationHandler: {
-                true // close it to cancel the exec
+            withContinuationHandler: { [weak self] in
+                self?.lock.withLock { self?.shouldContinue[machine.id] ?? false } ?? false
             }
         )
         switch outcome {
@@ -102,29 +106,33 @@ class SnippetExecuteContext: ObservableObject {
     }
 
     func moveToComplete(for mid: RDMachine.ID) {
-        onMainThread { [self] in
-            defer { updateProgress() }
-            // shellGroup is parallel to machineGroup; running shrinks as
-            // sessions complete, so its index must not be used here.
-            if let index = running.firstIndex(where: { $0.id == mid }) {
-                let get = running.remove(at: index)
-                completed.append(get)
-            }
-            if let shellIndex = machineGroup.firstIndex(where: { $0.id == mid }) {
-                shellGroup[shellIndex] = .init()
+        let shell = lock.withLock { () -> NSRemoteShell? in
+            shouldContinue[mid] = false
+            return activeShells.removeValue(forKey: mid)
+        }
+        if let shell {
+            shell.requestDisconnectAndWait()
+            shell.destroyPermanently()
+        }
+        onMainThread { [weak self] in
+            guard let self else { return }
+            defer { self.updateProgress() }
+            if let index = self.running.firstIndex(where: { $0.id == mid }) {
+                let get = self.running.remove(at: index)
+                self.completed.append(get)
             }
         }
     }
 
     func close(for mid: RDMachine.ID) {
-        onMainThread { [self] in
-            defer { updateProgress() }
-            let index = machineGroup.firstIndex { $0.id == mid }
-            if let index = index {
-                let shell = shellGroup[index]
-                SnippetExecuteContext.queue.async {
-                    shell.requestDisconnectAndWait()
-                }
+        let shell = lock.withLock { () -> NSRemoteShell? in
+            shouldContinue[mid] = false
+            return activeShells.removeValue(forKey: mid)
+        }
+        if let shell {
+            SnippetExecuteContext.queue.async {
+                shell.requestDisconnectAndWait()
+                shell.destroyPermanently()
             }
         }
     }

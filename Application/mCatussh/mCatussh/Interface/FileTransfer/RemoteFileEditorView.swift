@@ -2,9 +2,7 @@
 //  RemoteFileEditorView.swift
 //  mCatussh
 //
-//  Edits a text file on the server: reads it over SFTP, edits it in the
-//  Runestone editor, and writes it back with Save (⌘S). Closing with unsaved
-//  changes asks first.
+//  Edits a text file on the server using the shared EditorDocument in CatusshModule.
 //
 
 import CatusshEditor
@@ -15,37 +13,35 @@ struct RemoteFileEditorView: View {
     @ObservedObject var context: FileTransferContext
     let remotePath: String
 
+    @StateObject private var document: EditorDocument
+    @ObservedObject private var caret: EditorCaretPosition
     @Environment(\.dismiss) private var dismiss
 
-    private enum Phase: Equatable {
-        case loading
-        case editing
-        case failed(String)
-    }
-
-    @State private var phase = Phase.loading
-    @State private var text = ""
-    @State private var savedText = ""
-    @State private var language = EditorLanguage.plain
-    @State private var caret = EditorCaret(line: 1, column: 1)
     @State private var wrapsLines = false
-    @State private var saving = false
     @State private var saveError: String?
     @State private var confirmClose = false
 
-    private var name: String { (remotePath as NSString).lastPathComponent }
-    private var isEdited: Bool { phase == .editing && text != savedText }
+    init(context: FileTransferContext, remotePath: String) {
+        self.context = context
+        self.remotePath = remotePath
+        let doc = EditorDocument(path: remotePath, context: context)
+        _document = StateObject(wrappedValue: doc)
+        _caret = ObservedObject(wrappedValue: doc.caret)
+    }
 
     var body: some View {
         NavigationStack {
             content
-                .navigationTitle(name)
+                .navigationTitle(document.name)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { toolbar }
         }
-        .interactiveDismissDisabled(isEdited)
-        .confirmationDialog("Save changes to \(name)?", isPresented: $confirmClose, titleVisibility: .visible) {
-            Button("Save") { Task { if await save() { dismiss() } } }
+        .interactiveDismissDisabled(document.isEdited)
+        .confirmationDialog("Save changes to \(document.name)?", isPresented: $confirmClose, titleVisibility: .visible) {
+            Button("Save") {
+                document.save { saveError = $0 }
+                dismiss()
+            }
             Button("Don't Save", role: .destructive) { dismiss() }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -56,47 +52,49 @@ struct RemoteFileEditorView: View {
         } message: {
             Text(saveError ?? "")
         }
-        .task { await load() }
     }
 
     @ViewBuilder private var content: some View {
-        switch phase {
+        switch document.phase {
         case .loading:
-            ProgressView("Opening \(name)…")
+            ProgressView("Opening \(document.name)…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case let .failed(message):
             EmptyStateView(
-                "Can't open \(name)",
+                "Can't open \(document.name)",
                 systemImage: "doc.badge.ellipsis",
                 message: message,
                 actionTitle: "Try Again"
             ) {
-                Task { await load() }
+                document.load()
             }
             .padding(RX.Space.s4)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .editing:
-            CodeEditor(text: $text, language: language, wrapsLines: wrapsLines) { caret = $0 }
+            CodeEditor(
+                text: Binding(get: { document.text }, set: { document.text = $0 }),
+                language: document.language,
+                wrapsLines: wrapsLines
+            ) { caret.value = $0 }
                 .ignoresSafeArea(.container, edges: .bottom)
                 .safeAreaInset(edge: .bottom, spacing: 0) { statusBar }
         }
     }
 
-    /// Language, caret position and whether there are unsaved changes.
     private var statusBar: some View {
         HStack(spacing: RX.Space.s3) {
             Menu {
-                Picker("Syntax", selection: $language) {
+                Picker("Syntax", selection: $document.language) {
                     ForEach(EditorLanguage.allCases) { Text($0.title).tag($0) }
                 }
             } label: {
-                Text(language.title)
+                Text(document.language.title)
             }
             .help("Syntax highlighting")
-            Text("Ln \(caret.line), Col \(caret.column)")
+            Text("Ln \(caret.value.line), Col \(caret.value.column)")
                 .monospacedDigit()
             Spacer()
-            if isEdited {
+            if document.isEdited {
                 Text("Edited")
                     .foregroundStyle(.rxWarning)
             }
@@ -111,7 +109,7 @@ struct RemoteFileEditorView: View {
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .cancellationAction) {
             Button("Close") {
-                if isEdited { confirmClose = true } else { dismiss() }
+                if document.isEdited { confirmClose = true } else { dismiss() }
             }
             .keyboardShortcut("w", modifiers: .command)
         }
@@ -120,51 +118,21 @@ struct RemoteFileEditorView: View {
                 Label("Wrap Lines", systemImage: "text.word.spacing")
             }
             .help("Wrap long lines")
-            .disabled(phase != .editing)
-            if saving {
+            .disabled(document.phase != .editing)
+            if document.saving {
                 ProgressView()
             } else {
-                Button("Save") { Task { await save() } }
-                    .keyboardShortcut("s", modifiers: .command)
-                    .disabled(!isEdited)
+                Button("Save") {
+                    document.save { saveError = $0 }
+                }
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(!document.isEdited)
             }
-        }
-    }
-
-    private func load() async {
-        phase = .loading
-        do {
-            let loaded = try await context.readText(at: remotePath)
-            text = loaded
-            savedText = loaded
-            let firstLine = loaded.prefix { $0 != "\n" }
-            language = EditorLanguage.detect(fileName: name, firstLine: String(firstLine))
-            phase = .editing
-        } catch {
-            phase = .failed(error.localizedDescription)
-        }
-    }
-
-    @discardableResult
-    private func save() async -> Bool {
-        let snapshot = text
-        saving = true
-        defer { saving = false }
-        do {
-            try await context.writeText(snapshot, to: remotePath)
-            savedText = snapshot
-            context.loadCurrentFileList()
-            return true
-        } catch {
-            saveError = error.localizedDescription
-            return false
         }
     }
 }
 
 #if DEBUG
-    /// The editor on a sample file, with no server: launch a debug build with
-    /// CATUSSH_PREVIEW_EDITOR=1 to check highlighting and layout.
     struct EditorPreviewScreen: View {
         @State private var text = """
         #!/usr/bin/env bash

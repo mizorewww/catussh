@@ -12,9 +12,9 @@ import SwiftUI
     public typealias PlatformTerminalView = UITerminalView
 #endif
 
-/// One native terminal per SSH context. Copies of this SwiftUI value share the
+    /// One native terminal per SSH context. Copies of this SwiftUI value share the
 /// same view/session, preserving scrollback when a terminal moves between windows.
-public struct CatusshTerminalView {
+public struct CatusshTerminalView: Sendable {
     nonisolated let session: CatusshTerminalSession
 
     nonisolated public init() { session = CatusshTerminalSession() }
@@ -70,6 +70,33 @@ public struct CatusshTerminalView {
         public func updateUIView(_: UITerminalView, context _: Context) {}
     }
 #endif
+
+/// Bridges the shared terminal session core to `CatusshTerminalView`.
+public final class TerminalSurfaceBridge: @unchecked Sendable {
+    public let termInterface = CatusshTerminalView()
+
+    public init() {}
+
+    public func write(_ string: String) {
+        termInterface.write(string)
+    }
+
+    public func setupBellChain(_ callback: @escaping () -> Void) {
+        termInterface.setupBellChain(callback: callback)
+    }
+
+    public func setupBufferChain(_ callback: @escaping (String) -> Void) {
+        termInterface.setupBufferChain(callback: callback)
+    }
+
+    public func setupTitleChain(_ callback: @escaping (String) -> Void) {
+        termInterface.setupTitleChain(callback: callback)
+    }
+
+    public func setupSizeChain(_ callback: @escaping (CGSize) -> Void) {
+        termInterface.setupSizeChain(callback: callback)
+    }
+}
 
 /// Only the immutable/thread-safe transport objects cross queues. AppKit storage
 /// and all Ghostty view operations are explicitly main-actor isolated.
