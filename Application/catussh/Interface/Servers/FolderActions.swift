@@ -100,15 +100,15 @@ struct MoveToFolderMenu: View {
         // A linked folder is filled from its account, not by hand.
         let targets = store.folders.filter { !$0.isLinked }
         Menu {
-            Button("Default") { store.moveServers([machine], toFolder: "") }
+            RXMenuItem("Default") { store.moveServers([machine], toFolder: "") }
                 .disabled(current.isEmpty)
             if !targets.isEmpty { Divider() }
             ForEach(targets) { folder in
-                Button(folder.name) { store.moveServers([machine], toFolder: folder.name) }
+                RXMenuItem(folder.name) { store.moveServers([machine], toFolder: folder.name) }
                     .disabled(folder.name == current)
             }
             Divider()
-            Button("New Folder…") { FolderActions.newFolder(moving: [machine]) }
+            RXMenuItem("New Folder…") { FolderActions.newFolder(moving: [machine]) }
         } label: {
             Label("Move to Folder", systemImage: "folder")
         }
@@ -187,15 +187,15 @@ struct FolderHeaderRow: View {
 
     @ViewBuilder private var menuItems: some View {
         if case .uuRemote = folder?.source {
-            Button("UU Remote Account…") { FolderActions.linkUURemote() }
+            RXMenuItem("UU Remote Account…") { FolderActions.linkUURemote() }
             Divider()
         }
-        Button("Rename…") { FolderActions.rename(name) }
+        RXMenuItem("Rename…") { FolderActions.rename(name) }
         // A linked folder goes with its account: deleting it signs out.
         if folder?.isLinked == true {
-            Button("Remove Folder and Sign Out…", role: .destructive) { FolderActions.delete(name) }
+            RXMenuItem("Remove Folder and Sign Out…", role: .destructive) { FolderActions.delete(name) }
         } else {
-            Button("Delete Folder…", role: .destructive) { FolderActions.delete(name) }
+            RXMenuItem("Delete Folder…", role: .destructive) { FolderActions.delete(name) }
         }
     }
 

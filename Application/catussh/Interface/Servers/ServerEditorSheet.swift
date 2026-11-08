@@ -162,7 +162,7 @@ struct ServerEditorSheet: View {
                         if !existingGroups.isEmpty {
                             RXMenuButton("Existing Groups", systemImage: "chevron.down", kind: .bordered, size: .regular, iconOnly: true) {
                                 ForEach(existingGroups, id: \.self) { item in
-                                    Button(item) { group = item }
+                                    RXMenuItem(item) { group = item }
                                 }
                             }
                         }

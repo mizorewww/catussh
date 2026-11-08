@@ -122,12 +122,12 @@ private struct SnippetTile: View {
                 Button("Run…") { SnippetActions.run(snippet.id) }
                     .buttonStyle(.rx(size: .small))
                 RXMenuButton("More", systemImage: "ellipsis", kind: .plain, size: .small, iconOnly: true) {
-                    Button("Run…") { SnippetActions.run(snippet.id) }
-                    Button("Edit…", action: edit)
-                    Button("Duplicate") { SnippetActions.duplicate(snippet.id) }
-                    Button("Copy Command") { UIBridge.sendPasteboard(str: snippet.code) }
+                    RXMenuItem("Run…") { SnippetActions.run(snippet.id) }
+                    RXMenuItem("Edit…", action: edit)
+                    RXMenuItem("Duplicate") { SnippetActions.duplicate(snippet.id) }
+                    RXMenuItem("Copy Command") { UIBridge.sendPasteboard(str: snippet.code) }
                     Divider()
-                    Button("Delete…", role: .destructive) { SnippetActions.delete(snippet.id) }
+                    RXMenuItem("Delete…", role: .destructive) { SnippetActions.delete(snippet.id) }
                 }
             }
             CodeBlock(snippet.code.trimmingCharacters(in: .whitespacesAndNewlines), lineLimit: 4)

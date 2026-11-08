@@ -191,98 +191,66 @@ struct ServerContextMenu: View {
         let read = CatusshStore.shared.machineGroup[machine]
         Group {
             if includesTools {
-                Button {
+                RXMenuItem("Open Terminal", systemImage: ServerTool.terminal.systemImage) {
                     ServerTool.terminal.show(machine)
-                } label: {
-                    Label("Open Terminal", systemImage: ServerTool.terminal.systemImage)
                 }
-                Button {
+                RXMenuItem("Open Files", systemImage: ServerTool.files.systemImage) {
                     ServerTool.files.show(machine)
-                } label: {
-                    Label("Open Files", systemImage: ServerTool.files.systemImage)
                 }
-                Button {
+                RXMenuItem("Open Editor", systemImage: ServerTool.editor.systemImage) {
                     ServerTool.editor.show(machine)
-                } label: {
-                    Label("Open Editor", systemImage: ServerTool.editor.systemImage)
                 }
-                Button {
+                RXMenuItem("Open Monitor", systemImage: ServerTool.monitor.systemImage) {
                     ServerTool.monitor.show(machine)
-                } label: {
-                    Label("Open Monitor", systemImage: ServerTool.monitor.systemImage)
                 }
                 if read.hasRemoteDesktop {
-                    Button {
+                    RXMenuItem("Open Desktop", systemImage: ServerTool.desktop.systemImage) {
                         ServerTool.desktop.show(machine)
-                    } label: {
-                        Label("Open Desktop", systemImage: ServerTool.desktop.systemImage)
                     }
-                    Button {
+                    RXMenuItem("View Desktop Only", systemImage: "eye") {
                         router.openDesktop(machine: machine, viewOnly: true)
-                    } label: {
-                        Label("View Desktop Only", systemImage: "eye")
                     }
                 }
             }
-            Button {
+            RXMenuItem("New Terminal", systemImage: "plus.rectangle") {
                 router.openTerminal(machine: machine)
-            } label: {
-                Label("New Terminal", systemImage: "plus.rectangle")
             }
-            Button {
+            RXMenuItem("Show in Menu Bar", systemImage: "menubar.rectangle") {
                 router.showInMenuBar(machine: machine)
-            } label: {
-                Label("Show in Menu Bar", systemImage: "menubar.rectangle")
             }
             Divider()
-            Button {
+            RXMenuItem("Edit…", systemImage: "pencil") {
                 ServerActions.edit(machine)
-            } label: {
-                Label("Edit…", systemImage: "pencil")
             }
             MoveToFolderMenu(machine: machine)
-            Button {
+            RXMenuItem("Duplicate", systemImage: "plus.square.on.square") {
                 ServerActions.duplicate(machine)
-            } label: {
-                Label("Duplicate", systemImage: "plus.square.on.square")
             }
             if read.isUURemoteDevice {
                 // Its address is the device id; no ssh command reaches it.
-                Button {
+                RXMenuItem("Copy Device ID", systemImage: "doc.on.doc") {
                     UIBridge.sendPasteboard(str: read.uuDeviceID)
-                } label: {
-                    Label("Copy Device ID", systemImage: "doc.on.doc")
                 }
             } else {
-                Button {
+                RXMenuItem("Copy Address", systemImage: "doc.on.doc") {
                     ServerActions.copyAddress(machine)
-                } label: {
-                    Label("Copy Address", systemImage: "doc.on.doc")
                 }
-                Button {
+                RXMenuItem("Copy SSH Command", systemImage: "chevron.left.forwardslash.chevron.right") {
                     ServerActions.copyCommand(machine)
-                } label: {
-                    Label("Copy SSH Command", systemImage: "chevron.left.forwardslash.chevron.right")
                 }
             }
-            Button {
+            RXMenuItem("Forget Host Key…", systemImage: "key.slash") {
                 ServerActions.forgetHostKey(machine)
-            } label: {
-                Label("Forget Host Key…", systemImage: "key.slash")
             }
             if CatusshStore.shared.machineGroup[machine].hasGhosttyTerminfo {
-                Button {
+                RXMenuItem("Check Terminfo Again", systemImage: "arrow.triangle.2.circlepath") {
                     ServerActions.reinstallTerminfo(machine)
-                } label: {
-                    Label("Check Terminfo Again", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .help("On the next terminal, check that the server still has Ghostty's terminfo, and install it if not")
             }
             Divider()
-            Button(role: .destructive) {
+            RXMenuItem("Delete…", systemImage: "trash", role: .destructive) {
                 ServerActions.delete([machine])
-            } label: {
-                Label("Delete…", systemImage: "trash")
             }
         }
     }

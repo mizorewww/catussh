@@ -203,9 +203,9 @@ private struct IdentityDetail: View {
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!draft.differs(from: original) || !draft.isValid)
                 RXMenuButton("More", systemImage: "ellipsis", kind: .plain, size: .small, iconOnly: true) {
-                    Button("Duplicate") { IdentityActions.duplicate(identity) }
+                    RXMenuItem("Duplicate") { IdentityActions.duplicate(identity) }
                     Divider()
-                    Button("Delete…", role: .destructive) { IdentityActions.delete(identity) }
+                    RXMenuItem("Delete…", role: .destructive) { IdentityActions.delete(identity) }
                 }
             }
             IdentityForm(draft: $draft)

@@ -504,6 +504,85 @@ public struct RXPicker<Value: Hashable>: View {
     }
 }
 
+private struct RXMenuDismissKey: EnvironmentKey {
+    static let defaultValue: (() -> Void)? = nil
+}
+
+public extension EnvironmentValues {
+    var rxMenuDismiss: (() -> Void)? {
+        get { self[RXMenuDismissKey.self] }
+        set { self[RXMenuDismissKey.self] = newValue }
+    }
+}
+
+/// A menu item button inside `RXMenuButton` whose action automatically dismisses
+/// the enclosing popover whether activated by mouse click or Accessibility `AXPress`.
+public struct RXMenuItem<Label: View>: View {
+    @Environment(\.rxMenuDismiss) private var menuDismiss
+    @Environment(\.dismiss) private var environmentDismiss
+    @State private var hovered = false
+
+    let role: ButtonRole?
+    let action: () -> Void
+    let label: Label
+
+    public init(
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void,
+        @ViewBuilder label: () -> Label
+    ) {
+        self.role = role
+        self.action = action
+        self.label = label()
+    }
+
+    public init(
+        _ title: String,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) where Label == Text {
+        self.role = role
+        self.action = action
+        self.label = Text(title)
+    }
+
+    public init(
+        _ title: String,
+        systemImage: String,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) where Label == SwiftUI.Label<Text, Image> {
+        self.role = role
+        self.action = action
+        self.label = SwiftUI.Label(title, systemImage: systemImage)
+    }
+
+    public var body: some View {
+        Button(role: role) {
+            if let menuDismiss {
+                menuDismiss()
+            } else {
+                environmentDismiss()
+            }
+            action()
+        } label: {
+            label
+                .font(.rxBody)
+                .foregroundStyle(role == .destructive ? Color.rxDanger : Color.rxInk)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .frame(height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(hovered ? Color.rxRowHover : Color.clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+    }
+}
+
 /// An icon-only or label-based menu button that works reliably with Accessibility (`AXPress`) on macOS.
 public struct RXMenuButton<MenuContent: View>: View {
     let title: String
@@ -543,42 +622,10 @@ public struct RXMenuButton<MenuContent: View>: View {
             VStack(alignment: .leading, spacing: 2) {
                 content
             }
-            .buttonStyle(RXPopoverMenuItemStyle(dismiss: { isOpen = false }))
+            .environment(\.rxMenuDismiss, { isOpen = false })
             .padding(6)
             .frame(minWidth: 160)
         }
-    }
-}
-
-private struct RXPopoverMenuItemStyle: PrimitiveButtonStyle {
-    let dismiss: () -> Void
-    @State private var hovered = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.rxBody)
-            .foregroundStyle(configuration.role == .destructive ? Color.rxDanger : Color.rxInk)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(hovered ? Color.rxRowHover : Color.clear)
-            )
-            .contentShape(Rectangle())
-            .onHover { hovered = $0 }
-            .onTapGesture {
-                dismiss()
-                configuration.trigger()
-            }
-            .accessibilityRepresentation {
-                Button(role: configuration.role) {
-                    dismiss()
-                    configuration.trigger()
-                } label: {
-                    configuration.label
-                }
-            }
     }
 }
 
