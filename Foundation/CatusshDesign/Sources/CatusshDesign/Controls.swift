@@ -571,11 +571,13 @@ private struct RXPopoverMenuItemStyle: PrimitiveButtonStyle {
                 dismiss()
                 configuration.trigger()
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction {
-                dismiss()
-                configuration.trigger()
+            .accessibilityRepresentation {
+                Button(role: configuration.role) {
+                    dismiss()
+                    configuration.trigger()
+                } label: {
+                    configuration.label
+                }
             }
     }
 }
