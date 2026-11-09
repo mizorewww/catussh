@@ -139,6 +139,25 @@ struct QuickConnectHero: View {
             }
             .animation(.easeOut(duration: 0.2), value: parsed)
 
+            Button {
+                AppRouter.shared.openLocalTerminal()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "laptopcomputer")
+                        .font(.system(size: 12))
+                    Text("Open Local Terminal")
+                        .font(.system(size: 12, weight: .medium))
+                    KeyHint("⌥⌘T")
+                }
+                .foregroundStyle(.rxInk)
+                .padding(.horizontal, 12)
+                .frame(height: 28)
+                .background(Capsule().fill(Color.primary.opacity(0.08)))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Open a local shell on this Mac (⌥⌘T)")
+
             if let suggestion {
                 Button {
                     command = suggestion

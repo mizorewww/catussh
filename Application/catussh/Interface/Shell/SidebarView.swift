@@ -255,6 +255,8 @@ private struct OwnerSidebarRow: View {
             return store.machineGroup[id].name
         case let .command(id):
             return terminals.sessionContexts.first { $0.id == id }?.displayName ?? "Terminal"
+        case .local:
+            return "Local Terminal"
         }
     }
 
@@ -271,8 +273,14 @@ private struct OwnerSidebarRow: View {
 
     var body: some View {
         HStack(spacing: RX.Space.s2) {
-            SidebarLabel(systemImage: { if case .command = owner { return "terminal" } else { return "server.rack" } }()) {
-                RedactableText(title, redacted: store.machineRedacted == .all)
+            SidebarLabel(systemImage: {
+                switch owner {
+                case .server: return "server.rack"
+                case .command: return "terminal"
+                case .local: return "laptopcomputer"
+                }
+            }()) {
+                RedactableText(title, redacted: owner != .local && store.machineRedacted == .all)
                     .truncationMode(.middle)
             }
             if case .server = owner {

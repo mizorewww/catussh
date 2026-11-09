@@ -368,6 +368,9 @@ struct UURemoteSessionPickerSheet: View {
                         .foregroundStyle(.rxInkSecondary)
                 }
                 Spacer()
+                if !session.isDetached {
+                    RXTag("Attached")
+                }
                 if !session.shell.isEmpty { RXTag(session.shell) }
             }
             .padding(.horizontal, RX.Space.s2)
@@ -395,14 +398,23 @@ struct UURemoteSessionPickerSheet: View {
         }
         defer { watch.cancel() }
         do {
-            let detached = try await UURemoteConnections.shared.sessions(for: machine).filter(\.isDetached)
+            let locallyAttachedIDs = Set(
+                TerminalManager.shared.sessionContexts
+                    .filter { $0.remoteType == .machine && $0.machine.id == machine.id && !$0.closed }
+                    .compactMap(\.uuSessionID)
+            )
+            let available = try await UURemoteConnections.shared.sessions(for: machine).filter {
+                !locallyAttachedIDs.contains($0.id)
+            }
             // Nothing to resume: straight to a new one.
-            if detached.isEmpty {
+            if available.isEmpty {
                 onComplete(.new)
                 return
             }
-            sessions = detached
-            if selection.map({ id in !detached.contains { $0.id == id } }) ?? true { selection = detached.first?.id }
+            sessions = available
+            if selection.map({ id in !available.contains { $0.id == id } }) ?? true {
+                selection = (available.first(where: \.isDetached) ?? available.first)?.id
+            }
             phase = .loaded
         } catch {
             phase = .failed(error.localizedDescription)

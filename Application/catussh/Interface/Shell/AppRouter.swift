@@ -159,6 +159,15 @@ final class AppRouter: ObservableObject {
         if opensAutomatically { route = .terminal(context.id) }
     }
 
+    func openLocalTerminal(another: Bool = false) {
+        if !another, let existing = TerminalManager.shared.sessionContexts.first(where: { $0.remoteType == .local && !$0.closed }) {
+            route = .terminal(existing.id)
+            return
+        }
+        let context = TerminalManager.shared.createLocalSession()
+        if opensAutomatically { route = .terminal(context.id) }
+    }
+
     func openMonitor(machine: RDMachine.ID) {
         do {
             let session = try MonitorCenter.shared.begin(for: machine)
@@ -254,7 +263,11 @@ final class AppRouter: ObservableObject {
         switch route {
         case let .terminal(id):
             guard let context = TerminalManager.shared.sessionContexts.first(where: { $0.id == id }) else { return nil }
-            return context.remoteType == .machine ? .server(context.machine.id) : .command(context.id)
+            switch context.remoteType {
+            case .machine: return .server(context.machine.id)
+            case .command: return .command(context.id)
+            case .local: return .local
+            }
         case let .transfer(id), let .editor(id):
             return FileTransferManager.shared.transfers.first { $0.id == id }.map { .server($0.machine.id) }
         case let .monitor(id):
@@ -331,6 +344,8 @@ final class AppRouter: ObservableObject {
             if let command = TerminalManager.shared.sessionContexts.first(where: { $0.id == id })?.command {
                 openTerminal(command: command)
             }
+        case .local:
+            openLocalTerminal(another: true)
         case nil:
             openTerminals()
         }
@@ -371,6 +386,7 @@ final class AppRouter: ObservableObject {
 enum SessionOwner: Hashable {
     case server(RDMachine.ID)
     case command(UUID)
+    case local
 }
 
 extension Route {

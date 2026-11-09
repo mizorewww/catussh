@@ -58,6 +58,8 @@ struct CatusshCommands: Commands {
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Button("New Terminal") { AppRouter.shared.newTerminal() }
                 .keyboardShortcut("t", modifiers: .command)
+            Button("New Local Terminal") { AppRouter.shared.openLocalTerminal(another: true) }
+                .keyboardShortcut("t", modifiers: [.command, .option])
             Button("Open Terminals…") { AppRouter.shared.openTerminals() }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
         }

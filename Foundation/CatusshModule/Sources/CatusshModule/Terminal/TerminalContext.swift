@@ -29,6 +29,7 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable, @unchecke
         switch remoteType {
         case .machine: return machine.shortDescription(withComment: false)
         case .command: return command?.command ?? "Unknown Command"
+        case .local: return "Local Terminal"
         }
     }
 
@@ -63,6 +64,7 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable, @unchecke
     public enum RemoteType {
         case machine
         case command
+        case local
     }
 
     public let remoteType: RemoteType
@@ -176,6 +178,17 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable, @unchecke
         }
     }
 
+    public init(localShell surface: TerminalSessionSurface) {
+        machine = RDMachine(name: "Local Terminal")
+        command = nil
+        _title = "Local Terminal"
+        remoteType = .local
+        self.surface = surface
+        Self.queue.async {
+            self.processBootstrap()
+        }
+    }
+
     public func setupShellData() {
         shell.applyConnection(for: machine, timeout: CatusshStore.shared.workerTimeoutNumber)
     }
@@ -222,6 +235,15 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable, @unchecke
         }
         surface.setupSizeChain { [weak self] size in
             self?.terminalSize = size
+        }
+
+        if remoteType == .local {
+            #if os(macOS)
+                runLocalTerminal()
+            #else
+                putInformation("[!] Local shell is only supported on macOS.")
+            #endif
+            return
         }
 
         if machine.isUURemoteDevice {

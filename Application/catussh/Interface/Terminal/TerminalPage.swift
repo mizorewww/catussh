@@ -10,9 +10,21 @@ import MachineStatusView
 import SwiftUI
 import UniformTypeIdentifiers
 
+extension Notification.Name {
+    static let catusshTerminalSplitRequest = Notification.Name("me.mizorewww.rayon.terminalSplitRequest")
+}
+
 enum TerminalSplitAxis: String, CaseIterable {
     case horizontal
     case vertical
+}
+
+enum TerminalSnapZone: Equatable {
+    case left
+    case right
+    case top
+    case bottom
+    case center
 }
 
 struct TerminalPage: View {
@@ -23,6 +35,10 @@ struct TerminalPage: View {
     @State private var interfaceToken = UUID()
     @State private var secondaryContextID: TerminalManager.Context.ID?
     @State private var splitAxis: TerminalSplitAxis = .horizontal
+    @State private var primaryFirst = true
+    @State private var draggedTabID: TerminalManager.Context.ID?
+    @State private var activeSnapZone: TerminalSnapZone?
+    @State private var surfaceGeoSize: CGSize = .init(width: 800, height: 500)
     @State private var showSearch = false
     @State private var searchQuery = ""
     @State private var selectedMatchIndex = 0
@@ -43,7 +59,7 @@ struct TerminalPage: View {
         VStack(spacing: 0) {
             if context.tabSiblings.count > 1 {
                 HStack(spacing: RX.Space.s2) {
-                    SessionTabs(current: context)
+                    SessionTabs(current: context, draggedTabID: $draggedTabID)
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, RX.Space.s6)
@@ -57,8 +73,29 @@ struct TerminalPage: View {
                     if showSearch {
                         searchBar
                     }
-                    splitSurfaceContainer
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    GeometryReader { geo in
+                        ZStack {
+                            splitSurfaceContainer
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            if let zone = activeSnapZone {
+                                snapPreviewOverlay(for: zone, in: geo.size)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .onAppear { surfaceGeoSize = geo.size }
+                        .onChange(of: geo.size) { surfaceGeoSize = $0 }
+                        .onDrop(
+                            of: [UTType.text],
+                            delegate: TerminalCanvasSnapDropDelegate(
+                                containerSize: surfaceGeoSize,
+                                draggedTabID: $draggedTabID,
+                                activeSnapZone: $activeSnapZone,
+                                onPerformSnap: { droppedID, zone in
+                                    applySnapDrop(droppedID: droppedID, zone: zone)
+                                }
+                            )
+                        )
+                    }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous))
                 .overlay(
@@ -146,13 +183,31 @@ struct TerminalPage: View {
             context.termInterface.setActive(active)
             secondaryContext?.termInterface.setActive(false)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .catusshTerminalSplitRequest)) { note in
+            guard isActive,
+                  let targetID = note.userInfo?["targetID"] as? UUID,
+                  let rawAxis = note.userInfo?["axis"] as? String,
+                  let axis = TerminalSplitAxis(rawValue: rawAxis),
+                  let target = context.tabSiblings.first(where: { $0.id == targetID }),
+                  target.id != context.id
+            else { return }
+            splitAxis = axis
+            primaryFirst = true
+            target.interfaceToken = target.id
+            secondaryContextID = target.id
+        }
     }
 
     private func openAnotherTab() {
-        if context.remoteType == .machine {
+        switch context.remoteType {
+        case .machine:
             AppRouter.shared.openTerminal(machine: context.machine.id, another: true)
-        } else if let command = context.command {
-            AppRouter.shared.openTerminal(command: command)
+        case .command:
+            if let command = context.command {
+                AppRouter.shared.openTerminal(command: command)
+            }
+        case .local:
+            AppRouter.shared.openLocalTerminal(another: true)
         }
     }
 
@@ -168,35 +223,156 @@ struct TerminalPage: View {
             secondaryContextID = existing.id
             return
         }
-        if context.remoteType == .machine {
+        switch context.remoteType {
+        case .machine:
             let machine = store.machineGroup[context.machine.id]
             guard machine.isNotPlaceholder() else { return }
-            TerminalManager.shared.createSession(withMachineObject: machine, force: true) { created in
+            if machine.isUURemoteDevice {
+                SheetPresenter.present { dismiss in
+                    UURemoteSessionPickerSheet(machine: machine) { choice in
+                        dismiss()
+                        switch choice {
+                        case .new:
+                            TerminalManager.shared.createSession(withMachineObject: machine, force: true, resuming: nil) { created in
+                                created.interfaceToken = created.id
+                                self.secondaryContextID = created.id
+                            }
+                        case let .resume(sessionID):
+                            TerminalManager.shared.createSession(withMachineObject: machine, force: true, resuming: sessionID) { created in
+                                created.interfaceToken = created.id
+                                self.secondaryContextID = created.id
+                            }
+                        case nil:
+                            break
+                        }
+                    }
+                }
+            } else {
+                TerminalManager.shared.createSession(withMachineObject: machine, force: true) { created in
+                    created.interfaceToken = created.id
+                    secondaryContextID = created.id
+                }
+            }
+        case .command:
+            if let command = context.command {
+                let created = TerminalManager.shared.createSession(withCommand: command)
                 created.interfaceToken = created.id
                 secondaryContextID = created.id
             }
-        } else if let command = context.command {
-            let created = TerminalManager.shared.createSession(withCommand: command)
+        case .local:
+            let created = TerminalManager.shared.createLocalSession()
             created.interfaceToken = created.id
             secondaryContextID = created.id
         }
+    }
+
+    private func applySnapDrop(droppedID: TerminalManager.Context.ID, zone: TerminalSnapZone) {
+        guard let dropped = context.tabSiblings.first(where: { $0.id == droppedID }) else { return }
+        switch zone {
+        case .center:
+            secondaryContext?.termInterface.setActive(false)
+            secondaryContextID = nil
+            AppRouter.shared.route = .terminal(dropped.id)
+        case .right:
+            guard dropped.id != context.id else { return }
+            splitAxis = .horizontal
+            primaryFirst = true
+            dropped.interfaceToken = dropped.id
+            secondaryContextID = dropped.id
+        case .bottom:
+            guard dropped.id != context.id else { return }
+            splitAxis = .vertical
+            primaryFirst = true
+            dropped.interfaceToken = dropped.id
+            secondaryContextID = dropped.id
+        case .left:
+            guard dropped.id != context.id else { return }
+            splitAxis = .horizontal
+            primaryFirst = false
+            dropped.interfaceToken = dropped.id
+            secondaryContextID = dropped.id
+        case .top:
+            guard dropped.id != context.id else { return }
+            splitAxis = .vertical
+            primaryFirst = false
+            dropped.interfaceToken = dropped.id
+            secondaryContextID = dropped.id
+        }
+    }
+
+    @ViewBuilder private func snapPreviewOverlay(for zone: TerminalSnapZone, in size: CGSize) -> some View {
+        let inset: CGFloat = 8
+        let rect: CGRect = {
+            switch zone {
+            case .left:
+                return CGRect(x: inset, y: inset, width: max(80, size.width / 2 - inset * 1.5), height: max(80, size.height - inset * 2))
+            case .right:
+                return CGRect(x: size.width / 2 + inset * 0.5, y: inset, width: max(80, size.width / 2 - inset * 1.5), height: max(80, size.height - inset * 2))
+            case .top:
+                return CGRect(x: inset, y: inset, width: max(80, size.width - inset * 2), height: max(80, size.height / 2 - inset * 1.5))
+            case .bottom:
+                return CGRect(x: inset, y: size.height / 2 + inset * 0.5, width: max(80, size.width - inset * 2), height: max(80, size.height / 2 - inset * 1.5))
+            case .center:
+                return CGRect(x: inset, y: inset, width: max(80, size.width - inset * 2), height: max(80, size.height - inset * 2))
+            }
+        }()
+        let label: String = {
+            switch zone {
+            case .left: return "Split Left"
+            case .right: return "Split Right"
+            case .top: return "Split Top"
+            case .bottom: return "Split Bottom"
+            case .center: return "Switch Tab"
+            }
+        }()
+        ZStack {
+            RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous)
+                .fill(Color.rxAccent.opacity(0.18))
+                .overlay(
+                    RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous)
+                        .strokeBorder(Color.rxAccent.opacity(0.85), lineWidth: 2)
+                )
+            Label(label, systemImage: zone == .left || zone == .right ? "rectangle.split.2x1" : (zone == .top || zone == .bottom ? "rectangle.split.1x2" : "macwindow"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(Color.rxAccent.opacity(0.9)))
+        }
+        .frame(width: rect.width, height: rect.height)
+        .position(x: rect.midX, y: rect.midY)
+        .animation(.rxQuick, value: zone)
     }
 
     @ViewBuilder private var splitSurfaceContainer: some View {
         if let secondary = secondaryContext {
             if splitAxis == .horizontal {
                 HSplitView {
-                    surface
-                        .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
-                    secondarySurface(for: secondary)
-                        .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
+                    if primaryFirst {
+                        surface
+                            .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
+                        secondarySurface(for: secondary)
+                            .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        secondarySurface(for: secondary)
+                            .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
+                        surface
+                            .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             } else {
                 VSplitView {
-                    surface
-                        .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
-                    secondarySurface(for: secondary)
-                        .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
+                    if primaryFirst {
+                        surface
+                            .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
+                        secondarySurface(for: secondary)
+                            .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
+                    } else {
+                        secondarySurface(for: secondary)
+                            .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
+                        surface
+                            .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
+                    }
                 }
             }
         } else {
@@ -363,8 +539,8 @@ struct TerminalPage: View {
 
 struct SessionTabs: View {
     @ObservedObject var current: TerminalManager.Context
+    @Binding var draggedTabID: TerminalManager.Context.ID?
     @ObservedObject var terminals = TerminalManager.shared
-    @State private var draggedTabID: TerminalManager.Context.ID?
 
     private var siblings: [TerminalManager.Context] { current.tabSiblings }
 
@@ -379,7 +555,21 @@ struct SessionTabs: View {
                                 context: context,
                                 selected: context.id == current.id,
                                 number: siblings.count > 1 ? index + 1 : nil,
-                                shortcut: siblings.count > 1 ? Self.shortcut(index: index, count: siblings.count) : nil
+                                shortcut: siblings.count > 1 ? Self.shortcut(index: index, count: siblings.count) : nil,
+                                onSplitRight: context.id == current.id ? nil : {
+                                    NotificationCenter.default.post(
+                                        name: .catusshTerminalSplitRequest,
+                                        object: nil,
+                                        userInfo: ["targetID": context.id, "axis": TerminalSplitAxis.horizontal.rawValue]
+                                    )
+                                },
+                                onSplitDown: context.id == current.id ? nil : {
+                                    NotificationCenter.default.post(
+                                        name: .catusshTerminalSplitRequest,
+                                        object: nil,
+                                        userInfo: ["targetID": context.id, "axis": TerminalSplitAxis.vertical.rawValue]
+                                    )
+                                }
                             )
                             .id(context.id)
                             .onDrag {
@@ -401,10 +591,15 @@ struct SessionTabs: View {
                 .onChange(of: siblings.count) { _ in withAnimation(.rxQuick) { reader.scrollTo(current.id) } }
             }
             Button {
-                if current.remoteType == .machine {
+                switch current.remoteType {
+                case .machine:
                     AppRouter.shared.openTerminal(machine: current.machine.id, another: true)
-                } else if let command = current.command {
-                    AppRouter.shared.openTerminal(command: command)
+                case .command:
+                    if let command = current.command {
+                        AppRouter.shared.openTerminal(command: command)
+                    }
+                case .local:
+                    AppRouter.shared.openLocalTerminal(another: true)
                 }
             } label: {
                 Image(systemName: "plus")
@@ -417,6 +612,64 @@ struct SessionTabs: View {
             .help("New Terminal (⌘T)")
             .accessibilityLabel("New Terminal")
         }
+    }
+}
+
+private struct TerminalCanvasSnapDropDelegate: DropDelegate {
+    let containerSize: CGSize
+    @Binding var draggedTabID: TerminalManager.Context.ID?
+    @Binding var activeSnapZone: TerminalSnapZone?
+    let onPerformSnap: (TerminalManager.Context.ID, TerminalSnapZone) -> Void
+
+    func validateDrop(info _: DropInfo) -> Bool {
+        draggedTabID != nil
+    }
+
+    func dropEntered(info: DropInfo) {
+        updateZone(for: info.location)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        updateZone(for: info.location)
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info _: DropInfo) {
+        activeSnapZone = nil
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let zone = zone(for: info.location)
+        activeSnapZone = nil
+        if let id = draggedTabID {
+            draggedTabID = nil
+            onPerformSnap(id, zone)
+            return true
+        }
+        return false
+    }
+
+    private func updateZone(for pt: CGPoint) {
+        guard draggedTabID != nil else {
+            activeSnapZone = nil
+            return
+        }
+        let next = zone(for: pt)
+        if activeSnapZone != next {
+            activeSnapZone = next
+        }
+    }
+
+    private func zone(for pt: CGPoint) -> TerminalSnapZone {
+        let w = max(containerSize.width, 1)
+        let h = max(containerSize.height, 1)
+        let nx = pt.x / w
+        let ny = pt.y / h
+        if nx < 0.28 { return .left }
+        if nx > 0.72 { return .right }
+        if ny < 0.28 { return .top }
+        if ny > 0.72 { return .bottom }
+        return .center
     }
 }
 
@@ -554,6 +807,8 @@ private struct SessionTab: View {
     let selected: Bool
     let number: Int?
     var shortcut: String?
+    var onSplitRight: (() -> Void)?
+    var onSplitDown: (() -> Void)?
 
     private var title: String {
         if !context.navigationSubtitle.isEmpty { return context.navigationSubtitle }
@@ -611,6 +866,15 @@ private struct SessionTab: View {
         }
         .onHover { hovered = $0 }
         .contextMenu {
+            if let onSplitRight {
+                Button("Split Right with Active Tab", action: onSplitRight)
+            }
+            if let onSplitDown {
+                Button("Split Down with Active Tab", action: onSplitDown)
+            }
+            if onSplitRight != nil || onSplitDown != nil {
+                Divider()
+            }
             if context.closed { Button("Reconnect") { context.reconnect() } }
             Button("Close Session") { TerminalSessionActions.close(context) }
         }
@@ -638,6 +902,7 @@ private struct TerminalStatusBar: View {
     }
 
     var endpoint: String {
+        if context.remoteType == .local { return "Local Shell · \(ProcessInfo.processInfo.hostName)" }
         if let command = context.command { return command.command }
         if context.machine.isUURemoteDevice { return "UU Remote · " + context.machine.name }
         return context.machine.getCommand(insertLeadingSSH: false)
@@ -689,14 +954,18 @@ enum TerminalSessionActions {
     @MainActor
     private static func openReplacement(for context: TerminalManager.Context) -> TerminalManager.Context? {
         let manager = TerminalManager.shared
-        if context.remoteType == .machine {
+        switch context.remoteType {
+        case .machine:
             let machine = CatusshStore.shared.machineGroup[context.machine.id]
             guard machine.isNotPlaceholder() else { return nil }
             var created: TerminalManager.Context?
             manager.createSession(withMachineObject: machine, force: true) { created = $0 }
             return created
+        case .command:
+            return context.command.map { manager.createSession(withCommand: $0) }
+        case .local:
+            return manager.createLocalSession()
         }
-        return context.command.map { manager.createSession(withCommand: $0) }
     }
 
     @MainActor
@@ -740,17 +1009,25 @@ enum TerminalSessionActions {
 extension TerminalManager.Context {
     @MainActor var tabSiblings: [TerminalManager.Context] {
         let all = TerminalManager.shared.sessionContexts
-        if remoteType == .machine {
+        switch remoteType {
+        case .machine:
             return all.filter { $0.remoteType == .machine && $0.machine.id == machine.id }
+        case .command:
+            guard let command = command?.command else { return [self] }
+            return all.filter { $0.remoteType == .command && $0.command?.command == command }
+        case .local:
+            return all.filter { $0.remoteType == .local }
         }
-        guard let command = command?.command else { return [self] }
-        return all.filter { $0.remoteType == .command && $0.command?.command == command }
     }
 
     var displayName: String {
-        if remoteType == .machine { return machine.name }
-        if let command { return "\(command.username)@\(command.remoteAddress)" }
-        return navigationTitle
+        switch remoteType {
+        case .machine: return machine.name
+        case .command:
+            if let command { return "\(command.username)@\(command.remoteAddress)" }
+            return navigationTitle
+        case .local: return "Local Terminal"
+        }
     }
 
     func reconnect() {

@@ -30,6 +30,11 @@ public final class TerminalManager: ObservableObject {
             super.init(command: command, surface: surfaceBridge)
             termInterface.setTerminalFontSize(with: CatusshStore.shared.terminalFontSize)
         }
+
+        public init(localShell: Bool) {
+            super.init(localShell: surfaceBridge)
+            termInterface.setTerminalFontSize(with: CatusshStore.shared.terminalFontSize)
+        }
     }
 
     @Published public var sessionContexts: [Context] = []
@@ -57,6 +62,13 @@ public final class TerminalManager: ObservableObject {
         let context = Context(command: command)
         sessionContexts.append(context)
         CatusshStore.shared.storeRecentIfNeeded(from: command)
+        return context
+    }
+
+    @discardableResult
+    public func createLocalSession() -> Context {
+        let context = Context(localShell: true)
+        sessionContexts.append(context)
         return context
     }
 
