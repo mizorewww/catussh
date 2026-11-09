@@ -1118,8 +1118,11 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         videoRequestTask?.cancel()
         guard purpose == .desktop else { return }
         videoRequestTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard let self, !self.closed else { return }
-            // Send video track request immediately once control channel is open.
+            // One sendVideoTrack RPC once the channel is up (like the
+            // official iPhone viewer); 4:4:4 true colour rides a separate
+            // CaptureSettingRequest when the quality tier asks for it.
             self.sendControlChannel(UUControlProtocol.sendVideoTrackRequest(requestID: self.nextOutboundSequence()))
             if self.session.machine.uuQuality >= 4 {
                 self.sendControlChannel(UUControlProtocol.captureSettingRequest(
