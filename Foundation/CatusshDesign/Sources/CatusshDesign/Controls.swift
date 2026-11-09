@@ -58,6 +58,7 @@ private struct RXButtonBody: View {
             .font(size == .small ? .system(size: 12, weight: weight) : .system(size: 13, weight: weight))
             .labelStyle(RXButtonLabelStyle(iconOnly: iconOnly))
             .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(foreground)
             .padding(.horizontal, iconOnly ? 0 : (kind == .plain ? 8 : (size == .small ? 10 : 14)))
             .frame(width: iconOnly ? height : nil, height: height)
