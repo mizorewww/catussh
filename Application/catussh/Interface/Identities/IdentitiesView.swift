@@ -6,6 +6,7 @@
 //
 
 import CatusshModule
+import NSRemoteShell
 import SwiftUI
 
 struct IdentitiesView: View {
@@ -137,6 +138,12 @@ private struct IdentityRow: View {
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .contextMenu {
+            if !identity.publicKey.isEmpty {
+                Button("Deploy Public Key (ssh-copy-id)…") {
+                    IdentityActions.deployPublicKey(identity.publicKey, identityID: identity.id)
+                }
+                Divider()
+            }
             Button("Duplicate") { IdentityActions.duplicate(identity.id) }
             Button("Copy Public Key") { UIBridge.sendPasteboard(str: identity.publicKey) }
                 .disabled(identity.publicKey.isEmpty)
@@ -171,6 +178,71 @@ enum IdentityActions {
             store.identityGroup.delete(id)
         }
     }
+
+    @MainActor
+    static func deployPublicKey(_ publicKey: String, identityID: RDIdentity.ID) {
+        let pub = publicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !pub.isEmpty else {
+            UIBridge.presentError(with: "This identity has no public key to deploy.")
+            return
+        }
+        ServerPickerPanel.present(
+            title: "Deploy Public Key (ssh-copy-id)",
+            lead: "Appends this identity's public key to ~/.ssh/authorized_keys on the selected servers.",
+            confirmTitle: "Deploy",
+            allowsMany: true
+        ) { machines in
+            guard !machines.isEmpty else { return }
+            let escapedKey = pub.replacingOccurrences(of: "'", with: "'\\''")
+            let installCmd = "umask 077 && mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && (grep -qxF '\(escapedKey)' ~/.ssh/authorized_keys || printf '%s\\n' '\(escapedKey)' >> ~/.ssh/authorized_keys)"
+            DispatchQueue.global().async {
+                var succeeded: [String] = []
+                var failed: [String] = []
+                for machineID in machines {
+                    let machine = CatusshStore.shared.workerMachine(for: machineID)
+                    guard machine.isNotPlaceholder() else { continue }
+                    let shell = NSRemoteShell.configured(for: machine, timeout: CatusshStore.shared.workerTimeoutNumber)
+                    let auth = shell.connectAndAuthenticate(
+                        identity: CatusshStore.shared.workerAssociatedIdentity(for: machine),
+                        autoIdentities: CatusshStore.shared.workerIdentitiesForAutoAuth
+                    )
+                    guard auth == .success else {
+                        failed.append(machine.name)
+                        shell.requestDisconnectAndWait()
+                        shell.destroyPermanently()
+                        continue
+                    }
+                    let rc = shell.beginExecute(
+                        withCommand: installCmd,
+                        withTimeout: 15,
+                        withOnCreate: {},
+                        withOutput: nil,
+                        withContinuationHandler: { true }
+                    )
+                    shell.requestDisconnectAndWait()
+                    shell.destroyPermanently()
+                    if rc == 0 {
+                        succeeded.append(machine.name)
+                    } else {
+                        failed.append(machine.name)
+                    }
+                }
+                onMainThread {
+                    if !failed.isEmpty {
+                        UIBridge.presentError(with: "Failed to deploy public key to: \(failed.joined(separator: ", ")).")
+                    } else if !succeeded.isEmpty {
+                        for machineID in machines {
+                            var m = CatusshStore.shared.machineGroup[machineID]
+                            if m.isNotPlaceholder(), m.associatedIdentity == nil {
+                                m.associatedIdentity = identityID.uuidString
+                                CatusshStore.shared.machineGroup[machineID] = m
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// The editor beside the list.
@@ -203,6 +275,12 @@ private struct IdentityDetail: View {
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!draft.differs(from: original) || !draft.isValid)
                 RXMenuButton("More", systemImage: "ellipsis", kind: .plain, size: .small, iconOnly: true) {
+                    if !draft.publicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        RXMenuItem("Deploy Public Key (ssh-copy-id)…") {
+                            IdentityActions.deployPublicKey(draft.publicKey, identityID: identity)
+                        }
+                        Divider()
+                    }
                     RXMenuItem("Duplicate") { IdentityActions.duplicate(identity) }
                     Divider()
                     RXMenuItem("Delete…", role: .destructive) { IdentityActions.delete(identity) }
@@ -256,17 +334,32 @@ struct IdentityForm: View {
                 RXSegmented(selection: $draft.method, options: [
                     .init(.keyPair, "Key pair"),
                     .init(.password, "Password"),
+                    .init(.sshAgent, "SSH Agent"),
                 ], caps: false, fullWidth: true)
             }
             if draft.method == .keyPair {
                 RXField("Private key") {
-                    KeyField(
-                        text: $draft.privateKey,
-                        masked: true,
-                        placeholder: "No private key loaded",
-                        loadTitle: "Load…",
-                        matches: RDIdentity.looksLikePrivateKey
-                    )
+                    HStack(spacing: RX.Space.s2) {
+                        KeyField(
+                            text: $draft.privateKey,
+                            masked: true,
+                            placeholder: "No private key loaded",
+                            loadTitle: "Load…",
+                            matches: RDIdentity.looksLikePrivateKey
+                        )
+                        Button("Generate Ed25519") {
+                            let label = draft.comment.isEmpty
+                                ? (draft.username.isEmpty ? "catussh" : "\(draft.username)@catussh")
+                                : draft.comment
+                            let pair = RDIdentity.generateEd25519KeyPair(comment: label)
+                            draft.privateKey = pair.privateKey
+                            draft.publicKey = pair.publicKey
+                            draft.passphrase = ""
+                        }
+                        .buttonStyle(.rx)
+                        .fixedSize()
+                        .help("Generate a new OpenSSH Ed25519 key pair in memory")
+                    }
                 }
                 RXField("Public key", help: "Optional") {
                     KeyField(
@@ -287,7 +380,7 @@ struct IdentityForm: View {
                             .textFieldStyle(.rx)
                     }
                 }
-            } else {
+            } else if draft.method == .password {
                 HStack(alignment: .top, spacing: RX.Space.s4) {
                     RXField("Password") {
                         SecureField("Required", text: $draft.password)
@@ -297,6 +390,12 @@ struct IdentityForm: View {
                         TextField("Optional", text: $draft.comment)
                             .textFieldStyle(.rx)
                     }
+                }
+            } else {
+                HelpText("Signs in using your Mac's running SSH agent (`SSH_AUTH_SOCK`), including system `ssh-agent`, 1Password SSH Agent, Secretive, or YubiKey/GPG agents.")
+                RXField("Comment") {
+                    TextField("Optional", text: $draft.comment)
+                        .textFieldStyle(.rx)
                 }
             }
             Hairline()

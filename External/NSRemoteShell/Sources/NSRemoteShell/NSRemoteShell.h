@@ -70,6 +70,7 @@ typedef int (^NSRemoteShellSocketProvider)(NSString *host, NSNumber *port, NSNum
             andPublicKey:(nullable NSString *)publicKey
            andPrivateKey:(NSString *)privateKey
              andPassword:(nullable NSString *)password;
+- (void)authenticateWithAgent:(NSString *)username;
 
 #pragma mark helper
 
@@ -104,6 +105,15 @@ typedef int (^NSRemoteShellSocketProvider)(NSString *host, NSNumber *port, NSNum
                   withForwardTargetPort:(NSNumber*)targetPort
                            withOnCreate:(dispatch_block_t)withOnCreate
                 withContinuationHandler:(BOOL (^)(void))continuationBlock;
+
+/// Opens a direct-tcpip channel to `targetHost`:`targetPort` and bridges it over
+/// a connected `socketpair`, returning the caller's socket descriptor (or <= 0 on failure).
+- (int)openDirectTCPIPSocketPairToHost:(NSString *)targetHost
+                                  port:(NSNumber *)targetPort;
+
+- (void)createDynamicSOCKSForwardWithLocalPort:(NSNumber *)localPort
+                                  withOnCreate:(dispatch_block_t)withOnCreate
+                       withContinuationHandler:(BOOL (^)(void))continuationBlock;
 
 #pragma mark sftp
 

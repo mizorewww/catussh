@@ -153,6 +153,14 @@ public class PortForwardContext: ObservableObject, Identifiable, @unchecked Send
             } withContinuationHandler: {
                 true // we are using shell.disconnect for shutdown
             }
+        case .dynamicSOCKS:
+            shell.createDynamicSOCKSForward(
+                withLocalPort: NSNumber(value: info.bindPort)
+            ) {
+                self.putLifecycle(.forwardRunning)
+            } withContinuationHandler: {
+                true
+            }
         }
         putLifecycle(.forwardStopped)
     }

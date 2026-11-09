@@ -174,6 +174,17 @@ public final class EditorWorkspace: ObservableObject, Identifiable {
         }
     }
 
+    public func moveDocument(fromID: EditorDocument.ID, toID: EditorDocument.ID) {
+        guard fromID != toID,
+              let fromIndex = documents.firstIndex(where: { $0.id == fromID }),
+              let toIndex = documents.firstIndex(where: { $0.id == toID })
+        else { return }
+        var updated = documents
+        let item = updated.remove(at: fromIndex)
+        updated.insert(item, at: toIndex)
+        documents = updated
+    }
+
     #if DEBUG
         public func addPreview(path: String, text: String) {
             add(EditorDocument(path: path, context: context, preview: text))

@@ -36,6 +36,9 @@ struct SettingsView: View {
                 ConfigHostSettingsSection(id: "general.sync", keywords: "icloud sync cloud encrypted passphrase servers identities credentials devices") {
                     CloudSyncSettings()
                 },
+                ConfigHostSettingsSection(id: "general.data", keywords: "backup export import restore ssh config openssh archive") {
+                    DataBackupSettings().environmentObject(store)
+                },
                 ConfigHostSettingsSection(id: "connection.ssh", keywords: "ssh timeout connect wait host key known hosts fingerprint") {
                     SSHSettings().environmentObject(store)
                 },
@@ -457,5 +460,102 @@ struct AgreementSheet: View {
         }
         .frame(width: 560)
         .interactiveDismissDisabled()
+    }
+}
+
+/// Manual backup export/import and OpenSSH `~/.ssh/config` importer under Settings -> General -> Data.
+private struct DataBackupSettings: View {
+    @EnvironmentObject var store: CatusshStore
+    @State private var statusMessage: String?
+
+    var body: some View {
+        RXDividedStack {
+            RXFormRow(
+                "Backup archive",
+                description: "Export or import all saved servers, identities, snippets, port forwards, and folders as a JSON backup file."
+            ) {
+                HStack(spacing: RX.Space.s2) {
+                    Button("Export Backup…") {
+                        exportBackup()
+                    }
+                    .buttonStyle(.rx)
+                    Button("Import Backup…") {
+                        importBackup()
+                    }
+                    .buttonStyle(.rx)
+                }
+            }
+            RXFormRow(
+                "OpenSSH config",
+                description: "Import Host entries, IdentityFile keys, and ProxyJump links from ~/.ssh/config or another OpenSSH config file."
+            ) {
+                Button("Import ~/.ssh/config…") {
+                    importSSHConfig()
+                }
+                .buttonStyle(.rx)
+            }
+            if let statusMessage {
+                HelpText(statusMessage)
+            }
+        }
+    }
+
+    private func exportBackup() {
+        let panel = NSSavePanel()
+        panel.title = "Export catussh Backup"
+        panel.nameFieldStringValue = "catussh-backup.json"
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try store.exportBackupData()
+            try data.write(to: url, options: .atomic)
+            statusMessage = "Exported backup to \(url.lastPathComponent)."
+        } catch {
+            UIBridge.presentError(with: "Could not export backup: \(error.localizedDescription)")
+        }
+    }
+
+    private func importBackup() {
+        UIBridge.openPanel(
+            message: "Choose a catussh backup file (.json)",
+            prompt: "Import",
+            directory: nil,
+            canChooseFiles: true,
+            canChooseDirectories: false,
+            allowsMultipleSelection: false,
+            canCreateDirectories: false,
+            showsHiddenFiles: true
+        ) { urls in
+            guard let url = urls.first else { return }
+            do {
+                let data = try Data(contentsOf: url)
+                let result = try store.importBackupData(data)
+                statusMessage = "Imported \(result.machines) servers, \(result.identities) identities, \(result.snippets) snippets, and \(result.forwards) port forwards."
+            } catch {
+                UIBridge.presentError(with: "Could not import backup: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func importSSHConfig() {
+        let sshDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".ssh")
+        UIBridge.openPanel(
+            message: "Choose an OpenSSH config file (e.g. ~/.ssh/config)",
+            prompt: "Import",
+            directory: sshDir,
+            canChooseFiles: true,
+            canChooseDirectories: false,
+            allowsMultipleSelection: false,
+            canCreateDirectories: false,
+            showsHiddenFiles: true
+        ) { urls in
+            guard let url = urls.first else { return }
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                UIBridge.presentError(with: "Could not read \(url.lastPathComponent) as UTF-8 text.")
+                return
+            }
+            let result = store.importOpenSSHConfig(text, baseDirectory: url.deletingLastPathComponent())
+            statusMessage = "Imported \(result.importedServers) servers and \(result.importedIdentities) identities from \(url.lastPathComponent)."
+        }
     }
 }

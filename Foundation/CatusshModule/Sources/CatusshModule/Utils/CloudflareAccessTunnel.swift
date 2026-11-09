@@ -246,20 +246,40 @@ private final class Flag: @unchecked Sendable {
 // MARK: - The shell's side
 
 private nonisolated(unsafe) let tunnelFailureKey = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
+private nonisolated(unsafe) let bastionShellKey = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
+
+private final class BastionShellHolder {
+    let shell: NSRemoteShell
+    init(_ shell: NSRemoteShell) { self.shell = shell }
+    deinit {
+        let s = shell
+        DispatchQueue.global().async {
+            s.requestDisconnectAndWait()
+            s.destroyPermanently()
+        }
+    }
+}
 
 public extension NSRemoteShell {
-    /// Why the last connection through Cloudflare could not be made, for the
-    /// person; nil after a connection that got through, or one made over TCP.
+    /// Why the last connection through Cloudflare or ProxyJump could not be made,
+    /// for the person; nil after a connection that got through, or one made over TCP.
     var tunnelFailure: String? {
         get { objc_getAssociatedObject(self, tunnelFailureKey) as? String }
         set { objc_setAssociatedObject(self, tunnelFailureKey, newValue, .OBJC_ASSOCIATION_COPY) }
     }
 
+    private var bastionHolder: BastionShellHolder? {
+        get { objc_getAssociatedObject(self, bastionShellKey) as? BastionShellHolder }
+        set { objc_setAssociatedObject(self, bastionShellKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+
     /// Has the shell reach the machine the way the machine says: over TCP,
-    /// through a Cloudflare tunnel, or through a UU Remote port-mapping stream.
-    internal func applyTransport(for machine: RDMachine) {
+    /// through a Cloudflare tunnel, through a UU Remote port-mapping stream,
+    /// or through a ProxyJump bastion server.
+    internal func applyTransport(for machine: RDMachine, visitedJumpIDs: Set<UUID> = []) {
         tunnelFailure = nil
         uuTunnelFailure = nil
+        bastionHolder = nil
         switch machine.transport {
         case .direct:
             setupConnectionSocketProvider(nil)
@@ -283,6 +303,54 @@ public extension NSRemoteShell {
             }
         case .uuRemote:
             applyUUTransport(for: machine)
+        case .proxyJump:
+            let jumpIDString = machine.proxyJumpMachineID ?? ""
+            var visited = visitedJumpIDs
+            visited.insert(machine.id)
+            setupConnectionSocketProvider { [weak self] host, port, timeout in
+                guard let jumpUUID = UUID(uuidString: jumpIDString) else {
+                    self?.tunnelFailure = "ProxyJump server is not selected."
+                    return -1
+                }
+                guard !visited.contains(jumpUUID), visited.count <= 5 else {
+                    self?.tunnelFailure = "ProxyJump chain contains a loop."
+                    return -1
+                }
+                let bastion = CatusshStore.shared.workerMachine(for: jumpUUID)
+                guard bastion.isNotPlaceholder() else {
+                    self?.tunnelFailure = "The configured ProxyJump server no longer exists."
+                    return -1
+                }
+                let bastionShell = NSRemoteShell()
+                KnownHosts.install()
+                bastionShell.applyTransport(for: bastion, visitedJumpIDs: visited)
+                bastionShell.setupConnectionHost(bastion.remoteAddress)
+                    .setupConnectionPort(NSNumber(value: Int(bastion.remotePort) ?? 22))
+                    .setupConnectionTimeout(timeout)
+                let authResult = bastionShell.connectAndAuthenticate(
+                    identity: CatusshStore.shared.workerAssociatedIdentity(for: bastion),
+                    autoIdentities: CatusshStore.shared.workerIdentitiesForAutoAuth
+                )
+                guard authResult == .success else {
+                    let reason = authResult == .connectFailed
+                        ? (bastionShell.connectFailureReason ?? "Could not connect to jump host \(bastion.name).")
+                        : "Could not authenticate on jump host \(bastion.name)."
+                    self?.tunnelFailure = reason
+                    bastionShell.requestDisconnectAndWait()
+                    bastionShell.destroyPermanently()
+                    return -1
+                }
+                let fd = bastionShell.openDirectTCPIPSocketPair(toHost: host, port: port)
+                guard fd > 0 else {
+                    self?.tunnelFailure = bastionShell.getLastError() ?? "Jump host \(bastion.name) refused direct-tcpip channel to \(host):\(port)."
+                    bastionShell.requestDisconnectAndWait()
+                    bastionShell.destroyPermanently()
+                    return -1
+                }
+                self?.tunnelFailure = nil
+                self?.bastionHolder = BastionShellHolder(bastionShell)
+                return fd
+            }
         }
     }
 }

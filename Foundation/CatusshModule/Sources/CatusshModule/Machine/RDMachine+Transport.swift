@@ -19,5 +19,7 @@ public extension RDMachine {
         /// A NetEase UU Remote port-mapping stream to `remoteAddress:remotePort`,
         /// carried on the FILE_DATA_CHANNEL of an active UU session.
         case uuRemote = "uu-remote"
+        /// Connects through another saved `RDMachine` (`ssh -J bastion target`).
+        case proxyJump = "proxy-jump"
     }
 }

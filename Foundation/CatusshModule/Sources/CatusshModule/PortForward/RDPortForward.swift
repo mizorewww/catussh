@@ -32,6 +32,7 @@ public struct RDPortForward: Codable, Identifiable, Equatable, Sendable {
     public enum ForwardOrientation: String, Codable, CaseIterable, Sendable {
         case listenLocal = "Local"
         case listenRemote = "Remote"
+        case dynamicSOCKS = "Dynamic"
     }
 
     public var forwardOrientation: ForwardOrientation = .listenLocal
@@ -58,15 +59,16 @@ public struct RDPortForward: Codable, Identifiable, Equatable, Sendable {
     public var attachment: [String: String]
 
     public func isValid() -> Bool {
-        guard bindPort >= 0, bindPort <= 65535,
-              !targetHost.isEmpty,
-              targetPort >= 0, targetPort <= 65535,
+        guard bindPort > 0, bindPort <= 65535,
               let machine = usingMachine,
               CatusshStore.shared.workerMachine(for: machine).isNotPlaceholder()
         else {
             return false
         }
-        return true
+        if forwardOrientation == .dynamicSOCKS {
+            return true
+        }
+        return !targetHost.isEmpty && targetPort > 0 && targetPort <= 65535
     }
 
     public func getMachineName() -> String? {
@@ -89,6 +91,8 @@ public struct RDPortForward: Codable, Identifiable, Equatable, Sendable {
             return "localhost:\(bindPort) -\(getMachineName() ?? "Unknown")-> \(targetHost):\(targetPort)"
         case .listenRemote:
             return "\(getMachineName() ?? "Unknown"):\(bindPort) -localhost-> \(targetHost):\(targetPort)"
+        case .dynamicSOCKS:
+            return "SOCKS5 localhost:\(bindPort) -\(getMachineName() ?? "Unknown")-> *"
         }
     }
 
@@ -102,6 +106,8 @@ public struct RDPortForward: Codable, Identifiable, Equatable, Sendable {
             return "ssh -L \(bindPort):\(targetHost):\(targetPort) \(machineCommand.getCommand(insertLeadingSSH: false))"
         case .listenRemote:
             return "ssh -R \(bindPort):\(targetHost):\(targetPort) \(machineCommand.getCommand(insertLeadingSSH: false))"
+        case .dynamicSOCKS:
+            return "ssh -D \(bindPort) \(machineCommand.getCommand(insertLeadingSSH: false))"
         }
     }
 }

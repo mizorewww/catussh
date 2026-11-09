@@ -95,4 +95,15 @@ public final class TerminalManager: ObservableObject {
         }
         sessionContexts = []
     }
+
+    public func moveSession(fromID: Context.ID, toID: Context.ID) {
+        guard fromID != toID,
+              let fromIndex = sessionContexts.firstIndex(where: { $0.id == fromID }),
+              let toIndex = sessionContexts.firstIndex(where: { $0.id == toID })
+        else { return }
+        var updated = sessionContexts
+        let item = updated.remove(at: fromIndex)
+        updated.insert(item, at: toIndex)
+        sessionContexts = updated
+    }
 }

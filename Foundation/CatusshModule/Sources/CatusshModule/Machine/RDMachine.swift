@@ -38,7 +38,8 @@ public struct RDMachine: Codable, Identifiable, Equatable, Sendable {
         uuFPS: Int = 60,
         uuQuality: Int = 5,
         uuManaged: Bool = false,
-        ghosttyTerminfoVersion: String? = nil
+        ghosttyTerminfoVersion: String? = nil,
+        proxyJumpMachineID: String? = nil
     ) {
         self.id = id
         self.remoteAddress = remoteAddress
@@ -70,6 +71,7 @@ public struct RDMachine: Codable, Identifiable, Equatable, Sendable {
         self.uuQuality = uuQuality
         self.uuManaged = uuManaged
         self.ghosttyTerminfoVersion = ghosttyTerminfoVersion
+        self.proxyJumpMachineID = proxyJumpMachineID
     }
 
     public var id = UUID()
@@ -110,6 +112,7 @@ public struct RDMachine: Codable, Identifiable, Equatable, Sendable {
     public var uuQuality: Int = 5
     public var uuManaged: Bool = false
     public var ghosttyTerminfoVersion: String? = nil
+    public var proxyJumpMachineID: String? = nil
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -142,6 +145,7 @@ public struct RDMachine: Codable, Identifiable, Equatable, Sendable {
         case uuQuality
         case uuManaged
         case ghosttyTerminfoVersion
+        case proxyJumpMachineID
     }
 
     public init(from decoder: Decoder) throws {
@@ -213,6 +217,8 @@ public struct RDMachine: Codable, Identifiable, Equatable, Sendable {
             ?? (legacyAttachment["remoteDesktop.uu.managed"] == "1")
         ghosttyTerminfoVersion = try container.decodeIfPresent(String.self, forKey: .ghosttyTerminfoVersion)
             ?? legacyAttachment[GhosttyTerminfo.cacheKey]
+        proxyJumpMachineID = try container.decodeIfPresent(String.self, forKey: .proxyJumpMachineID)
+            ?? legacyAttachment["proxyJump.machineID"]
 
         for migratedKey in [
             "sftp.login.path",
@@ -235,6 +241,7 @@ public struct RDMachine: Codable, Identifiable, Equatable, Sendable {
             "remoteDesktop.uu.quality",
             "remoteDesktop.uu.managed",
             GhosttyTerminfo.cacheKey,
+            "proxyJump.machineID",
         ] {
             legacyAttachment.removeValue(forKey: migratedKey)
         }
@@ -312,6 +319,7 @@ public struct RDMachine: Codable, Identifiable, Equatable, Sendable {
             try container.encode(uuManaged, forKey: .uuManaged)
         }
         try container.encodeIfPresent(ghosttyTerminfoVersion, forKey: .ghosttyTerminfoVersion)
+        try container.encodeIfPresent(proxyJumpMachineID, forKey: .proxyJumpMachineID)
     }
 
     public func isQualifiedForSearch(text: String) -> Bool {
@@ -363,6 +371,16 @@ public struct RDMachine: Codable, Identifiable, Equatable, Sendable {
         }
         if transport == .cloudflareAccess, insertLeadingSSH {
             build = "ssh " + SSHCommandReader.cloudflareProxyOption + build.dropFirst(3)
+        } else if transport == .proxyJump,
+                  insertLeadingSSH,
+                  let jumpIDStr = proxyJumpMachineID,
+                  let jumpUUID = UUID(uuidString: jumpIDStr)
+        {
+            let jumpMachine = CatusshStore.shared.workerMachine(for: jumpUUID)
+            if jumpMachine.isNotPlaceholder() {
+                let jumpSpec = jumpMachine.getCommand(insertLeadingSSH: false).replacingOccurrences(of: " -p ", with: ":")
+                build = "ssh -J \(jumpSpec) " + build.dropFirst(4)
+            }
         }
         return build
     }

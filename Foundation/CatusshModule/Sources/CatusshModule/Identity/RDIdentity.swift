@@ -50,6 +50,11 @@ public struct RDIdentity: Codable, Identifiable, Equatable, Sendable {
     // reserved for future use
     public var attachment: [String: String]
 
+    public var useSSHAgent: Bool {
+        get { attachment["auth.sshAgent"] == "1" }
+        set { attachment["auth.sshAgent"] = newValue ? "1" : nil }
+    }
+
     public func shortDescription() -> String {
         guard username.count > 0 else {
             return "Unknown Error"
@@ -65,7 +70,9 @@ public struct RDIdentity: Codable, Identifiable, Equatable, Sendable {
     }
 
     public func getKeyType() -> String {
-        if privateKey.count > 0, publicKey.count > 0 {
+        if useSSHAgent {
+            return "SSH Agent"
+        } else if privateKey.count > 0, publicKey.count > 0 {
             if password.count > 0 {
                 return "Key Pair"
             } else {
@@ -88,7 +95,9 @@ public struct RDIdentity: Codable, Identifiable, Equatable, Sendable {
 
     public func callAuthenticationWith(remote: NSRemoteShell) {
         if remote.isAuthenticated { return }
-        if privateKey.count > 0 || publicKey.count > 0 {
+        if useSSHAgent {
+            remote.authenticate(withAgent: username)
+        } else if privateKey.count > 0 || publicKey.count > 0 {
             remote.authenticate(with: username, andPublicKey: publicKey, andPrivateKey: privateKey, andPassword: password)
         } else {
             remote.authenticate(with: username, andPassword: password)
@@ -110,8 +119,9 @@ public struct RDIdentity: Codable, Identifiable, Equatable, Sendable {
 }
 
 public extension RDIdentity {
-    /// "Key pair · ed25519", "Password" style description.
+    /// "Key pair · ed25519", "Password", "SSH Agent" style description.
     var authDescription: String {
+        if useSSHAgent { return "SSH Agent" }
         if !privateKey.isEmpty {
             if let type = keyAlgorithm { return "Key pair · \(type)" }
             return "Key pair"

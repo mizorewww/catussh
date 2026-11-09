@@ -10,6 +10,7 @@
 import CatusshEditor
 import CatusshModule
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct EditorPage: View {
     @ObservedObject var workspace: EditorWorkspace
@@ -19,6 +20,7 @@ struct EditorPage: View {
 
     @AppStorage("me.mizorewww.rayon.editor.wrapsLines") private var wrapsLines = false
     @State private var openPrompt = false
+    @State private var draggedDocumentID: EditorDocument.ID?
     @Namespace private var tabs
 
     init(workspace: EditorWorkspace) {
@@ -134,6 +136,18 @@ struct EditorPage: View {
                             close: { workspace.close(document) }
                         )
                         .id(document.id)
+                        .onDrag {
+                            draggedDocumentID = document.id
+                            return NSItemProvider(object: document.id.uuidString as NSString)
+                        }
+                        .onDrop(
+                            of: [UTType.text],
+                            delegate: EditorTabDropDelegate(
+                                targetID: document.id,
+                                draggedID: $draggedDocumentID,
+                                workspace: workspace
+                            )
+                        )
                         .transition(.scale(scale: 0.9, anchor: .leading).combined(with: .opacity))
                     }
                 }
@@ -167,6 +181,28 @@ struct EditorPage: View {
 }
 
 // MARK: - Tabs
+
+private struct EditorTabDropDelegate: DropDelegate {
+    let targetID: EditorDocument.ID
+    @Binding var draggedID: EditorDocument.ID?
+    let workspace: EditorWorkspace
+
+    func dropEntered(info _: DropInfo) {
+        guard let draggedID, draggedID != targetID else { return }
+        withAnimation(.rxQuick) {
+            workspace.moveDocument(fromID: draggedID, toID: targetID)
+        }
+    }
+
+    func dropUpdated(info _: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info _: DropInfo) -> Bool {
+        draggedID = nil
+        return true
+    }
+}
 
 private struct EditorTab: View {
     @ObservedObject var document: EditorDocument

@@ -21,6 +21,18 @@ public struct CatusshTerminalView: Sendable {
 
     nonisolated public func write(_ string: String) { session.output.write(Data(string.utf8)) }
 
+    nonisolated public func searchTranscript(_ query: String) -> [(lineNumber: Int, line: String)] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let needle = trimmed.lowercased()
+        let lines = session.output.transcriptLines()
+        var matches: [(lineNumber: Int, line: String)] = []
+        for (idx, line) in lines.enumerated() where line.lowercased().contains(needle) {
+            matches.append((idx + 1, line))
+        }
+        return matches
+    }
+
     nonisolated public func setTerminalFontSize(with size: Int, preferConfigured: Bool = false) {
         session.callbacks.setFontSize(size)
         let session = session

@@ -330,6 +330,20 @@ continue; \
     MakeDispatchSemaphoreWaitWithTimeout(sem)
 }
 
+- (void)authenticateWithAgent:(NSString*)username {
+    if (self.destroyed) return;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    @synchronized (self.requestInvokations) {
+        id block = [^{
+            [self unsafeAuthenticateWithAgent:username];
+            DISPATCH_SEMAPHORE_CHECK_SIGNLE(sem);
+        } copy];
+        [self.requestInvokations addObject:block];
+    }
+    [self.associatedLoop explicitRequestHandle];
+    MakeDispatchSemaphoreWaitWithTimeout(sem)
+}
+
 #pragma exec
 
 - (int)beginExecuteWithCommand:(NSString*)withCommand
@@ -424,6 +438,44 @@ continue; \
                                             withOnCreate:withOnCreate
                                  withContinuationHandler:continuationBlock
                                  withCompletionSemaphore:sem];
+        } copy];
+        [self.requestInvokations addObject:block];
+    }
+    [self.associatedLoop explicitRequestHandle];
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+}
+
+- (int)openDirectTCPIPSocketPairToHost:(NSString *)targetHost
+                                  port:(NSNumber *)targetPort
+{
+    if (self.destroyed) return -1;
+    __block int clientFD = -1;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    @synchronized (self.requestInvokations) {
+        id block = [^{
+            clientFD = [self unsafeOpenDirectTCPIPSocketPairToHost:targetHost
+                                                              port:targetPort];
+            DISPATCH_SEMAPHORE_CHECK_SIGNLE(sem);
+        } copy];
+        [self.requestInvokations addObject:block];
+    }
+    [self.associatedLoop explicitRequestHandle];
+    MakeDispatchSemaphoreWaitWithTimeout(sem);
+    return clientFD;
+}
+
+- (void)createDynamicSOCKSForwardWithLocalPort:(NSNumber *)localPort
+                                  withOnCreate:(dispatch_block_t)withOnCreate
+                       withContinuationHandler:(BOOL (^)(void))continuationBlock
+{
+    if (self.destroyed) return;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    @synchronized (self.requestInvokations) {
+        id block = [^{
+            [self unsafeCreateDynamicSOCKSForwardWithLocalPort:localPort
+                                                  withOnCreate:withOnCreate
+                                       withContinuationHandler:continuationBlock
+                                       withCompletionSemaphore:sem];
         } copy];
         [self.requestInvokations addObject:block];
     }
@@ -988,6 +1040,150 @@ continue; \
     }
 }
 
+- (void)unsafeAuthenticateWithAgent:(NSString*)username {
+    if (![self unsafeValidateSession]) {
+        [self unsafeDisconnect];
+        return;
+    }
+    if (self.authenticated) {
+        return;
+    }
+    LIBSSH2_SESSION *session = self.associatedSession;
+    LIBSSH2_AGENT *agent = libssh2_agent_init(session);
+    if (!agent) {
+        @synchronized (self) {
+            self.lastError = @"Could not initialize SSH agent.";
+        }
+        return;
+    }
+    NSDate *date = [[NSDate alloc] initWithTimeIntervalSinceNow:[self.operationTimeout intValue]];
+    BOOL connectedAgent = NO;
+    while (true) {
+        if ([date timeIntervalSinceNow] < 0) {
+            libssh2_session_set_last_error(session, LIBSSH2_ERROR_TIMEOUT, NULL);
+            break;
+        }
+        int rc = libssh2_agent_connect(agent);
+        if (rc == LIBSSH2_ERROR_EAGAIN) {
+            usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
+            continue;
+        }
+        connectedAgent = (rc == 0);
+        break;
+    }
+    if (!connectedAgent) {
+        libssh2_agent_free(agent);
+        @synchronized (self) {
+            self.lastError = @"Could not connect to system SSH agent (SSH_AUTH_SOCK).";
+        }
+        return;
+    }
+    BOOL listed = NO;
+    while (true) {
+        if ([date timeIntervalSinceNow] < 0) {
+            libssh2_session_set_last_error(session, LIBSSH2_ERROR_TIMEOUT, NULL);
+            break;
+        }
+        int rc = libssh2_agent_list_identities(agent);
+        if (rc == LIBSSH2_ERROR_EAGAIN) {
+            usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
+            continue;
+        }
+        listed = (rc == 0);
+        break;
+    }
+    BOOL authenticated = NO;
+    if (listed) {
+        struct libssh2_agent_publickey *identity = NULL;
+        struct libssh2_agent_publickey *prev = NULL;
+        const char *name = username ? [username UTF8String] : "";
+        while (libssh2_agent_get_identity(agent, &identity, prev) == 0 && identity != NULL) {
+            while (true) {
+                if ([date timeIntervalSinceNow] < 0) {
+                    libssh2_session_set_last_error(session, LIBSSH2_ERROR_TIMEOUT, NULL);
+                    break;
+                }
+                int rc = libssh2_agent_userauth(agent, name, identity);
+                if (rc == LIBSSH2_ERROR_EAGAIN) {
+                    usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
+                    continue;
+                }
+                if (rc == 0) {
+                    authenticated = YES;
+                }
+                break;
+            }
+            if (authenticated) {
+                break;
+            }
+            prev = identity;
+        }
+    }
+    libssh2_agent_disconnect(agent);
+    libssh2_agent_free(agent);
+    [self unsafeReadLastError];
+    if (authenticated) {
+        self.authenticated = YES;
+        NSRLog(@"agent authenticate success");
+    }
+}
+
+- (int)unsafeOpenDirectTCPIPSocketPairToHost:(NSString *)targetHost
+                                        port:(NSNumber *)targetPort
+{
+    if (![self unsafeValidateSession] || !self.authenticated) {
+        return -1;
+    }
+    if ([targetHost length] == 0 || [targetPort intValue] <= 0 || [targetPort intValue] > 65535) {
+        return -1;
+    }
+    int fds[2] = {-1, -1};
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
+        return -1;
+    }
+    setsockopt(fds[0], SOL_SOCKET, SO_NOSIGPIPE, &(int){1}, sizeof(int));
+    setsockopt(fds[1], SOL_SOCKET, SO_NOSIGPIPE, &(int){1}, sizeof(int));
+    int flags = fcntl(fds[1], F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(fds[1], F_SETFL, flags | O_NONBLOCK);
+    }
+
+    LIBSSH2_SESSION *session = self.associatedSession;
+    NSDate *date = [[NSDate alloc] initWithTimeIntervalSinceNow:[self.operationTimeout intValue]];
+    LIBSSH2_CHANNEL *channel = NULL;
+    while (true) {
+        if ([date timeIntervalSinceNow] < 0) {
+            libssh2_session_set_last_error(session, LIBSSH2_ERROR_TIMEOUT, NULL);
+            break;
+        }
+        LIBSSH2_CHANNEL *ch = libssh2_channel_direct_tcpip_ex(session,
+                                                              [targetHost UTF8String],
+                                                              [targetPort intValue],
+                                                              "127.0.0.1",
+                                                              0);
+        if (ch) {
+            channel = ch;
+            break;
+        }
+        long rc = libssh2_session_last_errno(session);
+        if (rc == LIBSSH2_ERROR_EAGAIN) {
+            usleep(LIBSSH2_CONTINUE_EAGAIN_WAIT);
+            continue;
+        }
+        break;
+    }
+    [self unsafeReadLastError];
+    if (!channel) {
+        close(fds[0]);
+        close(fds[1]);
+        return -1;
+    }
+    NSRemoteChannelSocketPair *pair = [[NSRemoteChannelSocketPair alloc] initWithSocket:fds[1]
+                                                                            withChannel:channel];
+    [self.operableObjects addObject:pair];
+    return fds[0];
+}
+
 #pragma exec
 
 - (void)unsafeExecuteRemote:(NSString*)command
@@ -1239,6 +1435,35 @@ continue; \
         }];
     }
     
+    [self.operableObjects addObject:operator];
+    if (withOnCreate) { withOnCreate(); }
+}
+
+- (void)unsafeCreateDynamicSOCKSForwardWithLocalPort:(NSNumber*)localPort
+                                        withOnCreate:(dispatch_block_t)withOnCreate
+                             withContinuationHandler:(BOOL (^)(void))continuationBlock
+                             withCompletionSemaphore:(dispatch_semaphore_t)completionSemaphore
+{
+    if (![GenericNetworking isValidateWithPort:localPort] || ![self unsafeValidateSession] || !self.authenticated) {
+        DISPATCH_SEMAPHORE_CHECK_SIGNLE(completionSemaphore);
+        return;
+    }
+    int sock4 = [GenericNetworking createSocketNonblockingListenerWithLocalPort:localPort];
+    if (sock4 <= 0) {
+        DISPATCH_SEMAPHORE_CHECK_SIGNLE(completionSemaphore);
+        return;
+    }
+    LIBSSH2_SESSION *session = self.associatedSession;
+    NSLocalForward *operator = [[NSLocalForward alloc] initDynamicSOCKSWithRepresentedSession:session
+                                                                        withRepresentedSocket:sock4
+                                                                                withLocalPort:localPort
+                                                                                  withTimeout:self.operationTimeout];
+    [operator setContinuationChain:continuationBlock];
+    if (completionSemaphore) {
+        [operator onTermination:^{
+            DISPATCH_SEMAPHORE_CHECK_SIGNLE(completionSemaphore);
+        }];
+    }
     [self.operableObjects addObject:operator];
     if (withOnCreate) { withOnCreate(); }
 }

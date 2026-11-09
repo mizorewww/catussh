@@ -3,17 +3,41 @@
 //  catussh (macOS)
 //
 
+import CatusshDesign
 import CatusshModule
 import CatusshTerminal
 import MachineStatusView
 import SwiftUI
+import UniformTypeIdentifiers
+
+enum TerminalSplitAxis: String, CaseIterable {
+    case horizontal
+    case vertical
+}
 
 struct TerminalPage: View {
     @ObservedObject var context: TerminalManager.Context
+    @ObservedObject var terminals = TerminalManager.shared
     @EnvironmentObject var store: CatusshStore
 
     @State private var interfaceToken = UUID()
+    @State private var secondaryContextID: TerminalManager.Context.ID?
+    @State private var splitAxis: TerminalSplitAxis = .horizontal
+    @State private var showSearch = false
+    @State private var searchQuery = ""
+    @State private var selectedMatchIndex = 0
+    @State private var showSnippetDrawer = false
     @Environment(\.isActivePage) private var isActive
+
+    private var secondaryContext: TerminalManager.Context? {
+        guard let secondaryContextID, secondaryContextID != context.id else { return nil }
+        return context.tabSiblings.first { $0.id == secondaryContextID }
+    }
+
+    private var searchMatches: [(lineNumber: Int, line: String)] {
+        guard showSearch else { return [] }
+        return context.termInterface.searchTranscript(searchQuery)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,18 +49,31 @@ struct TerminalPage: View {
                 .padding(.horizontal, RX.Space.s6)
                 .padding(.bottom, RX.Space.s2)
             }
-            VStack(spacing: 0) {
-                if context.closed {
-                    disconnectedBanner
+            HStack(spacing: RX.Space.s3) {
+                VStack(spacing: 0) {
+                    if context.closed {
+                        disconnectedBanner
+                    }
+                    if showSearch {
+                        searchBar
+                    }
+                    splitSurfaceContainer
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                surface
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous)
+                        .strokeBorder(Color.rxHairline, lineWidth: 1)
+                )
+
+                if showSnippetDrawer {
+                    TerminalSnippetDrawer(context: context) {
+                        withAnimation(.rxQuick) { showSnippetDrawer = false }
+                    }
+                    .frame(width: 260)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
             }
-            .clipShape(RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous)
-                    .strokeBorder(Color.rxHairline, lineWidth: 1)
-            )
             .padding(.horizontal, RX.Space.s6)
             TerminalStatusBar(context: context)
                 .padding(.horizontal, RX.Space.s6)
@@ -50,11 +87,19 @@ struct TerminalPage: View {
             trailingMetrics: .controlGroup
         ) {
             ToolbarAction("New Terminal Tab", systemImage: "plus") {
-                if context.remoteType == .machine {
-                    AppRouter.shared.openTerminal(machine: context.machine.id, another: true)
-                } else if let command = context.command {
-                    AppRouter.shared.openTerminal(command: command)
-                }
+                openAnotherTab()
+            }
+            ToolbarAction(
+                secondaryContext == nil ? "Split Right (⌘D)" : "Close Split Pane",
+                systemImage: secondaryContext == nil ? "rectangle.split.2x1" : "rectangle"
+            ) {
+                toggleSplit(axis: .horizontal)
+            }
+            ToolbarAction("Find in Terminal (⌘F)", systemImage: "magnifyingglass") {
+                withAnimation(.rxQuick) { showSearch.toggle() }
+            }
+            ToolbarAction("Snippets", systemImage: "chevron.left.forwardslash.chevron.right") {
+                withAnimation(.rxQuick) { showSnippetDrawer.toggle() }
             }
         } trailing: {
             ToolbarAction("Smaller Text", systemImage: "textformat.size.smaller", isEnabled: store.terminalFontSize > 4) {
@@ -69,6 +114,26 @@ struct TerminalPage: View {
                 TerminalSessionActions.close(context)
             }
         }
+        .background {
+            if isActive {
+                Group {
+                    Button("Find in Terminal") {
+                        withAnimation(.rxQuick) { showSearch.toggle() }
+                    }
+                    .keyboardShortcut("f", modifiers: .command)
+                    Button("Split Right") {
+                        toggleSplit(axis: .horizontal)
+                    }
+                    .keyboardShortcut("d", modifiers: .command)
+                    Button("Split Down") {
+                        toggleSplit(axis: .vertical)
+                    }
+                    .keyboardShortcut("d", modifiers: [.command, .shift])
+                }
+                .opacity(0)
+                .accessibilityHidden(true)
+            }
+        }
         .serverToolSwitcher(
             machine: context.remoteType == .machine && context.machine.isNotPlaceholder() ? context.machine.id : nil,
             current: .terminal
@@ -79,6 +144,177 @@ struct TerminalPage: View {
         }
         .onChange(of: isActive) { active in
             context.termInterface.setActive(active)
+            secondaryContext?.termInterface.setActive(false)
+        }
+    }
+
+    private func openAnotherTab() {
+        if context.remoteType == .machine {
+            AppRouter.shared.openTerminal(machine: context.machine.id, another: true)
+        } else if let command = context.command {
+            AppRouter.shared.openTerminal(command: command)
+        }
+    }
+
+    private func toggleSplit(axis: TerminalSplitAxis) {
+        if secondaryContext != nil, splitAxis == axis {
+            secondaryContext?.termInterface.setActive(false)
+            secondaryContextID = nil
+            return
+        }
+        splitAxis = axis
+        if let existing = context.tabSiblings.first(where: { $0.id != context.id }) {
+            existing.interfaceToken = existing.id
+            secondaryContextID = existing.id
+            return
+        }
+        if context.remoteType == .machine {
+            let machine = store.machineGroup[context.machine.id]
+            guard machine.isNotPlaceholder() else { return }
+            TerminalManager.shared.createSession(withMachineObject: machine, force: true) { created in
+                created.interfaceToken = created.id
+                secondaryContextID = created.id
+            }
+        } else if let command = context.command {
+            let created = TerminalManager.shared.createSession(withCommand: command)
+            created.interfaceToken = created.id
+            secondaryContextID = created.id
+        }
+    }
+
+    @ViewBuilder private var splitSurfaceContainer: some View {
+        if let secondary = secondaryContext {
+            if splitAxis == .horizontal {
+                HSplitView {
+                    surface
+                        .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
+                    secondarySurface(for: secondary)
+                        .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                VSplitView {
+                    surface
+                        .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
+                    secondarySurface(for: secondary)
+                        .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
+                }
+            }
+        } else {
+            surface
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder private func secondarySurface(for pane: TerminalManager.Context) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: RX.Space.s2) {
+                Text(pane.navigationSubtitle.isEmpty ? pane.displayName : pane.navigationSubtitle)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.rxInkSecondary)
+                    .lineLimit(1)
+                Spacer()
+                Button {
+                    splitAxis = splitAxis == .horizontal ? .vertical : .horizontal
+                } label: {
+                    Image(systemName: splitAxis == .horizontal ? "rectangle.split.1x2" : "rectangle.split.2x1")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.rxInkSecondary)
+                .help("Switch split orientation")
+                Button {
+                    pane.termInterface.setActive(false)
+                    secondaryContextID = nil
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.rxInkSecondary)
+                .help("Unsplit pane")
+            }
+            .padding(.horizontal, RX.Space.s3)
+            .frame(height: 26)
+            .background(Color.rxSurface)
+            Hairline()
+            pane.termInterface
+                .onAppear {
+                    pane.termInterface.setTerminalFontSize(with: store.terminalFontSize, preferConfigured: true)
+                }
+                .onChange(of: store.terminalFontSize) { newValue in
+                    pane.termInterface.setTerminalFontSize(with: newValue)
+                }
+        }
+    }
+
+    private var searchBar: some View {
+        let matches = searchMatches
+        let safeIndex = matches.isEmpty ? 0 : min(selectedMatchIndex, matches.count - 1)
+        return VStack(spacing: 0) {
+            HStack(spacing: RX.Space.s2) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.rxInkSecondary)
+                TextField("Find in terminal output…", text: $searchQuery)
+                    .textFieldStyle(.plain)
+                    .font(.rxBody)
+                    .onChange(of: searchQuery) { _ in selectedMatchIndex = max(0, searchMatches.count - 1) }
+                if !searchQuery.isEmpty {
+                    Text(matches.isEmpty ? "0 matches" : "\(safeIndex + 1) of \(matches.count)")
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(.rxInkSecondary)
+                    Button {
+                        guard !matches.isEmpty else { return }
+                        selectedMatchIndex = (safeIndex - 1 + matches.count) % matches.count
+                    } label: {
+                        Image(systemName: "chevron.up").font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(matches.isEmpty)
+                    Button {
+                        guard !matches.isEmpty else { return }
+                        selectedMatchIndex = (safeIndex + 1) % matches.count
+                    } label: {
+                        Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(matches.isEmpty)
+                }
+                Button {
+                    showSearch = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.rxInkSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, RX.Space.s3)
+            .frame(height: 34)
+            .background(Color.rxSurface)
+            if !matches.isEmpty {
+                Hairline()
+                HStack(spacing: RX.Space.s2) {
+                    Text("Line \(matches[safeIndex].lineNumber)")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.rxAccent)
+                    Text(matches[safeIndex].line)
+                        .font(.rxCode)
+                        .foregroundStyle(.rxInk)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Spacer()
+                    Button("Copy Line") {
+                        UIBridge.sendPasteboard(str: matches[safeIndex].line)
+                    }
+                    .buttonStyle(.rx(size: .small))
+                }
+                .padding(.horizontal, RX.Space.s3)
+                .frame(height: 28)
+                .background(Color.rxSurface.opacity(0.92))
+            }
+            Hairline()
         }
     }
 
@@ -128,6 +364,7 @@ struct TerminalPage: View {
 struct SessionTabs: View {
     @ObservedObject var current: TerminalManager.Context
     @ObservedObject var terminals = TerminalManager.shared
+    @State private var draggedTabID: TerminalManager.Context.ID?
 
     private var siblings: [TerminalManager.Context] { current.tabSiblings }
 
@@ -145,6 +382,17 @@ struct SessionTabs: View {
                                 shortcut: siblings.count > 1 ? Self.shortcut(index: index, count: siblings.count) : nil
                             )
                             .id(context.id)
+                            .onDrag {
+                                draggedTabID = context.id
+                                return NSItemProvider(object: context.id.uuidString as NSString)
+                            }
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: SessionTabDropDelegate(
+                                    targetID: context.id,
+                                    draggedID: $draggedTabID
+                                )
+                            )
                         }
                     }
                 }
@@ -169,6 +417,126 @@ struct SessionTabs: View {
             .help("New Terminal (⌘T)")
             .accessibilityLabel("New Terminal")
         }
+    }
+}
+
+private struct SessionTabDropDelegate: DropDelegate {
+    let targetID: TerminalManager.Context.ID
+    @Binding var draggedID: TerminalManager.Context.ID?
+
+    func dropEntered(info _: DropInfo) {
+        guard let draggedID, draggedID != targetID else { return }
+        withAnimation(.rxQuick) {
+            TerminalManager.shared.moveSession(fromID: draggedID, toID: targetID)
+        }
+    }
+
+    func dropUpdated(info _: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info _: DropInfo) -> Bool {
+        draggedID = nil
+        return true
+    }
+}
+
+private struct TerminalSnippetDrawer: View {
+    @ObservedObject var context: TerminalManager.Context
+    let onClose: () -> Void
+
+    @EnvironmentObject var store: CatusshStore
+    @State private var filter = ""
+
+    private var snippets: [RDSnippet] {
+        let all = store.snippetGroup.snippets
+        guard !filter.isEmpty else { return all }
+        let key = filter.lowercased()
+        return all.filter {
+            $0.name.lowercased().contains(key)
+                || $0.code.lowercased().contains(key)
+                || $0.group.lowercased().contains(key)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Snippets")
+                    .font(.rxBodyStrong)
+                    .foregroundStyle(.rxInk)
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.rxInkSecondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, RX.Space.s3)
+            .frame(height: 36)
+
+            Hairline()
+
+            RXSearchField("Filter snippets", text: $filter, width: nil)
+                .padding(RX.Space.s2)
+
+            Hairline()
+
+            if snippets.isEmpty {
+                VStack(spacing: RX.Space.s2) {
+                    Text(store.snippetGroup.snippets.isEmpty ? "No snippets saved" : "No matches")
+                        .font(.rxHelp)
+                        .foregroundStyle(.rxInkSecondary)
+                    if store.snippetGroup.snippets.isEmpty {
+                        Button("Open Snippets") {
+                            AppRouter.shared.route = .snippets
+                        }
+                        .buttonStyle(.rx(size: .small))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding()
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: RX.Space.s2) {
+                        ForEach(snippets) { snippet in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text(snippet.name)
+                                        .font(.rxBodyStrong)
+                                        .foregroundStyle(.rxInk)
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Button("Insert") {
+                                        context.insertBuffer(snippet.code)
+                                    }
+                                    .buttonStyle(.rx(size: .small))
+                                    .disabled(context.closed)
+                                    Button("Run") {
+                                        let code = snippet.code.hasSuffix("\n") ? snippet.code : snippet.code + "\n"
+                                        context.insertBuffer(code)
+                                    }
+                                    .buttonStyle(.rx(.primary, size: .small))
+                                    .disabled(context.closed)
+                                }
+                                Text(snippet.code.trimmingCharacters(in: .whitespacesAndNewlines))
+                                    .font(.rxCode)
+                                    .foregroundStyle(.rxInkSecondary)
+                                    .lineLimit(2)
+                            }
+                            .padding(RX.Space.s2)
+                            .background(
+                                RoundedRectangle(cornerRadius: RX.Radius.md, style: .continuous)
+                                    .fill(Color.primary.opacity(0.05))
+                            )
+                        }
+                    }
+                    .padding(RX.Space.s2)
+                }
+            }
+        }
+        .rxCardChrome()
     }
 }
 

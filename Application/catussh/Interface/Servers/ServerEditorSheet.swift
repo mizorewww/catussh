@@ -26,6 +26,7 @@ struct ServerEditorSheet: View {
     @State private var address = ""
     @State private var port = "22"
     @State private var transport: RDMachine.Transport = .direct
+    @State private var proxyJumpMachineID: RDMachine.ID?
     @State private var serviceTokenID = ""
     @State private var serviceTokenSecret = ""
     @State private var identity: RDIdentity.ID?
@@ -50,7 +51,15 @@ struct ServerEditorSheet: View {
 
     var isNew: Bool { machine == nil }
     var portIsValid: Bool { UInt16(port) != nil }
-    var canSave: Bool { !address.trimmingCharacters(in: .whitespaces).isEmpty && portIsValid }
+    var canSave: Bool {
+        guard !address.trimmingCharacters(in: .whitespaces).isEmpty, portIsValid else { return false }
+        if transport == .proxyJump { return proxyJumpMachineID != nil }
+        return true
+    }
+
+    var jumpServerCandidates: [RDMachine] {
+        store.machineGroup.machines.filter { $0.id != machine && !$0.isUURemoteDevice }
+    }
 
     var existingGroups: [String] {
         Set(store.machineGroup.machines.map(\.group) + store.folders.map(\.name))
@@ -109,10 +118,22 @@ struct ServerEditorSheet: View {
                     selection: $transport,
                     options: [
                         .init(.direct, "Direct (TCP)"),
+                        .init(.proxyJump, "ProxyJump (Bastion)"),
                         .init(.cloudflareAccess, "Cloudflare Access"),
                         .init(.uuRemote, "NetEase UU Remote"),
                     ]
                 )
+            }
+            if transport == .proxyJump {
+                RXField("Jump server (Bastion)", help: "Reaches this server through an SSH tunnel opened on the jump server (`ssh -J`).") {
+                    RXPicker(
+                        selection: $proxyJumpMachineID,
+                        options: jumpServerCandidates.map { item in
+                            .init(Optional(item.id), "\(item.name) (\(item.remoteAddress):\(item.remotePort))")
+                        },
+                        placeholder: jumpServerCandidates.isEmpty ? "No other SSH servers saved" : "Choose a jump server…"
+                    )
+                }
             }
             HStack(alignment: .top, spacing: RX.Space.s4) {
                 RXField(transport == .cloudflareAccess ? "Access hostname" : transport == .uuRemote ? "Device ID" : "Address") {
@@ -296,6 +317,7 @@ struct ServerEditorSheet: View {
 
     func apply(to target: inout RDMachine) {
         target.transport = transport
+        target.proxyJumpMachineID = transport == .proxyJump ? proxyJumpMachineID?.uuidString : nil
         let cloudflare = transport == .cloudflareAccess
         target.cloudflareServiceTokenID = cloudflare ? serviceTokenID.trimmingCharacters(in: .whitespaces) : ""
         target.cloudflareServiceTokenSecret = cloudflare ? serviceTokenSecret.trimmingCharacters(in: .whitespaces) : ""
@@ -320,6 +342,7 @@ struct ServerEditorSheet: View {
         startFolder = read.fileTransferLoginPath
         banner = read.lastBanner
         transport = read.transport
+        proxyJumpMachineID = read.proxyJumpMachineID.flatMap(UUID.init(uuidString:))
         serviceTokenID = read.cloudflareServiceTokenID
         serviceTokenSecret = read.cloudflareServiceTokenSecret
         remoteDesktopProtocol = read.remoteDesktopProtocol

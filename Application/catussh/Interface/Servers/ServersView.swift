@@ -53,6 +53,7 @@ struct ServersView: View {
                 systemImage: "folder.badge.plus",
                 items: [
                     RXToolbarMenuItem("New Folder…", systemImage: "folder.badge.plus", isOn: false) { FolderActions.newFolder() },
+                    RXToolbarMenuItem("Import ~/.ssh/config…", systemImage: "square.and.arrow.down", isOn: false) { importSSHConfigFromToolbar() },
                     RXToolbarMenuItem(account.isLoggedIn ? "UU Remote Account…" : "Link UU Remote Account…", systemImage: "link", isOn: false) { FolderActions.linkUURemote() },
                 ]
             )
@@ -96,6 +97,27 @@ struct ServersView: View {
             .disabled(selection == nil)
             .opacity(0)
             .accessibilityHidden(true)
+        }
+    }
+
+    private func importSSHConfigFromToolbar() {
+        let sshDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".ssh")
+        UIBridge.openPanel(
+            message: "Choose an OpenSSH config file (e.g. ~/.ssh/config)",
+            prompt: "Import",
+            directory: sshDir,
+            canChooseFiles: true,
+            canChooseDirectories: false,
+            allowsMultipleSelection: false,
+            canCreateDirectories: false,
+            showsHiddenFiles: true
+        ) { urls in
+            guard let url = urls.first else { return }
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                UIBridge.presentError(with: "Could not read \(url.lastPathComponent) as UTF-8 text.")
+                return
+            }
+            _ = store.importOpenSSHConfig(text, baseDirectory: url.deletingLastPathComponent())
         }
     }
 }

@@ -139,10 +139,23 @@ private struct PortForwardRow: View {
 
     var running: Bool { backend.sessionExists(withPortForwardID: forward.id) }
 
+    var orientationLabel: String {
+        switch forward.forwardOrientation {
+        case .listenLocal: return "Listen local"
+        case .listenRemote: return "Listen remote"
+        case .dynamicSOCKS: return "SOCKS5 (-D)"
+        }
+    }
+
+    var targetLabel: String {
+        if forward.forwardOrientation == .dynamicSOCKS { return "SOCKS5 proxy" }
+        return forward.targetHost.isEmpty ? "—" : "\(forward.targetHost):\(forward.targetPort)"
+    }
+
     var body: some View {
         let status = PortForwardPresentation(state: backend.lastStatus[forward.id], running: running)
         HStack(spacing: 0) {
-            RXTag(forward.forwardOrientation == .listenLocal ? "Listen local" : "Listen remote")
+            RXTag(orientationLabel)
                 .frame(width: ForwardColumns.orientation, alignment: .leading)
             Text(verbatim: ":\(forward.bindPort)")
                 .font(.rxCode)
@@ -153,9 +166,9 @@ private struct PortForwardRow: View {
                 .foregroundStyle(forward.usingMachine == nil ? Color.rxInkSecondary : Color.rxInk)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text(verbatim: forward.targetHost.isEmpty ? "—" : "\(forward.targetHost):\(forward.targetPort)")
+            Text(verbatim: targetLabel)
                 .font(.rxCode)
-                .foregroundStyle(.rxInk)
+                .foregroundStyle(forward.forwardOrientation == .dynamicSOCKS ? Color.rxInkSecondary : Color.rxInk)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -243,21 +256,30 @@ struct PortForwardEditorSheet: View {
         return result
     }
 
+    var leadText: String {
+        switch orientation {
+        case .listenLocal: return "This Mac :port → server → target"
+        case .listenRemote: return "Server :port → this Mac → target"
+        case .dynamicSOCKS: return "This Mac :port (SOCKS5) → server → any destination"
+        }
+    }
+
     var body: some View {
         SheetScaffold(
             forward == nil ? "New Port Forward" : "Edit Port Forward",
-            lead: orientation == .listenLocal ? "This Mac :port → server → target" : "Server :port → this Mac → target"
+            lead: leadText
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 RXField("Orientation") {
                     RXSegmented(selection: $orientation, options: [
-                        .init(.listenLocal, "Listen local"),
-                        .init(.listenRemote, "Listen remote"),
+                        .init(.listenLocal, "Local (-L)"),
+                        .init(.listenRemote, "Remote (-R)"),
+                        .init(.dynamicSOCKS, "SOCKS5 (-D)"),
                     ], caps: false, fullWidth: true)
                 }
                 HStack(alignment: .top, spacing: RX.Space.s4) {
                     RXField("Bind port", error: bindPort.isEmpty || UInt16(bindPort) != nil ? nil : "1–65535") {
-                        TextField("5433", text: $bindPort)
+                        TextField(orientation == .dynamicSOCKS ? "1080" : "5433", text: $bindPort)
                             .textFieldStyle(.rxMono)
                     }
                     .frame(width: 120)
@@ -269,20 +291,26 @@ struct PortForwardEditorSheet: View {
                         )
                     }
                 }
-                HStack(alignment: .top, spacing: RX.Space.s4) {
-                    RXField("Target host") {
-                        TextField("127.0.0.1", text: $targetHost)
-                            .textFieldStyle(.rxMono)
-                            .disableAutocorrection(true)
+                if orientation != .dynamicSOCKS {
+                    HStack(alignment: .top, spacing: RX.Space.s4) {
+                        RXField("Target host") {
+                            TextField("127.0.0.1", text: $targetHost)
+                                .textFieldStyle(.rxMono)
+                                .disableAutocorrection(true)
+                        }
+                        RXField("Target port", error: targetPort.isEmpty || UInt16(targetPort) != nil ? nil : "1–65535") {
+                            TextField("5432", text: $targetPort)
+                                .textFieldStyle(.rxMono)
+                        }
+                        .frame(width: 120)
                     }
-                    RXField("Target port", error: targetPort.isEmpty || UInt16(targetPort) != nil ? nil : "1–65535") {
-                        TextField("5432", text: $targetPort)
-                            .textFieldStyle(.rxMono)
-                    }
-                    .frame(width: 120)
+                } else {
+                    HelpText("Runs a local SOCKS5 proxy on 127.0.0.1:\(bindPort.isEmpty ? "1080" : bindPort) that tunnels all connections through the selected server (`ssh -D`).")
                 }
                 RXField("Equivalent command") {
-                    CodeBlock(draft.getCommand() ?? "ssh \(orientation == .listenLocal ? "-L" : "-R") \(bindPort.isEmpty ? "port" : bindPort):\(targetHost.isEmpty ? "127.0.0.1" : targetHost):\(targetPort.isEmpty ? "port" : targetPort) <server>")
+                    CodeBlock(draft.getCommand() ?? (orientation == .dynamicSOCKS
+                        ? "ssh -D \(bindPort.isEmpty ? "1080" : bindPort) <server>"
+                        : "ssh \(orientation == .listenLocal ? "-L" : "-R") \(bindPort.isEmpty ? "port" : bindPort):\(targetHost.isEmpty ? "127.0.0.1" : targetHost):\(targetPort.isEmpty ? "port" : targetPort) <server>"))
                         .opacity(draft.isValid() ? 1 : 0.5)
                 }
             }

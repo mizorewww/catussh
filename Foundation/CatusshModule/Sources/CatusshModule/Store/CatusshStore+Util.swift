@@ -260,4 +260,231 @@ public extension CatusshStore {
         }
         return true
     }
+
+    struct BackupArchive: Codable, Sendable {
+        public var version: Int = 1
+        public var exportedAt: Date = .init()
+        public var machines: [RDMachine]
+        public var identities: [RDIdentity]
+        public var snippets: [RDSnippet]
+        public var portForwards: [RDPortForward]
+        public var folders: [RDFolder]
+    }
+
+    /// Exports all saved servers, identities, snippets, port forwards, and folders.
+    /// If `passphrase` is non-empty, the JSON payload is encrypted with AES-256-GCM (HKDF).
+    @MainActor
+    func exportBackupData(passphrase: String = "") throws -> Data {
+        let archive = BackupArchive(
+            machines: machineGroup.machines,
+            identities: identityGroup.identities,
+            snippets: snippetGroup.snippets,
+            portForwards: portForwardGroup.forwards,
+            folders: folderGroup.folders
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let raw = try encoder.encode(archive)
+        let trimmed = passphrase.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return raw }
+        guard let aes = AES(key: trimmed), let encrypted = aes.encrypt(data: raw) else {
+            throw NSError(domain: "CatusshBackup", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to encrypt backup archive."])
+        }
+        return encrypted
+    }
+
+    /// Imports a backup archive, merging or replacing items by UUID.
+    @MainActor
+    @discardableResult
+    func importBackupData(_ data: Data, passphrase: String = "") throws -> (machines: Int, identities: Int, snippets: Int, forwards: Int) {
+        let payload: Data
+        if data.starts(with: Data("RGCM".utf8)) {
+            let trimmed = passphrase.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, let aes = AES(key: trimmed), let plain = aes.decrypt(data: data) {
+                payload = plain
+            } else if let plain = AES.shared.decrypt(data: data) {
+                payload = plain
+            } else {
+                throw NSError(domain: "CatusshBackup", code: 2, userInfo: [NSLocalizedDescriptionKey: "Incorrect backup passphrase or corrupted encrypted archive."])
+            }
+        } else {
+            payload = data
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let archive = try decoder.decode(BackupArchive.self, from: payload)
+
+        var mg = machineGroup
+        for m in archive.machines { mg.insert(m) }
+        machineGroup = mg
+
+        var ig = identityGroup
+        for i in archive.identities { ig.insert(i) }
+        identityGroup = ig
+
+        var sg = snippetGroup
+        for s in archive.snippets { sg.insert(s) }
+        snippetGroup = sg
+
+        var pg = portForwardGroup
+        for p in archive.portForwards { pg.insert(p) }
+        portForwardGroup = pg
+
+        var fg = folderGroup
+        for f in archive.folders where !fg.folders.contains(where: { $0.name == f.name }) {
+            fg.folders.append(f)
+        }
+        folderGroup = fg
+        flushPendingWrites()
+        return (archive.machines.count, archive.identities.count, archive.snippets.count, archive.portForwards.count)
+    }
+
+    /// Parses an OpenSSH `~/.ssh/config` text and imports any non-wildcard `Host` entries
+    /// (along with referenced `IdentityFile` keys and `ProxyJump` links).
+    @MainActor
+    @discardableResult
+    func importOpenSSHConfig(_ text: String, baseDirectory: URL? = nil) -> (importedServers: Int, importedIdentities: Int) {
+        struct RawHostBlock {
+            var aliases: [String] = []
+            var hostName: String?
+            var user: String?
+            var port: String?
+            var identityFile: String?
+            var proxyJump: String?
+        }
+
+        var blocks: [RawHostBlock] = []
+        var current: RawHostBlock?
+
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+
+            let parts = trimmed.split(maxSplits: 1, whereSeparator: { $0 == " " || $0 == "\t" || $0 == "=" })
+            guard parts.count == 2 else { continue }
+            let key = parts[0].lowercased()
+            var value = String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 {
+                value = String(value.dropFirst().dropLast())
+            }
+
+            if key == "host" {
+                if let current { blocks.append(current) }
+                let aliases = value.split(whereSeparator: \.isWhitespace).map(String.init).filter {
+                    !$0.contains("*") && !$0.contains("?") && !$0.hasPrefix("!")
+                }
+                current = RawHostBlock(aliases: aliases)
+            } else if current != nil {
+                switch key {
+                case "hostname": current?.hostName = value
+                case "user": current?.user = value
+                case "port": current?.port = value
+                case "identityfile": if current?.identityFile == nil { current?.identityFile = value }
+                case "proxyjump": current?.proxyJump = value
+                default: break
+                }
+            }
+        }
+        if let current { blocks.append(current) }
+
+        var importedServers = 0
+        var importedIdentities = 0
+        var aliasToMachineID: [String: UUID] = [:]
+        var pendingProxyJump: [(machineID: UUID, jumpAlias: String)] = []
+
+        var mg = machineGroup
+        var ig = identityGroup
+
+        for block in blocks {
+            for alias in block.aliases {
+                let host = block.hostName ?? alias
+                let port = block.port ?? "22"
+                guard !host.isEmpty else { continue }
+
+                var associatedIdentityID: String?
+                if let username = block.user, !username.isEmpty {
+                    var loadedPriv = ""
+                    var loadedPub = ""
+                    if let idFile = block.identityFile {
+                        let expanded = (idFile as NSString).expandingTildeInPath
+                        let fileURL: URL
+                        if expanded.hasPrefix("/") {
+                            fileURL = URL(fileURLWithPath: expanded)
+                        } else if let baseDirectory {
+                            fileURL = baseDirectory.appendingPathComponent(expanded)
+                        } else {
+                            fileURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".ssh").appendingPathComponent(expanded)
+                        }
+                        if let priv = try? String(contentsOf: fileURL, encoding: .utf8), RDIdentity.looksLikePrivateKey(priv) {
+                            loadedPriv = priv
+                            let pubURL = URL(fileURLWithPath: fileURL.path + ".pub")
+                            if let pub = try? String(contentsOf: pubURL, encoding: .utf8) {
+                                loadedPub = pub
+                            }
+                        }
+                    }
+
+                    if let existing = ig.identities.first(where: {
+                        $0.username == username && (loadedPriv.isEmpty || $0.privateKey == loadedPriv)
+                    }) {
+                        associatedIdentityID = existing.id.uuidString
+                    } else {
+                        var newIdentity = RDIdentity(
+                            username: username,
+                            privateKey: loadedPriv,
+                            publicKey: loadedPub,
+                            comment: "Imported from ssh_config (\(alias))",
+                            group: "SSH Config"
+                        )
+                        if loadedPriv.isEmpty {
+                            newIdentity.useSSHAgent = true
+                        }
+                        ig.insert(newIdentity)
+                        associatedIdentityID = newIdentity.id.uuidString
+                        importedIdentities += 1
+                    }
+                }
+
+                if let existingMachine = mg.machines.first(where: { $0.name == alias || ($0.remoteAddress == host && $0.remotePort == port && $0.name == alias) }) {
+                    aliasToMachineID[alias] = existingMachine.id
+                    continue
+                }
+
+                let machine = RDMachine(
+                    remoteAddress: host,
+                    remotePort: port,
+                    name: alias,
+                    group: "SSH Config",
+                    lastConnection: Date(timeIntervalSince1970: 0),
+                    comment: "Imported from ~/.ssh/config",
+                    associatedIdentity: associatedIdentityID
+                )
+                mg.insert(machine)
+                aliasToMachineID[alias] = machine.id
+                if let jump = block.proxyJump, !jump.isEmpty, jump.lowercased() != "none" {
+                    let firstJump = jump.split(separator: ",").first.map(String.init) ?? jump
+                    pendingProxyJump.append((machine.id, firstJump.trimmingCharacters(in: .whitespaces)))
+                }
+                importedServers += 1
+            }
+        }
+
+        for (machineID, jumpAlias) in pendingProxyJump {
+            let resolvedJumpID = aliasToMachineID[jumpAlias]
+                ?? mg.machines.first(where: { $0.name == jumpAlias || $0.remoteAddress == jumpAlias })?.id
+            if let resolvedJumpID, resolvedJumpID != machineID {
+                var m = mg[machineID]
+                m.transport = .proxyJump
+                m.proxyJumpMachineID = resolvedJumpID.uuidString
+                mg[machineID] = m
+            }
+        }
+
+        identityGroup = ig
+        machineGroup = mg
+        flushPendingWrites()
+        return (importedServers, importedIdentities)
+    }
 }

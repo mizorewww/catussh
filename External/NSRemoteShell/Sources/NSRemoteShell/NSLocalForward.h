@@ -23,6 +23,11 @@ typedef BOOL (^NSRemoteChannelContinuationBlock)(void);
                              withLocalPort:(NSNumber*)withLocalPort
                                withTimeout:(NSNumber*)withTimeout;
 
+- (instancetype)initDynamicSOCKSWithRepresentedSession:(LIBSSH2_SESSION*)representedSession
+                                 withRepresentedSocket:(int)socketDescriptor
+                                         withLocalPort:(NSNumber*)withLocalPort
+                                           withTimeout:(NSNumber*)withTimeout;
+
 - (void)onTermination:(dispatch_block_t)terminationHandler;
 - (void)setContinuationChain:(NSRemoteChannelContinuationBlock)continuation;
 
