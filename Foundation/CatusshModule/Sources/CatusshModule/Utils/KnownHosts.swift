@@ -141,15 +141,19 @@ public final class KnownHosts: @unchecked Sendable {
 
     private func entriesLocked() -> [String: String] {
         if let cachedEntries { return cachedEntries }
-        guard let encrypted = defaults.data(forKey: storageKey),
-              let plain = crypto.decrypt(data: encrypted),
-              let decoded = try? PropertyListDecoder().decode([String: String].self, from: plain)
-        else {
-            cachedEntries = [:]
-            return [:]
+        if let encrypted = defaults.data(forKey: storageKey),
+           let plain = crypto.decrypt(data: encrypted),
+           let decoded = try? PropertyListDecoder().decode([String: String].self, from: plain)
+        {
+            cachedEntries = decoded
+            return decoded
         }
-        cachedEntries = decoded
-        return decoded
+        if let legacyDict = defaults.dictionary(forKey: storageKey) as? [String: String] {
+            saveEntriesLocked(legacyDict)
+            return legacyDict
+        }
+        cachedEntries = [:]
+        return [:]
     }
 
     private func saveEntriesLocked(_ entries: [String: String]) {

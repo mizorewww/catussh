@@ -71,6 +71,6 @@ final class AESTests: XCTestCase {
     }
 
     private var legacyDebugEngine: AES {
-        AES(key: AES.legacyDebugKey)!
+        AES(key: AES.legacyDebugKey + AES.legacyDebugKey + AES.legacyDebugKey)!
     }
 }

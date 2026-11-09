@@ -155,28 +155,90 @@ public struct RDMachine: Codable, Identifiable, Equatable, Sendable {
         lastBanner = try container.decode(String.self, forKey: .lastBanner)
         comment = try container.decode(String.self, forKey: .comment)
         associatedIdentity = try container.decodeIfPresent(String.self, forKey: .associatedIdentity)
-        attachment = try container.decodeIfPresent([String: String].self, forKey: .attachment) ?? [:]
+        var legacyAttachment = try container.decodeIfPresent([String: String].self, forKey: .attachment) ?? [:]
 
-        fileTransferLoginPath = try container.decodeIfPresent(String.self, forKey: .fileTransferLoginPath) ?? "/"
-        transport = try container.decodeIfPresent(Transport.self, forKey: .transport) ?? .direct
-        cloudflareServiceTokenID = try container.decodeIfPresent(String.self, forKey: .cloudflareServiceTokenID) ?? ""
-        cloudflareServiceTokenSecret = try container.decodeIfPresent(String.self, forKey: .cloudflareServiceTokenSecret) ?? ""
-        remoteDesktopProtocol = try container.decodeIfPresent(RemoteDesktopProtocolType.self, forKey: .remoteDesktopProtocol) ?? .none
-        vncPort = try container.decodeIfPresent(String.self, forKey: .vncPort) ?? "5900"
-        vncPassword = try container.decodeIfPresent(String.self, forKey: .vncPassword) ?? ""
-        vncUsername = try container.decodeIfPresent(String.self, forKey: .vncUsername) ?? ""
-        vncShared = try container.decodeIfPresent(Bool.self, forKey: .vncShared) ?? true
-        vncOverSSH = try container.decodeIfPresent(Bool.self, forKey: .vncOverSSH) ?? false
-        uuDeviceID = try container.decodeIfPresent(String.self, forKey: .uuDeviceID) ?? ""
-        uuDeviceAlias = try container.decodeIfPresent(String.self, forKey: .uuDeviceAlias) ?? ""
-        uuAnonymousDeviceID = try container.decodeIfPresent(String.self, forKey: .uuAnonymousDeviceID) ?? ""
-        uuAssistID = try container.decodeIfPresent(String.self, forKey: .uuAssistID) ?? ""
-        uuAssistCode = try container.decodeIfPresent(String.self, forKey: .uuAssistCode) ?? ""
-        uuDisplayID = try container.decodeIfPresent(Int.self, forKey: .uuDisplayID) ?? 0
-        uuFPS = try container.decodeIfPresent(Int.self, forKey: .uuFPS) ?? 60
-        uuQuality = try container.decodeIfPresent(Int.self, forKey: .uuQuality) ?? 5
-        uuManaged = try container.decodeIfPresent(Bool.self, forKey: .uuManaged) ?? false
+        fileTransferLoginPath = try container.decodeIfPresent(String.self, forKey: .fileTransferLoginPath)
+            ?? legacyAttachment["sftp.login.path"]
+            ?? "/"
+        transport = try container.decodeIfPresent(Transport.self, forKey: .transport)
+            ?? legacyAttachment["transport"].flatMap(Transport.init(rawValue:))
+            ?? .direct
+        cloudflareServiceTokenID = try container.decodeIfPresent(String.self, forKey: .cloudflareServiceTokenID)
+            ?? legacyAttachment["cloudflare.serviceToken.id"]
+            ?? ""
+        cloudflareServiceTokenSecret = try container.decodeIfPresent(String.self, forKey: .cloudflareServiceTokenSecret)
+            ?? legacyAttachment["cloudflare.serviceToken.secret"]
+            ?? ""
+        remoteDesktopProtocol = try container.decodeIfPresent(RemoteDesktopProtocolType.self, forKey: .remoteDesktopProtocol)
+            ?? legacyAttachment["remoteDesktop.protocol"].flatMap(RemoteDesktopProtocolType.init(rawValue:))
+            ?? .none
+        vncPort = try container.decodeIfPresent(String.self, forKey: .vncPort)
+            ?? legacyAttachment["remoteDesktop.vnc.port"]
+            ?? "5900"
+        vncPassword = try container.decodeIfPresent(String.self, forKey: .vncPassword)
+            ?? legacyAttachment["remoteDesktop.vnc.password"]
+            ?? ""
+        vncUsername = try container.decodeIfPresent(String.self, forKey: .vncUsername)
+            ?? legacyAttachment["remoteDesktop.vnc.username"]
+            ?? ""
+        vncShared = try container.decodeIfPresent(Bool.self, forKey: .vncShared)
+            ?? (legacyAttachment["remoteDesktop.vnc.shared"].map { $0 != "0" } ?? true)
+        vncOverSSH = try container.decodeIfPresent(Bool.self, forKey: .vncOverSSH)
+            ?? (legacyAttachment["remoteDesktop.vnc.overSSH"] == "1")
+        uuDeviceID = try container.decodeIfPresent(String.self, forKey: .uuDeviceID)
+            ?? legacyAttachment["remoteDesktop.uu.deviceID"]
+            ?? ""
+        uuDeviceAlias = try container.decodeIfPresent(String.self, forKey: .uuDeviceAlias)
+            ?? legacyAttachment["remoteDesktop.uu.deviceAlias"]
+            ?? ""
+        uuAnonymousDeviceID = try container.decodeIfPresent(String.self, forKey: .uuAnonymousDeviceID)
+            ?? legacyAttachment["remoteDesktop.uu.anonymousDeviceID"]
+            ?? ""
+        uuAssistID = try container.decodeIfPresent(String.self, forKey: .uuAssistID)
+            ?? legacyAttachment["remoteDesktop.uu.assistID"]
+            ?? ""
+        uuAssistCode = try container.decodeIfPresent(String.self, forKey: .uuAssistCode)
+            ?? legacyAttachment["remoteDesktop.uu.assistCode"]
+            ?? ""
+        uuDisplayID = try container.decodeIfPresent(Int.self, forKey: .uuDisplayID)
+            ?? legacyAttachment["remoteDesktop.uu.displayID"].flatMap(Int.init)
+            ?? 0
+        uuFPS = try container.decodeIfPresent(Int.self, forKey: .uuFPS)
+            ?? legacyAttachment["remoteDesktop.uu.fps"].flatMap(Int.init)
+            ?? 60
+        uuQuality = try container.decodeIfPresent(Int.self, forKey: .uuQuality)
+            ?? legacyAttachment["remoteDesktop.uu.quality"].flatMap(Int.init)
+            ?? 5
+        uuManaged = try container.decodeIfPresent(Bool.self, forKey: .uuManaged)
+            ?? (legacyAttachment["remoteDesktop.uu.managed"] == "1")
         ghosttyTerminfoVersion = try container.decodeIfPresent(String.self, forKey: .ghosttyTerminfoVersion)
+            ?? legacyAttachment[GhosttyTerminfo.cacheKey]
+
+        for migratedKey in [
+            "sftp.login.path",
+            "transport",
+            "cloudflare.serviceToken.id",
+            "cloudflare.serviceToken.secret",
+            "remoteDesktop.protocol",
+            "remoteDesktop.vnc.port",
+            "remoteDesktop.vnc.password",
+            "remoteDesktop.vnc.username",
+            "remoteDesktop.vnc.shared",
+            "remoteDesktop.vnc.overSSH",
+            "remoteDesktop.uu.deviceID",
+            "remoteDesktop.uu.deviceAlias",
+            "remoteDesktop.uu.anonymousDeviceID",
+            "remoteDesktop.uu.assistID",
+            "remoteDesktop.uu.assistCode",
+            "remoteDesktop.uu.displayID",
+            "remoteDesktop.uu.fps",
+            "remoteDesktop.uu.quality",
+            "remoteDesktop.uu.managed",
+            GhosttyTerminfo.cacheKey,
+        ] {
+            legacyAttachment.removeValue(forKey: migratedKey)
+        }
+        attachment = legacyAttachment
     }
 
     public func encode(to encoder: Encoder) throws {

@@ -5,6 +5,7 @@
 //  Created by Lakr Aream on 12/15/20.
 //
 
+import CommonCrypto
 import CryptoKit
 import Foundation
 import Keychain
@@ -35,6 +36,8 @@ public struct LegacyKeyStore: Sendable {
 
 public struct AES: Sendable {
     private let key: Data
+    private let legacyKey: Data?
+    private let legacyIV: Data?
 
     /// Key material for an engine tried when this one cannot open the data,
     /// so what older DEBUG builds stored under the constant key stays
@@ -77,7 +80,7 @@ public struct AES: Sendable {
                     keyBuilder = serialNumber
                 }
             }
-            return makeEngine(key: keyBuilder)
+            return makeEngine(key: keyBuilder + keyBuilder + keyBuilder)
         #else
             let engine = makeKeychainEngine()
             #if DEBUG
@@ -93,7 +96,7 @@ public struct AES: Sendable {
 
         func withLegacyDebugKeyFallback() -> AES {
             var copy = self
-            copy.keyFallback = Self.legacyDebugKey
+            copy.keyFallback = Self.legacyDebugKey + Self.legacyDebugKey + Self.legacyDebugKey
             return copy
         }
     #endif
@@ -181,8 +184,9 @@ public struct AES: Sendable {
     private static let hkdfSalt = Data("me.mizorewww.rayon.aes.hkdf.v2".utf8)
     private static let hkdfInfo = Data("catussh-aes-256-gcm".utf8)
 
-    /// Derives a 256-bit key using CryptoKit HKDF<SHA256>, safely supporting arbitrary UTF-8 strings.
-    public init?(key initKey: String, iv _: String = "") {
+    /// Derives a 256-bit key using CryptoKit HKDF<SHA256>, safely supporting arbitrary UTF-8 strings,
+    /// while retaining the legacy 32-byte key / 16-byte IV derivation to seamlessly read `RGCM1` and CBC data.
+    public init?(key initKey: String, iv initIV: String = "") {
         let inputBytes = Data(initKey.utf8)
         guard !inputBytes.isEmpty else { return nil }
         let derived = HKDF<SHA256>.deriveKey(
@@ -192,11 +196,28 @@ public struct AES: Sendable {
             outputByteCount: 32
         )
         key = derived.withUnsafeBytes { Data($0) }
+
+        let ivSource = initIV.isEmpty ? initKey : initIV
+        if initKey.count >= kCCKeySizeAES128, ivSource.count >= kCCBlockSizeAES128 {
+            var legacyK = initKey
+            while legacyK.count < 32 { legacyK += legacyK }
+            while legacyK.count > 32 { legacyK.removeLast() }
+            legacyKey = Data(legacyK.utf8)
+
+            var legacyV = ivSource
+            while legacyV.count < kCCBlockSizeAES128 { legacyV += legacyV }
+            while legacyV.count > kCCBlockSizeAES128 { legacyV.removeLast() }
+            legacyIV = Data(legacyV.utf8)
+        } else {
+            legacyKey = nil
+            legacyIV = nil
+        }
     }
 
     // MARK: - API
 
     private static let currentFormatPrefix = Data("RGCM2".utf8)
+    private static let legacyGCMFormatPrefix = Data("RGCM1".utf8)
 
     public func encrypt(data: Data) -> Data? {
         guard let sealed = try? CryptoKit.AES.GCM.seal(
@@ -211,30 +232,77 @@ public struct AES: Sendable {
     }
 
     public func decrypt(data: Data) -> Data? {
-        if let plain = open(data: data) { return plain }
-        if let plain = fallbackOpen(data: data) { return plain }
+        if data.starts(with: Self.currentFormatPrefix) || data.starts(with: Self.legacyGCMFormatPrefix) {
+            if let plain = open(data: data) { return plain }
+            if let plain = fallbackOpen(data: data) { return plain }
+        } else {
+            if let plain = fallbackOpen(data: data) { return plain }
+            if let plain = open(data: data) { return plain }
+        }
         debugPrint("Error: Failed to decrypt data.")
         return nil
     }
 
     private func fallbackOpen(data: Data) -> Data? {
         guard let material = keyFallback,
-              let fallback = AES(key: material)
+              let fallback = AES(key: material, iv: material)
         else { return nil }
         return fallback.open(data: data)
     }
 
     private func open(data: Data) -> Data? {
-        guard data.starts(with: Self.currentFormatPrefix) else {
-            return nil
+        if data.starts(with: Self.currentFormatPrefix) {
+            guard let box = try? CryptoKit.AES.GCM.SealedBox(
+                combined: data.dropFirst(Self.currentFormatPrefix.count)
+            ),
+                let plain = try? CryptoKit.AES.GCM.open(box, using: SymmetricKey(data: key))
+            else {
+                return nil
+            }
+            return plain
         }
-        guard let box = try? CryptoKit.AES.GCM.SealedBox(
-            combined: data.dropFirst(Self.currentFormatPrefix.count)
-        ),
-            let plain = try? CryptoKit.AES.GCM.open(box, using: SymmetricKey(data: key))
-        else {
-            return nil
+        if data.starts(with: Self.legacyGCMFormatPrefix) {
+            guard let legacyKey,
+                  let box = try? CryptoKit.AES.GCM.SealedBox(
+                      combined: data.dropFirst(Self.legacyGCMFormatPrefix.count)
+                  ),
+                  let plain = try? CryptoKit.AES.GCM.open(box, using: SymmetricKey(data: legacyKey))
+            else {
+                return nil
+            }
+            return plain
         }
-        return plain
+        return legacyCBCDecrypt(data: data)
+    }
+
+    private func legacyCBCDecrypt(data: Data) -> Data? {
+        guard let legacyKey, let legacyIV else { return nil }
+        let cryptLength = data.count + kCCBlockSizeAES128
+        var cryptData = Data(count: cryptLength)
+        var bytesLength = 0
+        let status = cryptData.withUnsafeMutableBytes { cryptBytes in
+            data.withUnsafeBytes { dataBytes in
+                legacyIV.withUnsafeBytes { ivBytes in
+                    legacyKey.withUnsafeBytes { keyBytes in
+                        CCCrypt(
+                            CCOperation(kCCDecrypt),
+                            CCAlgorithm(kCCAlgorithmAES),
+                            CCOptions(kCCOptionPKCS7Padding),
+                            keyBytes.baseAddress,
+                            legacyKey.count,
+                            ivBytes.baseAddress,
+                            dataBytes.baseAddress,
+                            data.count,
+                            cryptBytes.baseAddress,
+                            cryptLength,
+                            &bytesLength
+                        )
+                    }
+                }
+            }
+        }
+        guard UInt32(status) == UInt32(kCCSuccess) else { return nil }
+        cryptData.removeSubrange(bytesLength ..< cryptData.count)
+        return cryptData
     }
 }
