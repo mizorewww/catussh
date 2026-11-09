@@ -3,7 +3,7 @@
 //  CatusshModule
 //
 //  Runs a local login shell (`/bin/zsh -l` or `$SHELL -l`) over a native
-//  pseudo-terminal (`forkpty`) on macOS.
+//  pseudo-terminal (`openpty` + `setsid` + `TIOCSCTTY`) on macOS.
 //
 
 #if os(macOS)
@@ -21,7 +21,7 @@
             let pwShell = pw?.pointee.pw_shell.flatMap { String(cString: $0) }
             let pwDir = pw?.pointee.pw_dir.flatMap { String(cString: $0) }
             let shellPath = ProcessInfo.processInfo.environment["SHELL"] ?? pwShell ?? "/bin/zsh"
-            let homeDir = pwDir ?? NSHomeDirectory()
+            let homeDir = pwDir ?? ("/Users/" + NSUserName())
 
             var masterFD: Int32 = -1
             let pid = forkpty(&masterFD, nil, nil, &win)
@@ -31,22 +31,33 @@
             }
 
             if pid == 0 {
+                var pgrp = getpid()
+                _ = setpgid(0, pgrp)
+                _ = tcsetpgrp(STDIN_FILENO, pgrp)
+
+                for sig in [SIGINT, SIGQUIT, SIGTSTP, SIGTTIN, SIGTTOU, SIGCHLD, SIGHUP, SIGPIPE] {
+                    signal(sig, SIG_DFL)
+                }
+
                 _ = chdir(homeDir)
                 setenv("TERM", "xterm-256color", 1)
                 setenv("COLORTERM", "truecolor", 1)
+                setenv("TERM_PROGRAM", "catussh", 1)
                 setenv("HOME", homeDir, 1)
                 setenv("SHELL", shellPath, 1)
+                setenv("USER", NSUserName(), 1)
+                setenv("LOGNAME", NSUserName(), 1)
                 if getenv("LANG") == nil {
                     setenv("LANG", "en_US.UTF-8", 1)
                 }
-                let shellName = "-" + ((shellPath as NSString).lastPathComponent)
+
                 let cPath = strdup(shellPath)
-                let cArg0 = strdup(shellName)
-                var args: [UnsafeMutablePointer<CChar>?] = [cArg0, nil]
+                let cArg0 = strdup((shellPath as NSString).lastPathComponent)
+                let cLogin = strdup("-l")
+                var args: [UnsafeMutablePointer<CChar>?] = [cArg0, cLogin, nil]
                 execv(cPath, &args)
                 _exit(1)
             }
-
             let flags = fcntl(masterFD, F_GETFL, 0)
             if flags >= 0 {
                 _ = fcntl(masterFD, F_SETFL, flags | O_NONBLOCK)

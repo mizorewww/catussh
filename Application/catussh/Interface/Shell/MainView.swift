@@ -95,11 +95,17 @@ private struct SessionPages: View {
     @ObservedObject var monitors = MonitorCenter.shared
     @ObservedObject var desktops = RemoteDesktopManager.shared
 
+    private var activeTerminalContext: TerminalManager.Context? {
+        guard case let .terminal(id) = route else { return nil }
+        return terminals.sessionContexts.first { $0.id == id }
+    }
+
     var body: some View {
         ZStack {
-            ForEach(terminals.sessionContexts) { context in
-                TerminalPage(context: context)
-                    .sessionPage(active: route == .terminal(context.id))
+            if let activeTerminal = activeTerminalContext {
+                TerminalPage(context: activeTerminal)
+                    .environment(\.isActivePage, true)
+                    .zIndex(1)
             }
             ForEach(transfers.transfers) { context in
                 FileTransferPage(context: context)

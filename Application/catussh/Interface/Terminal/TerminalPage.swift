@@ -10,15 +10,6 @@ import MachineStatusView
 import SwiftUI
 import UniformTypeIdentifiers
 
-extension Notification.Name {
-    static let catusshTerminalSplitRequest = Notification.Name("me.mizorewww.rayon.terminalSplitRequest")
-}
-
-enum TerminalSplitAxis: String, CaseIterable {
-    case horizontal
-    case vertical
-}
-
 enum TerminalSnapZone: Equatable {
     case left
     case right
@@ -32,10 +23,6 @@ struct TerminalPage: View {
     @ObservedObject var terminals = TerminalManager.shared
     @EnvironmentObject var store: CatusshStore
 
-    @State private var interfaceToken = UUID()
-    @State private var secondaryContextID: TerminalManager.Context.ID?
-    @State private var splitAxis: TerminalSplitAxis = .horizontal
-    @State private var primaryFirst = true
     @State private var draggedTabID: TerminalManager.Context.ID?
     @State private var activeSnapZone: TerminalSnapZone?
     @State private var surfaceGeoSize: CGSize = .init(width: 800, height: 500)
@@ -45,9 +32,21 @@ struct TerminalPage: View {
     @State private var showSnippetDrawer = false
     @Environment(\.isActivePage) private var isActive
 
-    private var secondaryContext: TerminalManager.Context? {
-        guard let secondaryContextID, secondaryContextID != context.id else { return nil }
-        return context.tabSiblings.first { $0.id == secondaryContextID }
+    private var currentSplitGroup: TerminalManager.SplitGroup? {
+        terminals.splitGroup(containing: context.id)
+    }
+
+    private var visiblePanes: [TerminalManager.Context] {
+        if let group = currentSplitGroup {
+            let siblings = context.tabSiblings
+            let matched = group.memberIDs.compactMap { id in siblings.first { $0.id == id } }
+            if matched.count >= 2 { return matched }
+        }
+        return [context]
+    }
+
+    private var splitOrientation: TerminalManager.SplitOrientation {
+        currentSplitGroup?.orientation ?? .horizontal
     }
 
     private var searchMatches: [(lineNumber: Int, line: String)] {
@@ -67,8 +66,8 @@ struct TerminalPage: View {
             }
             HStack(spacing: RX.Space.s3) {
                 VStack(spacing: 0) {
-                    if context.closed {
-                        disconnectedBanner
+                    if context.closed, visiblePanes.count == 1 {
+                        disconnectedBanner(for: context)
                     }
                     if showSearch {
                         searchBar
@@ -126,11 +125,11 @@ struct TerminalPage: View {
             ToolbarAction("New Terminal Tab", systemImage: "plus") {
                 openAnotherTab()
             }
-            ToolbarAction(
-                secondaryContext == nil ? "Split Right (⌘D)" : "Close Split Pane",
-                systemImage: secondaryContext == nil ? "rectangle.split.2x1" : "rectangle"
-            ) {
-                toggleSplit(axis: .horizontal)
+            ToolbarAction("Split Right (⌘D)", systemImage: "rectangle.split.2x1") {
+                splitWithNewOrExisting(orientation: .horizontal)
+            }
+            ToolbarAction("Split Down (⌘⇧D)", systemImage: "rectangle.split.1x2") {
+                splitWithNewOrExisting(orientation: .vertical)
             }
             ToolbarAction("Find in Terminal (⌘F)", systemImage: "magnifyingglass") {
                 withAnimation(.rxQuick) { showSearch.toggle() }
@@ -159,11 +158,11 @@ struct TerminalPage: View {
                     }
                     .keyboardShortcut("f", modifiers: .command)
                     Button("Split Right") {
-                        toggleSplit(axis: .horizontal)
+                        splitWithNewOrExisting(orientation: .horizontal)
                     }
                     .keyboardShortcut("d", modifiers: .command)
                     Button("Split Down") {
-                        toggleSplit(axis: .vertical)
+                        splitWithNewOrExisting(orientation: .vertical)
                     }
                     .keyboardShortcut("d", modifiers: [.command, .shift])
                 }
@@ -176,26 +175,34 @@ struct TerminalPage: View {
             current: .terminal
         )
         .onAppear {
-            context.interfaceToken = interfaceToken
-            context.termInterface.setActive(isActive)
+            syncActivePanes()
         }
-        .onChange(of: isActive) { active in
-            context.termInterface.setActive(active)
-            secondaryContext?.termInterface.setActive(false)
+        .onChange(of: context.id) { _ in
+            syncActivePanes()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .catusshTerminalSplitRequest)) { note in
-            guard isActive,
-                  let targetID = note.userInfo?["targetID"] as? UUID,
-                  let rawAxis = note.userInfo?["axis"] as? String,
-                  let axis = TerminalSplitAxis(rawValue: rawAxis),
-                  let target = context.tabSiblings.first(where: { $0.id == targetID }),
-                  target.id != context.id
-            else { return }
-            splitAxis = axis
-            primaryFirst = true
-            target.interfaceToken = target.id
-            secondaryContextID = target.id
+        .onChange(of: terminals.splitGroups) { _ in
+            syncActivePanes()
         }
+        .onChange(of: isActive) { _ in
+            syncActivePanes()
+        }
+    }
+
+    private func syncActivePanes() {
+        let panes = visiblePanes
+        let visibleIDs = Set(panes.map(\.id))
+        for session in terminals.sessionContexts where !visibleIDs.contains(session.id) {
+            session.termInterface.setActive(false, focus: false)
+        }
+        guard isActive else {
+            for pane in panes { pane.termInterface.setActive(false, focus: false) }
+            return
+        }
+        for pane in panes where pane.id != context.id {
+            pane.termInterface.setActive(true, focus: false)
+        }
+        // Activate the focused pane with keyboard firstResponder.
+        context.termInterface.setActive(true, focus: true)
     }
 
     private func openAnotherTab() {
@@ -211,36 +218,43 @@ struct TerminalPage: View {
         }
     }
 
-    private func toggleSplit(axis: TerminalSplitAxis) {
-        if secondaryContext != nil, splitAxis == axis {
-            secondaryContext?.termInterface.setActive(false)
-            secondaryContextID = nil
+    private func splitWithNewOrExisting(orientation: TerminalManager.SplitOrientation) {
+        let currentMemberIDs = Set(currentSplitGroup?.memberIDs ?? [context.id])
+        // If there is already another ungrouped tab for this server/local shell, group with it first.
+        if let ungroupedSibling = context.tabSiblings.first(where: {
+            !currentMemberIDs.contains($0.id) && terminals.splitGroup(containing: $0.id) == nil
+        }) {
+            withAnimation(.rxQuick) {
+                terminals.groupSessions(anchorID: context.id, newID: ungroupedSibling.id, orientation: orientation)
+                AppRouter.shared.route = .terminal(ungroupedSibling.id)
+            }
             return
         }
-        splitAxis = axis
-        if let existing = context.tabSiblings.first(where: { $0.id != context.id }) {
-            existing.interfaceToken = existing.id
-            secondaryContextID = existing.id
-            return
-        }
+
+        // Otherwise create a new tab and immediately join it into the current split group.
         switch context.remoteType {
         case .machine:
             let machine = store.machineGroup[context.machine.id]
             guard machine.isNotPlaceholder() else { return }
             if machine.isUURemoteDevice {
+                let anchorID = context.id
                 SheetPresenter.present { dismiss in
                     UURemoteSessionPickerSheet(machine: machine) { choice in
                         dismiss()
                         switch choice {
                         case .new:
                             TerminalManager.shared.createSession(withMachineObject: machine, force: true, resuming: nil) { created in
-                                created.interfaceToken = created.id
-                                self.secondaryContextID = created.id
+                                withAnimation(.rxQuick) {
+                                    TerminalManager.shared.groupSessions(anchorID: anchorID, newID: created.id, orientation: orientation)
+                                    AppRouter.shared.route = .terminal(created.id)
+                                }
                             }
                         case let .resume(sessionID):
                             TerminalManager.shared.createSession(withMachineObject: machine, force: true, resuming: sessionID) { created in
-                                created.interfaceToken = created.id
-                                self.secondaryContextID = created.id
+                                withAnimation(.rxQuick) {
+                                    TerminalManager.shared.groupSessions(anchorID: anchorID, newID: created.id, orientation: orientation)
+                                    AppRouter.shared.route = .terminal(created.id)
+                                }
                             }
                         case nil:
                             break
@@ -248,55 +262,57 @@ struct TerminalPage: View {
                     }
                 }
             } else {
+                let anchorID = context.id
                 TerminalManager.shared.createSession(withMachineObject: machine, force: true) { created in
-                    created.interfaceToken = created.id
-                    secondaryContextID = created.id
+                    withAnimation(.rxQuick) {
+                        TerminalManager.shared.groupSessions(anchorID: anchorID, newID: created.id, orientation: orientation)
+                        AppRouter.shared.route = .terminal(created.id)
+                    }
                 }
             }
         case .command:
             if let command = context.command {
+                let anchorID = context.id
                 let created = TerminalManager.shared.createSession(withCommand: command)
-                created.interfaceToken = created.id
-                secondaryContextID = created.id
+                withAnimation(.rxQuick) {
+                    TerminalManager.shared.groupSessions(anchorID: anchorID, newID: created.id, orientation: orientation)
+                    AppRouter.shared.route = .terminal(created.id)
+                }
             }
         case .local:
+            let anchorID = context.id
             let created = TerminalManager.shared.createLocalSession()
-            created.interfaceToken = created.id
-            secondaryContextID = created.id
+            withAnimation(.rxQuick) {
+                TerminalManager.shared.groupSessions(anchorID: anchorID, newID: created.id, orientation: orientation)
+                AppRouter.shared.route = .terminal(created.id)
+            }
         }
     }
 
     private func applySnapDrop(droppedID: TerminalManager.Context.ID, zone: TerminalSnapZone) {
         guard let dropped = context.tabSiblings.first(where: { $0.id == droppedID }) else { return }
-        switch zone {
-        case .center:
-            secondaryContext?.termInterface.setActive(false)
-            secondaryContextID = nil
-            AppRouter.shared.route = .terminal(dropped.id)
-        case .right:
-            guard dropped.id != context.id else { return }
-            splitAxis = .horizontal
-            primaryFirst = true
-            dropped.interfaceToken = dropped.id
-            secondaryContextID = dropped.id
-        case .bottom:
-            guard dropped.id != context.id else { return }
-            splitAxis = .vertical
-            primaryFirst = true
-            dropped.interfaceToken = dropped.id
-            secondaryContextID = dropped.id
-        case .left:
-            guard dropped.id != context.id else { return }
-            splitAxis = .horizontal
-            primaryFirst = false
-            dropped.interfaceToken = dropped.id
-            secondaryContextID = dropped.id
-        case .top:
-            guard dropped.id != context.id else { return }
-            splitAxis = .vertical
-            primaryFirst = false
-            dropped.interfaceToken = dropped.id
-            secondaryContextID = dropped.id
+        withAnimation(.rxQuick) {
+            switch zone {
+            case .center:
+                terminals.ungroupSession(dropped.id)
+                AppRouter.shared.route = .terminal(dropped.id)
+            case .right:
+                guard dropped.id != context.id else { return }
+                terminals.groupSessions(anchorID: context.id, newID: dropped.id, orientation: .horizontal, insertBeforeAnchor: false)
+                AppRouter.shared.route = .terminal(dropped.id)
+            case .left:
+                guard dropped.id != context.id else { return }
+                terminals.groupSessions(anchorID: context.id, newID: dropped.id, orientation: .horizontal, insertBeforeAnchor: true)
+                AppRouter.shared.route = .terminal(dropped.id)
+            case .bottom:
+                guard dropped.id != context.id else { return }
+                terminals.groupSessions(anchorID: context.id, newID: dropped.id, orientation: .vertical, insertBeforeAnchor: false)
+                AppRouter.shared.route = .terminal(dropped.id)
+            case .top:
+                guard dropped.id != context.id else { return }
+                terminals.groupSessions(anchorID: context.id, newID: dropped.id, orientation: .vertical, insertBeforeAnchor: true)
+                AppRouter.shared.route = .terminal(dropped.id)
+            }
         }
     }
 
@@ -322,7 +338,7 @@ struct TerminalPage: View {
             case .right: return "Split Right"
             case .top: return "Split Top"
             case .bottom: return "Split Bottom"
-            case .center: return "Switch Tab"
+            case .center: return "Single View (Ungroup)"
             }
         }()
         ZStack {
@@ -345,82 +361,112 @@ struct TerminalPage: View {
     }
 
     @ViewBuilder private var splitSurfaceContainer: some View {
-        if let secondary = secondaryContext {
-            if splitAxis == .horizontal {
-                HSplitView {
-                    if primaryFirst {
-                        surface
-                            .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
-                        secondarySurface(for: secondary)
-                            .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        secondarySurface(for: secondary)
-                            .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
-                        surface
-                            .frame(minWidth: 220, maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                }
-            } else {
-                VSplitView {
-                    if primaryFirst {
-                        surface
-                            .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
-                        secondarySurface(for: secondary)
-                            .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
-                    } else {
-                        secondarySurface(for: secondary)
-                            .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
-                        surface
-                            .frame(maxWidth: .infinity, minHeight: 140, maxHeight: .infinity)
-                    }
+        let panes = visiblePanes
+        if panes.count == 1, let single = panes.first {
+            paneSurface(for: single, showHeader: false, totalPanes: 1, index: 0)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if splitOrientation == .horizontal {
+            HSplitView {
+                ForEach(Array(panes.enumerated()), id: \.element.id) { idx, pane in
+                    paneSurface(for: pane, showHeader: true, totalPanes: panes.count, index: idx)
+                        .frame(minWidth: 200, maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         } else {
-            surface
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VSplitView {
+                ForEach(Array(panes.enumerated()), id: \.element.id) { idx, pane in
+                    paneSurface(for: pane, showHeader: true, totalPanes: panes.count, index: idx)
+                        .frame(maxWidth: .infinity, minHeight: 120, maxHeight: .infinity)
+                }
+            }
         }
     }
 
-    @ViewBuilder private func secondarySurface(for pane: TerminalManager.Context) -> some View {
+    @ViewBuilder private func paneSurface(for pane: TerminalManager.Context, showHeader: Bool, totalPanes: Int, index: Int) -> some View {
+        let isFocused = pane.id == context.id
         VStack(spacing: 0) {
-            HStack(spacing: RX.Space.s2) {
-                Text(pane.navigationSubtitle.isEmpty ? pane.displayName : pane.navigationSubtitle)
-                    .font(.system(size: 11, weight: .medium))
+            if showHeader {
+                HStack(spacing: RX.Space.s2) {
+                    Circle()
+                        .fill(isFocused ? Color.rxAccent : Color.rxInkTertiary.opacity(0.4))
+                        .frame(width: 7, height: 7)
+                    Text("Pane \(index + 1) · \(pane.navigationSubtitle.isEmpty ? pane.displayName : pane.navigationSubtitle)")
+                        .font(.system(size: 11, weight: isFocused ? .semibold : .medium))
+                        .foregroundStyle(isFocused ? Color.rxInk : Color.rxInkSecondary)
+                        .lineLimit(1)
+                    Spacer()
+                    if pane.closed {
+                        Button("Reconnect") { pane.reconnect() }
+                            .buttonStyle(.rx(size: .small))
+                    }
+                    if index == totalPanes - 1 {
+                        Button {
+                            let next: TerminalManager.SplitOrientation = splitOrientation == .horizontal ? .vertical : .horizontal
+                            terminals.setSplitOrientation(for: pane.id, orientation: next)
+                        } label: {
+                            Image(systemName: splitOrientation == .horizontal ? "rectangle.split.1x2" : "rectangle.split.2x1")
+                                .font(.system(size: 11))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.rxInkSecondary)
+                        .help("Switch split orientation")
+                    }
+                    Button {
+                        withAnimation(.rxQuick) {
+                            terminals.ungroupSession(pane.id)
+                            if isFocused, let remaining = visiblePanes.first(where: { $0.id != pane.id }) {
+                                AppRouter.shared.route = .terminal(remaining.id)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
                     .foregroundStyle(.rxInkSecondary)
-                    .lineLimit(1)
-                Spacer()
-                Button {
-                    splitAxis = splitAxis == .horizontal ? .vertical : .horizontal
-                } label: {
-                    Image(systemName: splitAxis == .horizontal ? "rectangle.split.1x2" : "rectangle.split.2x1")
-                        .font(.system(size: 11))
+                    .help("Detach from split group (keep tab open)")
+                    Button {
+                        TerminalSessionActions.close(pane)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.rxInkSecondary)
+                    .help("Close this terminal pane")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.rxInkSecondary)
-                .help("Switch split orientation")
-                Button {
-                    pane.termInterface.setActive(false)
-                    secondaryContextID = nil
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
+                .padding(.horizontal, RX.Space.s3)
+                .frame(height: 26)
+                .background(isFocused ? Color.rxAccent.opacity(0.10) : Color.rxSurface)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    AppRouter.shared.route = .terminal(pane.id)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.rxInkSecondary)
-                .help("Unsplit pane")
+                Hairline()
             }
-            .padding(.horizontal, RX.Space.s3)
-            .frame(height: 26)
-            .background(Color.rxSurface)
-            Hairline()
+            if pane.closed, showHeader {
+                disconnectedBanner(for: pane)
+            }
             pane.termInterface
+                .id(pane.id)
                 .onAppear {
                     pane.termInterface.setTerminalFontSize(with: store.terminalFontSize, preferConfigured: true)
+                    pane.termInterface.setActive(true, focus: isFocused)
                 }
                 .onChange(of: store.terminalFontSize) { newValue in
                     pane.termInterface.setTerminalFontSize(with: newValue)
                 }
+                .simultaneousGesture(TapGesture().onEnded {
+                    if AppRouter.shared.route != .terminal(pane.id) {
+                        AppRouter.shared.route = .terminal(pane.id)
+                    }
+                })
         }
+        .overlay(
+            Rectangle()
+                .strokeBorder(showHeader && isFocused ? Color.rxAccent.opacity(0.45) : Color.clear, lineWidth: 1)
+                .allowsHitTesting(false)
+        )
     }
 
     private var searchBar: some View {
@@ -494,29 +540,7 @@ struct TerminalPage: View {
         }
     }
 
-    @ViewBuilder var surface: some View {
-        if context.interfaceToken == interfaceToken {
-            context.termInterface
-                .onChange(of: store.terminalFontSize) { newValue in
-                    context.termInterface.setTerminalFontSize(with: newValue)
-                }
-                .onAppear {
-                    context.termInterface.setTerminalFontSize(with: store.terminalFontSize, preferConfigured: true)
-                }
-        } else {
-            EmptyStateView(
-                "Terminal moved to another window",
-                systemImage: "macwindow",
-                actionTitle: "Bring Back Here"
-            ) {
-                context.interfaceToken = interfaceToken
-            }
-            .environment(\.colorScheme, .dark)
-            .background(Color.rxTerminalBackground)
-        }
-    }
-
-    var disconnectedBanner: some View {
+    private func disconnectedBanner(for target: TerminalManager.Context) -> some View {
         HStack(spacing: RX.Space.s2) {
             Image(systemName: "bolt.slash")
                 .font(.system(size: 12, weight: .semibold))
@@ -525,7 +549,7 @@ struct TerminalPage: View {
                 .foregroundStyle(.rxInk)
             Spacer()
             Button("Reconnect") {
-                context.reconnect()
+                target.reconnect()
             }
             .buttonStyle(.rx(.primary, size: .small))
         }
@@ -544,47 +568,54 @@ struct SessionTabs: View {
 
     private var siblings: [TerminalManager.Context] { current.tabSiblings }
 
+    private struct TabCluster: Identifiable {
+        let id: String
+        let group: TerminalManager.SplitGroup?
+        let items: [(index: Int, context: TerminalManager.Context)]
+    }
+
+    /// Clusters adjacent tabs that belong to the same `SplitGroup` into one
+    /// visual pill container so it's immediately clear which tabs are split together.
+    private var clusters: [TabCluster] {
+        let list = siblings
+        var result: [TabCluster] = []
+        var i = 0
+        while i < list.count {
+            let ctx = list[i]
+            if let group = terminals.splitGroup(containing: ctx.id) {
+                var groupedItems: [(Int, TerminalManager.Context)] = [(i, ctx)]
+                var j = i + 1
+                while j < list.count, terminals.splitGroup(containing: list[j].id)?.id == group.id {
+                    groupedItems.append((j, list[j]))
+                    j += 1
+                }
+                if groupedItems.count >= 2 {
+                    result.append(TabCluster(id: "group-\(group.id.uuidString)", group: group, items: groupedItems))
+                    i = j
+                    continue
+                }
+            }
+            result.append(TabCluster(id: "single-\(ctx.id.uuidString)", group: nil, items: [(i, ctx)]))
+            i += 1
+        }
+        return result
+    }
+
     var body: some View {
         HStack(spacing: RX.Space.s1) {
             ScrollViewReader { reader in
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: RX.Space.s1) {
-                        let siblings = siblings
-                        ForEach(Array(siblings.enumerated()), id: \.element.id) { index, context in
-                            SessionTab(
-                                context: context,
-                                selected: context.id == current.id,
-                                number: siblings.count > 1 ? index + 1 : nil,
-                                shortcut: siblings.count > 1 ? Self.shortcut(index: index, count: siblings.count) : nil,
-                                onSplitRight: context.id == current.id ? nil : {
-                                    NotificationCenter.default.post(
-                                        name: .catusshTerminalSplitRequest,
-                                        object: nil,
-                                        userInfo: ["targetID": context.id, "axis": TerminalSplitAxis.horizontal.rawValue]
-                                    )
-                                },
-                                onSplitDown: context.id == current.id ? nil : {
-                                    NotificationCenter.default.post(
-                                        name: .catusshTerminalSplitRequest,
-                                        object: nil,
-                                        userInfo: ["targetID": context.id, "axis": TerminalSplitAxis.vertical.rawValue]
-                                    )
-                                }
-                            )
-                            .id(context.id)
-                            .onDrag {
-                                draggedTabID = context.id
-                                return NSItemProvider(object: context.id.uuidString as NSString)
+                    HStack(spacing: 6) {
+                        let totalCount = siblings.count
+                        ForEach(clusters) { cluster in
+                            if let group = cluster.group {
+                                groupedClusterView(group: group, items: cluster.items, totalCount: totalCount)
+                            } else if let single = cluster.items.first {
+                                tabItemView(index: single.index, context: single.context, totalCount: totalCount, inSplitGroup: false)
                             }
-                            .onDrop(
-                                of: [UTType.text],
-                                delegate: SessionTabDropDelegate(
-                                    targetID: context.id,
-                                    draggedID: $draggedTabID
-                                )
-                            )
                         }
                     }
+                    .padding(.vertical, 2)
                 }
                 .onAppear { reader.scrollTo(current.id) }
                 .onChange(of: current.id) { id in withAnimation(.rxQuick) { reader.scrollTo(id) } }
@@ -612,6 +643,94 @@ struct SessionTabs: View {
             .help("New Terminal (⌘T)")
             .accessibilityLabel("New Terminal")
         }
+    }
+
+    @ViewBuilder
+    private func groupedClusterView(
+        group: TerminalManager.SplitGroup,
+        items: [(index: Int, context: TerminalManager.Context)],
+        totalCount: Int
+    ) -> some View {
+        let isActiveGroup = items.contains { $0.context.id == current.id }
+        HStack(spacing: 2) {
+            // Split group badge: shows orientation icon + pane count, click to toggle H/V, context menu to ungroup
+            Button {
+                let next: TerminalManager.SplitOrientation = group.orientation == .horizontal ? .vertical : .horizontal
+                if let firstID = items.first?.context.id {
+                    terminals.setSplitOrientation(for: firstID, orientation: next)
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: group.orientation == .horizontal ? "rectangle.split.2x1.fill" : "rectangle.split.1x2.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("\(items.count)")
+                        .font(.system(size: 10, weight: .bold).monospacedDigit())
+                }
+                .foregroundStyle(isActiveGroup ? Color.rxAccent : Color.rxInkSecondary)
+                .padding(.horizontal, 6)
+                .frame(height: 22)
+                .background(
+                    Capsule()
+                        .fill(isActiveGroup ? Color.rxAccent.opacity(0.18) : Color.primary.opacity(0.08))
+                )
+            }
+            .buttonStyle(.plain)
+            .help("Split group (\(items.count) panes) · Click to switch horizontal/vertical")
+            .padding(.leading, 3)
+
+            ForEach(items, id: \.context.id) { item in
+                tabItemView(index: item.index, context: item.context, totalCount: totalCount, inSplitGroup: true)
+            }
+        }
+        .padding(2)
+        .background(
+            Capsule()
+                .fill(isActiveGroup ? Color.rxAccent.opacity(0.09) : Color.primary.opacity(0.04))
+        )
+        .overlay(
+            Capsule()
+                .strokeBorder(isActiveGroup ? Color.rxAccent.opacity(0.55) : Color.rxHairline, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func tabItemView(index: Int, context: TerminalManager.Context, totalCount: Int, inSplitGroup: Bool) -> some View {
+        let isVisibleInSplit = terminals.splitGroup(containing: current.id)?.memberIDs.contains(context.id) == true
+        SessionTab(
+            context: context,
+            selected: context.id == current.id,
+            visibleInSplit: isVisibleInSplit && context.id != current.id,
+            inSplitGroup: inSplitGroup,
+            number: totalCount > 1 ? index + 1 : nil,
+            shortcut: totalCount > 1 ? Self.shortcut(index: index, count: totalCount) : nil,
+            onSplitRight: context.id == current.id ? nil : {
+                withAnimation(.rxQuick) {
+                    terminals.groupSessions(anchorID: current.id, newID: context.id, orientation: .horizontal)
+                }
+            },
+            onSplitDown: context.id == current.id ? nil : {
+                withAnimation(.rxQuick) {
+                    terminals.groupSessions(anchorID: current.id, newID: context.id, orientation: .vertical)
+                }
+            },
+            onUngroup: inSplitGroup ? {
+                withAnimation(.rxQuick) {
+                    terminals.ungroupSession(context.id)
+                }
+            } : nil
+        )
+        .id(context.id)
+        .onDrag {
+            draggedTabID = context.id
+            return NSItemProvider(object: context.id.uuidString as NSString)
+        }
+        .onDrop(
+            of: [UTType.text],
+            delegate: SessionTabDropDelegate(
+                targetID: context.id,
+                draggedID: $draggedTabID
+            )
+        )
     }
 }
 
@@ -805,10 +924,13 @@ private struct SessionTab: View {
 
     @ObservedObject var context: TerminalManager.Context
     let selected: Bool
+    var visibleInSplit = false
+    var inSplitGroup = false
     let number: Int?
     var shortcut: String?
     var onSplitRight: (() -> Void)?
     var onSplitDown: (() -> Void)?
+    var onUngroup: (() -> Void)?
 
     private var title: String {
         if !context.navigationSubtitle.isEmpty { return context.navigationSubtitle }
@@ -823,9 +945,14 @@ private struct SessionTab: View {
                 AppRouter.shared.route = .terminal(context.id)
             } label: {
                 HStack(spacing: 6) {
+                    if inSplitGroup {
+                        Circle()
+                            .fill(selected ? Color.rxAccent : (visibleInSplit ? Color.rxAccent.opacity(0.45) : Color.rxInkTertiary))
+                            .frame(width: 6, height: 6)
+                    }
                     Text(title)
-                        .font(.system(size: 12, weight: selected ? .medium : .regular))
-                        .foregroundStyle(selected ? Color.rxInk : Color.rxInkSecondary)
+                        .font(.system(size: 12, weight: selected ? .semibold : (visibleInSplit ? .medium : .regular)))
+                        .foregroundStyle(selected || visibleInSplit ? Color.rxInk : Color.rxInkSecondary)
                         .lineLimit(1)
                         .frame(maxWidth: 160)
                     if let shortcut {
@@ -853,13 +980,15 @@ private struct SessionTab: View {
             }
             .buttonStyle(.plain)
             .padding(.trailing, 6)
-            .opacity(selected || hovered ? 1 : 0)
+            .opacity(selected || visibleInSplit || hovered ? 1 : 0)
             .accessibilityLabel("Close \(title)")
         }
-        .frame(height: RX.controlHeight)
+        .frame(height: inSplitGroup ? RX.controlHeight - 4 : RX.controlHeight)
         .background {
             if selected {
-                Capsule().fill(Color.primary.opacity(0.12))
+                Capsule().fill(inSplitGroup ? Color.rxAccent.opacity(0.22) : Color.primary.opacity(0.14))
+            } else if visibleInSplit {
+                Capsule().fill(Color.primary.opacity(0.08))
             } else if hovered {
                 Capsule().fill(Color.primary.opacity(0.06))
             }
@@ -867,12 +996,15 @@ private struct SessionTab: View {
         .onHover { hovered = $0 }
         .contextMenu {
             if let onSplitRight {
-                Button("Split Right with Active Tab", action: onSplitRight)
+                Button("Split Right with Current Tab", action: onSplitRight)
             }
             if let onSplitDown {
-                Button("Split Down with Active Tab", action: onSplitDown)
+                Button("Split Down with Current Tab", action: onSplitDown)
             }
-            if onSplitRight != nil || onSplitDown != nil {
+            if let onUngroup {
+                Button("Remove from Split Group", action: onUngroup)
+            }
+            if onSplitRight != nil || onSplitDown != nil || onUngroup != nil {
                 Divider()
             }
             if context.closed { Button("Reconnect") { context.reconnect() } }

@@ -156,11 +156,12 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable, @unchecke
         attributes: .concurrent
     )
 
-    public init(machine: RDMachine, surface: TerminalSessionSurface) {
+    public init(machine: RDMachine, surface: TerminalSessionSurface, resuming uuSession: UInt32? = nil) {
         self.machine = machine
         command = nil
         remoteType = .machine
         _title = machine.name
+        uuSessionID = uuSession
         self.surface = surface
         Self.queue.async {
             self.processBootstrap()
@@ -221,7 +222,9 @@ open class TerminalContext: ObservableObject, Identifiable, Equatable, @unchecke
         discardPendingInput()
 
         debugPrint("\(self) \(#function) \(machine.id)")
-        putInformation("[*] Creating Connection")
+        if remoteType != .local {
+            putInformation("[*] Creating Connection")
+        }
         continueDecision = true
 
         surface.setupBellChain {

@@ -77,6 +77,23 @@ public extension CatusshStore {
         in defaults: UserDefaults = .standard,
         domain: String? = Bundle.main.bundleIdentifier
     ) {
+        #if os(macOS)
+            if domain == "me.mizorewww.rayon" || domain == "me.mizorewww.rayon.debug",
+               let d = domain
+            {
+                let containerPlist = "/Users/\(NSUserName())/Library/Containers/\(d)/Data/Library/Preferences/\(d).plist"
+                if let containerDict = NSDictionary(contentsOfFile: containerPlist) as? [String: Any] {
+                    let currentSaved = defaults.persistentDomain(forName: d) ?? [:]
+                    let currentMachines = (currentSaved["machineGroupEncrypted"] as? Data)?.count ?? 0
+                    let containerMachines = (containerDict["machineGroupEncrypted"] as? Data)?.count ?? 0
+                    if containerMachines > currentMachines || currentSaved["me.mizorewww.rayon.uuremote.account"] == nil {
+                        for (k, v) in containerDict where !k.hasPrefix("NSWindow Frame") && !k.hasPrefix("NSSplitView") {
+                            defaults.set(v, forKey: k)
+                        }
+                    }
+                }
+            }
+        #endif
         let adopted = "me.mizorewww.rayon.adoptedFormerDefaults"
         guard !defaults.bool(forKey: adopted) else { return }
         let former = "wiki.qaq."

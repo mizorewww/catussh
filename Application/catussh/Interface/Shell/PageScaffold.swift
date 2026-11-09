@@ -135,6 +135,8 @@ private struct PageToolbar<Leading: View, Trailing: View>: ViewModifier {
                         ToolbarItem(placement: .principal) {
                             ServerToolSwitcher(machine: toolSwitch.machine, current: toolSwitch.current)
                         }
+                    } else {
+                        ToolbarSpacer(.flexible)
                     }
                     if hasTrailing {
                         ToolbarItemGroup(placement: .automatic) {
@@ -158,6 +160,10 @@ private struct PageToolbar<Leading: View, Trailing: View>: ViewModifier {
                     if let toolSwitch {
                         ToolbarItem(placement: .principal) {
                             ServerToolSwitcher(machine: toolSwitch.machine, current: toolSwitch.current)
+                        }
+                    } else {
+                        ToolbarItem(placement: .principal) {
+                            Spacer()
                         }
                     }
                     ToolbarItemGroup(placement: .automatic) {

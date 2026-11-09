@@ -44,7 +44,9 @@ public struct CatusshTerminalView: Sendable {
     /// For a terminal kept mounted while another page is shown: a hidden
     /// terminal stops rendering and gives up keyboard focus (so typing never
     /// lands in a session you can't see); shown again, it takes focus back.
-    @MainActor public func setActive(_ active: Bool) { session.setActive(active) }
+    @MainActor public func setActive(_ active: Bool, focus: Bool = true) {
+        session.setActive(active, focus: focus)
+    }
 
     @discardableResult
     nonisolated public func setupBufferChain(callback: ((String) -> Void)?) -> Self {
@@ -138,20 +140,20 @@ final class CatusshTerminalSession: @unchecked Sendable {
 
     @MainActor func applyFontSize(preferConfigured: Bool) { presentation?.applyFontSize(preferConfigured: preferConfigured) }
 
-    @MainActor func setActive(_ active: Bool) {
+    @MainActor func setActive(_ active: Bool, focus: Bool = true) {
         let view = platformView()
         view.setSurfaceVisible(active)
         #if os(macOS)
-            if active {
+            if active, focus {
                 // After SwiftUI has shown the page, so the view is in its window.
                 DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
-            } else if view.window?.firstResponder === view {
+            } else if !active, view.window?.firstResponder === view {
                 view.window?.makeFirstResponder(nil)
             }
         #elseif targetEnvironment(macCatalyst)
-            if active {
+            if active, focus {
                 DispatchQueue.main.async { view.becomeFirstResponder() }
-            } else if view.isFirstResponder {
+            } else if !active, view.isFirstResponder {
                 view.resignFirstResponder()
             }
         #else
