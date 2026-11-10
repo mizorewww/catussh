@@ -36,13 +36,26 @@ struct TerminalPage: View {
         terminals.splitGroup(containing: context.id)
     }
 
-    private var visiblePanes: [TerminalManager.Context] {
-        if let group = currentSplitGroup {
-            let siblings = context.tabSiblings
+    private var visiblePanes: [TerminalManager.Context] { visiblePanes(for: context) }
+
+    private func visiblePanes(for focused: TerminalManager.Context) -> [TerminalManager.Context] {
+        if let group = terminals.splitGroup(containing: focused.id) {
+            let siblings = focused.tabSiblings
             let matched = group.memberIDs.compactMap { id in siblings.first { $0.id == id } }
             if matched.count >= 2 { return matched }
         }
-        return [context]
+        return [focused]
+    }
+
+    /// The tab the router shows now. `onChange` actions can run with the
+    /// previous body's `context`, which would hide the tab just opened.
+    private var routedContext: TerminalManager.Context {
+        if case let .terminal(id) = AppRouter.shared.route,
+           let routed = terminals.sessionContexts.first(where: { $0.id == id })
+        {
+            return routed
+        }
+        return context
     }
 
     private var splitOrientation: TerminalManager.SplitOrientation {
@@ -189,7 +202,8 @@ struct TerminalPage: View {
     }
 
     private func syncActivePanes() {
-        let panes = visiblePanes
+        let focused = routedContext
+        let panes = visiblePanes(for: focused)
         let visibleIDs = Set(panes.map(\.id))
         for session in terminals.sessionContexts where !visibleIDs.contains(session.id) {
             session.termInterface.setActive(false, focus: false)
@@ -198,11 +212,11 @@ struct TerminalPage: View {
             for pane in panes { pane.termInterface.setActive(false, focus: false) }
             return
         }
-        for pane in panes where pane.id != context.id {
+        for pane in panes where pane.id != focused.id {
             pane.termInterface.setActive(true, focus: false)
         }
         // Activate the focused pane with keyboard firstResponder.
-        context.termInterface.setActive(true, focus: true)
+        focused.termInterface.setActive(true, focus: true)
     }
 
     private func openAnotherTab() {
@@ -447,12 +461,13 @@ struct TerminalPage: View {
             if pane.closed, showHeader {
                 disconnectedBanner(for: pane)
             }
+            // onAppear inside the id: it must run again for each tab shown here.
             pane.termInterface
-                .id(pane.id)
                 .onAppear {
                     pane.termInterface.setTerminalFontSize(with: store.terminalFontSize, preferConfigured: true)
                     pane.termInterface.setActive(true, focus: isFocused)
                 }
+                .id(pane.id)
                 .onChange(of: store.terminalFontSize) { newValue in
                     pane.termInterface.setTerminalFontSize(with: newValue)
                 }
