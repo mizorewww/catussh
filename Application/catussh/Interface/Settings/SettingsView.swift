@@ -48,6 +48,9 @@ struct SettingsView: View {
                 ConfigHostSettingsSection(id: "connection.monitor", keywords: "monitor refresh interval status") {
                     MonitorSettings().environmentObject(store)
                 },
+                ConfigHostSettingsSection(id: "terminal.copyOnSelect", keywords: "copy on select selection clipboard pasteboard automatically") {
+                    CopyOnSelectSettings().environmentObject(store)
+                },
                 ConfigHostSettingsSection(id: "about.catussh", keywords: "version build license source github agreement") {
                     AboutSettings().environmentObject(store)
                 },
@@ -205,6 +208,22 @@ private struct HostKeysRow: View {
             .disabled(count == 0)
         }
         .onAppear { count = KnownHosts.shared.count }
+    }
+}
+
+/// Terminal, Mouse & Clipboard: the row above Ghostty's copy settings.
+private struct CopyOnSelectSettings: View {
+    @EnvironmentObject var store: CatusshStore
+
+    var body: some View {
+        SwitchRow(
+            "Copy on select",
+            description: "Copy text to the clipboard as soon as you finish selecting it.",
+            isOn: $store.terminalCopyOnSelect
+        )
+        .onChange(of: store.terminalCopyOnSelect) { enabled in
+            CatusshTerminalView.setCopyOnSelect(enabled)
+        }
     }
 }
 

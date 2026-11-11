@@ -55,6 +55,46 @@ final class NativeTerminalTests: XCTestCase {
         #endif
     }
 
+    #if os(macOS)
+        @MainActor
+        func testCopyOnSelectCopiesAMouseSelectionOnlyWhileOn() async throws {
+            let saved = TestPasteboard.save()
+            defer {
+                CatusshTerminalView.setCopyOnSelect(true)
+                TestPasteboard.restore(saved)
+            }
+            let terminal = CatusshTerminalView()
+            let native = terminal.session.platformView()
+            let window = TestHost(native)
+            defer { window.close() }
+            try await Task.sleep(for: .milliseconds(100))
+            terminal.write("catussh select marker")
+            XCTAssertTrue(terminal.session.backend.waitForPendingOutput())
+            func drag() async throws {
+                func event(_ type: NSEvent.EventType, _ x: CGFloat) -> NSEvent {
+                    let point = native.convert(NSPoint(x: x, y: native.bounds.height - 8), to: nil)
+                    return NSEvent.mouseEvent(
+                        with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: native.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+                    )!
+                }
+                native.mouseDown(with: event(.leftMouseDown, 4))
+                for x in stride(from: 10, through: 160, by: 10) { native.mouseDragged(with: event(.leftMouseDragged, CGFloat(x))) }
+                native.mouseUp(with: event(.leftMouseUp, 160))
+                try await Task.sleep(for: .milliseconds(200))
+            }
+
+            CatusshTerminalView.setCopyOnSelect(false)
+            TestPasteboard.string = "untouched"
+            try await drag()
+            XCTAssertEqual(TestPasteboard.string, "untouched")
+
+            CatusshTerminalView.setCopyOnSelect(true)
+            try await drag()
+            XCTAssertTrue(TestPasteboard.string?.contains("catussh select marker") == true)
+        }
+    #endif
+
     @MainActor
     func testRealSurfaceInputOutputResizeFontAndWindowTransfer() async throws {
         TestHost.prepare()

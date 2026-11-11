@@ -42,6 +42,7 @@ public class CatusshStore: ObservableObject, @unchecked Sendable {
         disableConformation = Self.readDefaultBool("me.mizorewww.rayon.disableConformation", defaultValue: false, in: defaults)
         monitorInterval = Self.readDefaultInt("me.mizorewww.rayon.monitorInterval", defaultValue: 3, in: defaults)
         terminalFontSize = Self.readDefaultInt("me.mizorewww.rayon.terminalFontSize", defaultValue: 14, in: defaults)
+        terminalCopyOnSelect = Self.readDefaultBool("me.mizorewww.rayon.terminalCopyOnSelect", defaultValue: true, in: defaults)
         maxRecentRecordCount = Self.readDefaultInt("me.mizorewww.rayon.maxRecentRecordCount", defaultValue: 8, in: defaults)
         if timeout <= 0 { timeout = 5 }
 
@@ -269,6 +270,13 @@ public class CatusshStore: ObservableObject, @unchecked Sendable {
         didSet {
             UserDefaults.standard.set(terminalFontSize, forKey: "me.mizorewww.rayon.terminalFontSize")
             workerState.withLock { $0.terminalFontSize = terminalFontSize }
+        }
+    }
+
+    /// A finished selection in a terminal is copied to the clipboard.
+    @Published public var terminalCopyOnSelect: Bool = true {
+        didSet {
+            UserDefaults.standard.set(terminalCopyOnSelect, forKey: "me.mizorewww.rayon.terminalCopyOnSelect")
         }
     }
 

@@ -41,6 +41,12 @@ public struct CatusshTerminalView: Sendable {
 
     nonisolated public func requestTerminalSize() -> CGSize { session.callbacks.terminalSize }
 
+    /// Copy on Select, for every terminal: a finished selection is copied to
+    /// the system clipboard. The app stores the preference and sets it here.
+    @MainActor public static func setCopyOnSelect(_ enabled: Bool) {
+        CatusshTerminalConfiguration.setCopyOnSelect(enabled)
+    }
+
     /// For a terminal kept mounted while another page is shown: a hidden
     /// terminal stops rendering and gives up keyboard focus (so typing never
     /// lands in a session you can't see); shown again, it takes focus back.
@@ -181,7 +187,11 @@ private final class TerminalPresentation: NSObject, TerminalSurfaceTitleDelegate
     init(session: CatusshTerminalSession) {
         callbacks = session.callbacks
         output = session.output
-        view = PlatformTerminalView(frame: .zero)
+        #if os(macOS)
+            view = PlatformTerminalView(frame: .zero)
+        #else
+            view = TouchSelectionTerminalView(frame: .zero)
+        #endif
         super.init()
         NotificationCenter.default.addObserver(self, selector: #selector(configurationDidApply), name: CatusshTerminalConfiguration.didApply, object: nil)
         view.delegate = self
@@ -237,3 +247,29 @@ private final class TerminalPresentation: NSObject, TerminalSurfaceTitleDelegate
         request.respond(allow: request.kind == .paste)
     }
 }
+
+#if !os(macOS)
+    /// A touch selection is drawn and read by the view itself, never through
+    /// Ghostty's selection, so neither Ghostty's copy binding nor its
+    /// `copy-on-select` sees it. Its menu is where both are settled: the menu
+    /// opens when a selection is made and again when a handle is let go.
+    private final class TouchSelectionTerminalView: UITerminalView {
+        override func touchSelectionMenuItems(for context: TerminalTouchSelectionMenuContext) -> [UIMenuElement] {
+            let text = context.selectedText
+            if CatusshTerminalConfiguration.copyOnSelect, !text.isEmpty {
+                UIPasteboard.general.string = text
+            }
+            return super.touchSelectionMenuItems(for: context).map { element in
+                guard let copy = element as? UIAction, copy.identifier.rawValue == "terminal.copy" else { return element }
+                // The stock Copy reads the cells again and copies nothing when
+                // they no longer read back exactly as selected (output arrived,
+                // the viewport moved). Fall back to the text the menu was built for.
+                return UIAction(title: copy.title, image: copy.image, identifier: copy.identifier) { [weak self] _ in
+                    if self?.copySelectedTextToPasteboard() != true, !text.isEmpty {
+                        UIPasteboard.general.string = text
+                    }
+                }
+            }
+        }
+    }
+#endif
