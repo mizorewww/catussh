@@ -398,14 +398,7 @@ struct UURemoteSessionPickerSheet: View {
         }
         defer { watch.cancel() }
         do {
-            let locallyAttachedIDs = Set(
-                TerminalManager.shared.sessionContexts
-                    .filter { $0.remoteType == .machine && $0.machine.id == machine.id && !$0.closed }
-                    .compactMap(\.uuSessionID)
-            )
-            let available = try await UURemoteConnections.shared.sessions(for: machine).filter {
-                !locallyAttachedIDs.contains($0.id)
-            }
+            let available = try await TerminalManager.shared.resumableUUSessions(for: machine)
             // Nothing to resume: straight to a new one.
             if available.isEmpty {
                 onComplete(.new)

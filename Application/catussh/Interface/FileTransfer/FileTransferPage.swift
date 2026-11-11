@@ -33,13 +33,7 @@ struct FileTransferPage: View {
     @State private var listing = 0
 
     nonisolated static func sort(_ list: [FileTransferContext.RemoteFile]) -> [FileTransferContext.RemoteFile] {
-        // The kind is read once per file, not once per comparison.
-        var keyed = list.map { (isDirectory: $0.fstat.isDirectory, file: $0) }
-        keyed.sort { lhs, rhs in
-            if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
-            return lhs.file.name.localizedStandardCompare(rhs.file.name) == .orderedAscending
-        }
-        return keyed.map(\.file)
+        FileTransferContext.sortedForDisplay(list)
     }
 
     private func show(sorted list: [FileTransferContext.RemoteFile]) {

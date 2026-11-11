@@ -34,6 +34,23 @@ public extension FileTransferContext {
     /// Files larger than this are downloaded rather than opened in the editor.
     static let editableSizeLimit: Int64 = 4 * 1024 * 1024
 
+    /// A folder listing in the order the file lists show it: folders first,
+    /// then by name as Finder sorts.
+    static func sortedForDisplay(_ list: [RemoteFile]) -> [RemoteFile] {
+        // The kind is read once per file, not once per comparison.
+        var keyed = list.map { (isDirectory: $0.fstat.isDirectory, file: $0) }
+        keyed.sort { lhs, rhs in
+            if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+            return lhs.file.name.localizedStandardCompare(rhs.file.name) == .orderedAscending
+        }
+        return keyed.map(\.file)
+    }
+
+    /// Whether the editor opens `file` (a file within the size limit).
+    static func isEditable(_ file: RemoteFile) -> Bool {
+        !file.fstat.isDirectory && Int64(truncating: file.fstat.size ?? 0) <= editableSizeLimit
+    }
+
     /// Reads a remote file as UTF-8 text on the context's serial `workerQueue`.
     func readText(at remotePath: String) async throws -> String {
         if !connected && !processConnection {

@@ -10,14 +10,6 @@ import MachineStatusView
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum TerminalSnapZone: Equatable {
-    case left
-    case right
-    case top
-    case bottom
-    case center
-}
-
 struct TerminalPage: View {
     @ObservedObject var context: TerminalManager.Context
     @ObservedObject var terminals = TerminalManager.shared
@@ -39,12 +31,7 @@ struct TerminalPage: View {
     private var visiblePanes: [TerminalManager.Context] { visiblePanes(for: context) }
 
     private func visiblePanes(for focused: TerminalManager.Context) -> [TerminalManager.Context] {
-        if let group = terminals.splitGroup(containing: focused.id) {
-            let siblings = focused.tabSiblings
-            let matched = group.memberIDs.compactMap { id in siblings.first { $0.id == id } }
-            if matched.count >= 2 { return matched }
-        }
-        return [focused]
+        terminals.visiblePanes(for: focused)
     }
 
     /// The tab the router shows now. `onChange` actions can run with the
@@ -304,57 +291,15 @@ struct TerminalPage: View {
     }
 
     private func applySnapDrop(droppedID: TerminalManager.Context.ID, zone: TerminalSnapZone) {
-        guard let dropped = context.tabSiblings.first(where: { $0.id == droppedID }) else { return }
         withAnimation(.rxQuick) {
-            switch zone {
-            case .center:
-                terminals.ungroupSession(dropped.id)
-                AppRouter.shared.route = .terminal(dropped.id)
-            case .right:
-                guard dropped.id != context.id else { return }
-                terminals.groupSessions(anchorID: context.id, newID: dropped.id, orientation: .horizontal, insertBeforeAnchor: false)
-                AppRouter.shared.route = .terminal(dropped.id)
-            case .left:
-                guard dropped.id != context.id else { return }
-                terminals.groupSessions(anchorID: context.id, newID: dropped.id, orientation: .horizontal, insertBeforeAnchor: true)
-                AppRouter.shared.route = .terminal(dropped.id)
-            case .bottom:
-                guard dropped.id != context.id else { return }
-                terminals.groupSessions(anchorID: context.id, newID: dropped.id, orientation: .vertical, insertBeforeAnchor: false)
-                AppRouter.shared.route = .terminal(dropped.id)
-            case .top:
-                guard dropped.id != context.id else { return }
-                terminals.groupSessions(anchorID: context.id, newID: dropped.id, orientation: .vertical, insertBeforeAnchor: true)
-                AppRouter.shared.route = .terminal(dropped.id)
+            if let shown = terminals.applySnap(droppedID: droppedID, onto: context, zone: zone) {
+                AppRouter.shared.route = .terminal(shown)
             }
         }
     }
 
     @ViewBuilder private func snapPreviewOverlay(for zone: TerminalSnapZone, in size: CGSize) -> some View {
-        let inset: CGFloat = 8
-        let rect: CGRect = {
-            switch zone {
-            case .left:
-                return CGRect(x: inset, y: inset, width: max(80, size.width / 2 - inset * 1.5), height: max(80, size.height - inset * 2))
-            case .right:
-                return CGRect(x: size.width / 2 + inset * 0.5, y: inset, width: max(80, size.width / 2 - inset * 1.5), height: max(80, size.height - inset * 2))
-            case .top:
-                return CGRect(x: inset, y: inset, width: max(80, size.width - inset * 2), height: max(80, size.height / 2 - inset * 1.5))
-            case .bottom:
-                return CGRect(x: inset, y: size.height / 2 + inset * 0.5, width: max(80, size.width - inset * 2), height: max(80, size.height / 2 - inset * 1.5))
-            case .center:
-                return CGRect(x: inset, y: inset, width: max(80, size.width - inset * 2), height: max(80, size.height - inset * 2))
-            }
-        }()
-        let label: String = {
-            switch zone {
-            case .left: return "Split Left"
-            case .right: return "Split Right"
-            case .top: return "Split Top"
-            case .bottom: return "Split Bottom"
-            case .center: return "Single View (Ungroup)"
-            }
-        }()
+        let rect = zone.previewRect(in: size)
         ZStack {
             RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous)
                 .fill(Color.rxAccent.opacity(0.18))
@@ -362,7 +307,7 @@ struct TerminalPage: View {
                     RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous)
                         .strokeBorder(Color.rxAccent.opacity(0.85), lineWidth: 2)
                 )
-            Label(label, systemImage: zone == .left || zone == .right ? "rectangle.split.2x1" : (zone == .top || zone == .bottom ? "rectangle.split.1x2" : "macwindow"))
+            Label(zone.title, systemImage: zone.systemImage)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 12)
@@ -583,37 +528,10 @@ struct SessionTabs: View {
 
     private var siblings: [TerminalManager.Context] { current.tabSiblings }
 
-    private struct TabCluster: Identifiable {
-        let id: String
-        let group: TerminalManager.SplitGroup?
-        let items: [(index: Int, context: TerminalManager.Context)]
-    }
-
     /// Clusters adjacent tabs that belong to the same `SplitGroup` into one
     /// visual pill container so it's immediately clear which tabs are split together.
-    private var clusters: [TabCluster] {
-        let list = siblings
-        var result: [TabCluster] = []
-        var i = 0
-        while i < list.count {
-            let ctx = list[i]
-            if let group = terminals.splitGroup(containing: ctx.id) {
-                var groupedItems: [(Int, TerminalManager.Context)] = [(i, ctx)]
-                var j = i + 1
-                while j < list.count, terminals.splitGroup(containing: list[j].id)?.id == group.id {
-                    groupedItems.append((j, list[j]))
-                    j += 1
-                }
-                if groupedItems.count >= 2 {
-                    result.append(TabCluster(id: "group-\(group.id.uuidString)", group: group, items: groupedItems))
-                    i = j
-                    continue
-                }
-            }
-            result.append(TabCluster(id: "single-\(ctx.id.uuidString)", group: nil, items: [(i, ctx)]))
-            i += 1
-        }
-        return result
+    private var clusters: [TerminalManager.TabCluster] {
+        terminals.tabClusters(for: current)
     }
 
     var body: some View {
@@ -795,15 +713,7 @@ private struct TerminalCanvasSnapDropDelegate: DropDelegate {
     }
 
     private func zone(for pt: CGPoint) -> TerminalSnapZone {
-        let w = max(containerSize.width, 1)
-        let h = max(containerSize.height, 1)
-        let nx = pt.x / w
-        let ny = pt.y / h
-        if nx < 0.28 { return .left }
-        if nx > 0.72 { return .right }
-        if ny < 0.28 { return .top }
-        if ny > 0.72 { return .bottom }
-        return .center
+        TerminalSnapZone.zone(at: pt, in: containerSize)
     }
 }
 
@@ -836,14 +746,7 @@ private struct TerminalSnippetDrawer: View {
     @State private var filter = ""
 
     private var snippets: [RDSnippet] {
-        let all = store.snippetGroup.snippets
-        guard !filter.isEmpty else { return all }
-        let key = filter.lowercased()
-        return all.filter {
-            $0.name.lowercased().contains(key)
-                || $0.code.lowercased().contains(key)
-                || $0.group.lowercased().contains(key)
-        }
+        store.snippetGroup.snippets(matching: filter)
     }
 
     var body: some View {
@@ -1048,12 +951,7 @@ private struct TerminalStatusBar: View {
         .frame(height: 32)
     }
 
-    var endpoint: String {
-        if context.remoteType == .local { return "Local Shell · \(ProcessInfo.processInfo.hostName)" }
-        if let command = context.command { return command.command }
-        if context.machine.isUURemoteDevice { return "UU Remote · " + context.machine.name }
-        return context.machine.getCommand(insertLeadingSSH: false)
-    }
+    var endpoint: String { context.endpointDescription }
 
     private struct LiveFigures: View {
         @ObservedObject var session: MonitorSession
@@ -1150,39 +1048,5 @@ enum TerminalSessionActions {
         }
         let neighbour = index + 1 < siblings.count ? siblings[index + 1] : siblings[index - 1]
         AppRouter.shared.route = .terminal(neighbour.id)
-    }
-}
-
-extension TerminalManager.Context {
-    @MainActor var tabSiblings: [TerminalManager.Context] {
-        let all = TerminalManager.shared.sessionContexts
-        switch remoteType {
-        case .machine:
-            return all.filter { $0.remoteType == .machine && $0.machine.id == machine.id }
-        case .command:
-            guard let command = command?.command else { return [self] }
-            return all.filter { $0.remoteType == .command && $0.command?.command == command }
-        case .local:
-            return all.filter { $0.remoteType == .local }
-        }
-    }
-
-    var displayName: String {
-        switch remoteType {
-        case .machine: return machine.name
-        case .command:
-            if let command { return "\(command.username)@\(command.remoteAddress)" }
-            return navigationTitle
-        case .local: return "Local Terminal"
-        }
-    }
-
-    func reconnect() {
-        guard closed else { return }
-        DispatchQueue.global().async {
-            self.putInformation("[i] Reconnecting with the details from when this session started.")
-            self.putInformation("    If the server was edited, open a new terminal instead.")
-            self.processBootstrap()
-        }
     }
 }
