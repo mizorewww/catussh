@@ -95,7 +95,9 @@ if [[ "$destination" == upload ]]; then
 else
     step "Exporting for App Store Connect"
 fi
-if ! xcodebuild \
+# Packaging runs /usr/bin/rsync, which starts its other end by name from
+# PATH; a newer rsync from Homebrew there refuses its options ("Copy failed").
+if ! PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild \
     -exportArchive \
     -archivePath "$ARCHIVE" \
     -exportOptionsPlist "$options" \
