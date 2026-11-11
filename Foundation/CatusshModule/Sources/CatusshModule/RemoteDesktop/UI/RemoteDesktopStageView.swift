@@ -102,6 +102,9 @@ public struct RemoteDesktopStageView: View {
     @State private var showsTextInput = false
     @State private var textDraft = ""
     @State private var toast: String?
+    /// Asked once: the bar is drawn again for every frame, and each ask is
+    /// a trip to the system.
+    @State private var officialAppInstalled = false
 
     public init(session: RemoteDesktopSession, onClose: (() -> Void)? = nil) {
         self.session = session
@@ -117,6 +120,11 @@ public struct RemoteDesktopStageView: View {
                 .clipped()
         }
         .background(Color.black.ignoresSafeArea())
+        #if os(iOS)
+            .onAppear {
+                if session.protocolType == .uuRemote { officialAppInstalled = UULocalBridge.officialAppInstalled }
+            }
+        #endif
         .overlay(alignment: .bottom) {
             if let toast {
                 Text(toast)
@@ -493,7 +501,7 @@ public struct RemoteDesktopStageView: View {
                 Text("UURemote.app is not installed")
             }
             #else
-            if UULocalBridge.officialAppInstalled {
+            if officialAppInstalled {
                 Button("Open in UU Remote app (PiP)") {
                     UULocalBridge.openControlInOfficialApp(for: session.machine)
                 }

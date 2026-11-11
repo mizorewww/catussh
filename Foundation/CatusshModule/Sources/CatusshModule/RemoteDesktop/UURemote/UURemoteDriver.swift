@@ -13,6 +13,9 @@ import Foundation
 import ImageIO
 import os
 import WebKit
+#if os(iOS) && !targetEnvironment(macCatalyst)
+    import UIKit
+#endif
 
 public enum UUDriverError: Error, Sendable {
     case notLoggedIn
@@ -117,6 +120,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     }
 
     public func stop() {
+        if !closed { Self.log.info("stop \(self.purpose == .desktop ? "desktop" : "terminal", privacy: .public) connection to \(self.deviceID, privacy: .public)") }
         closed = true
         connectTimeoutTask?.cancel()
         heartbeatTask?.cancel()
@@ -136,6 +140,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         peer = nil
         Task { @MainActor in
             _ = try? await currentPeer?.evaluate("closeAll()") as String?
+            currentPeer?.detach()
         }
         if !reportedTerminalPhase {
             session.reportPhase(.closed(nil), hint: "UU Remote session ended")
@@ -1216,7 +1221,43 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         super.init()
         config.userContentController.add(self, name: "rtc")
         webView.navigationDelegate = self
+        attachToWindow()
         loadBridge()
+    }
+
+    /// The session is over: the page leaves its window, and lets go of us.
+    private var detached = false
+
+    func detach() {
+        detached = true
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "rtc")
+        webView?.removeFromSuperview()
+    }
+
+    /// iOS suspends the web content process of a web view in no window:
+    /// WebKit counts its page as not visible and lets go of the process's
+    /// foreground assertion, and the peer connection stops with the process.
+    /// The host then saw the session's channels go quiet and dropped it,
+    /// seconds after it connected. So the page sits in a window, a point in
+    /// size, all but transparent and under everything. A Mac runs it as it
+    /// is.
+    private func attachToWindow() {
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+            guard let webView, webView.window == nil, !detached else { return }
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            let windows = scenes.filter { $0.activationState == .foregroundActive }.flatMap(\.windows)
+                + scenes.filter { $0.activationState != .foregroundActive }.flatMap(\.windows)
+            guard let window = windows.first(where: \.isKeyWindow) ?? windows.first else {
+                Self.log.error("no window for the WebRTC page: iOS may suspend it")
+                return
+            }
+            webView.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
+            webView.alpha = 0.01
+            webView.isUserInteractionEnabled = false
+            webView.accessibilityElementsHidden = true
+            window.insertSubview(webView, at: 0)
+            Self.log.info("WebRTC page placed in a window")
+        #endif
     }
 
     private func loadBridge() {
@@ -1438,6 +1479,13 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         pageLoaded(false)
     }
 
+    /// The page's process went away (memory, a suspension that ended it):
+    /// the session goes with it rather than hanging on a dead peer.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        Self.log.error("WebRTC page process terminated")
+        pageLoaded(false, reason: "The WebRTC page stopped (its process ended).")
+    }
+
     private func pageLoaded(_ loaded: Bool, reason: String? = nil) {
         if loaded {
             ready = true
@@ -1469,6 +1517,8 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     /// functions are async, and evaluateJavaScript cannot return a Promise
     /// ("a result of an unsupported type"), nor `undefined`.
     func evaluate<T>(_ script: String) async throws -> T? {
+        // The window it was in may have gone (a scene closed).
+        attachToWindow()
         do {
             let result = try await webView?.callAsyncJavaScript("return await (\(script));", contentWorld: .page)
             return result as? T

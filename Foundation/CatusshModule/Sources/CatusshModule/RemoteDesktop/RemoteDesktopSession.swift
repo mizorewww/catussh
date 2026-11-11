@@ -11,6 +11,7 @@
 import Combine
 import CoreGraphics
 import Foundation
+import os
 
 @MainActor
 public final class RemoteDesktopSession: ObservableObject, Identifiable {
@@ -70,6 +71,10 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
     /// view only. The clipboard is an explicit action and still goes.
     public var acceptsInput: Bool { phase == .connected && !viewOnly }
 
+    /// Phase changes and who ended a session, to tell a dropped connection
+    /// from a closed page in the device's log.
+    nonisolated static let log = Logger(subsystem: "me.mizorewww.rayon", category: "remote-desktop")
+
     public init(machine: RDMachine, protocolType: RDMachine.RemoteDesktopProtocolType) {
         self.machine = machine
         self.protocolType = protocolType
@@ -96,6 +101,7 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
     /// Tears the session down; called when the page closes or the user taps
     /// disconnect.
     public func disconnect() {
+        Self.log.info("disconnect \(self.machine.name, privacy: .public) in \(String(describing: self.phase), privacy: .public)")
         driver?.stop()
         driver = nil
         if !phase.isTerminal {
@@ -165,6 +171,9 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
     nonisolated public func reportPhase(_ phase: RemoteDesktopPhase, hint: String? = nil) {
         Task { @MainActor [weak self] in
             guard let self else { return }
+            if self.phase != phase {
+                Self.log.info("\(self.machine.name, privacy: .public): \(String(describing: phase), privacy: .public) \(hint ?? "", privacy: .public)")
+            }
             self.phase = phase
             if let hint { self.statusHint = hint }
         }
