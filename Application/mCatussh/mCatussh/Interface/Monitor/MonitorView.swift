@@ -22,11 +22,16 @@ struct MonitorView: View {
                 facts
                 if session.phase == .connected, session.status.hasData {
                     MonitorDashboard(session: session)
+                        .transition(.opacity.combined(with: .offset(y: 8)))
                 } else {
-                    MonitorPlaceholder(session: session)
+                    MonitorPlaceholder(session: session) {
+                        session.reconnect()
+                    }
+                    .transition(.opacity)
                 }
             }
             .padding(RX.Space.s4)
+            .animation(.easeOut(duration: 0.3), value: session.phase == .connected && session.status.hasData)
         }
         .background(RXBackdrop().ignoresSafeArea())
         .navigationTitle(store.machineRedacted == .all ? "Monitor" : session.machine.name)
@@ -43,6 +48,20 @@ struct MonitorView: View {
                         FileTransferManager.shared.begin(for: session.machine.id)
                     } label: {
                         Label("Open File Transfer", systemImage: "arrow.up.arrow.down")
+                    }
+                    if session.machine.hasRemoteDesktop {
+                        Button {
+                            ServerActions.openDesktop(session.machine.id)
+                        } label: {
+                            Label("Open Remote Desktop", systemImage: "display")
+                        }
+                    }
+                    if session.phase != .connected {
+                        Button {
+                            session.reconnect()
+                        } label: {
+                            Label("Reconnect", systemImage: "arrow.clockwise")
+                        }
                     }
                     Button(role: .destructive) {
                         MonitorCenter.shared.end(session.id)

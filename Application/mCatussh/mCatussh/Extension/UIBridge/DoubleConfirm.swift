@@ -16,9 +16,11 @@ extension UIBridge {
         informative: String? = nil,
         confirmTitle: String = "Continue",
         destructive: Bool = true,
+        /// Ask even when confirmations are turned off: for losing unsaved work.
+        always: Bool = false,
         confirmation: @escaping (Bool) -> Void
     ) {
-        if CatusshStore.shared.disableConformation {
+        if CatusshStore.shared.disableConformation, !always {
             confirmation(true)
             return
         }
