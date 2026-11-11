@@ -52,6 +52,12 @@ struct mCatusshApp: App {
                 .onChange(of: store.licenseAgreed) { _ in
                     checkAgreement()
                 }
+                // The appearance and copy on select may come from another
+                // device, through iCloud.
+                .onReceive(NotificationCenter.default.publisher(for: CloudSync.settingsDidChange)) { _ in
+                    AppearancePreference.applyStored()
+                    CatusshTerminalView.setCopyOnSelect(store.terminalCopyOnSelect)
+                }
         }
     }
 

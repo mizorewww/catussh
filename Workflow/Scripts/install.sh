@@ -171,6 +171,8 @@ install_ios() {
     ditto "$ios_data/Build/Products/Release-iphoneos/mCatussh.app" "$app"
     cp "$profile" "$app/embedded.mobileprovision"
     local entitlements="$ios_data/Signed/entitlements.plist"
+    # The keychain access group is the one the Mac app is signed with too
+    # (build-macos.sh): sync keeps its key there, in iCloud Keychain.
     cat > "$entitlements" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -2,19 +2,30 @@
 //  CloudSync.swift
 //  CatusshModule
 //
-//  Keeps the servers and identities of this device and of the user's other
-//  devices the same, through iCloud. It is off until turned on in Settings.
+//  Keeps the servers, identities, snippets, port forwards and settings of this
+//  device and of the user's other devices the same, through iCloud. It is off
+//  until turned on in Settings.
+//
+//  What is in iCloud is sealed under a key that iCloud Keychain carries to the
+//  user's other devices, so turning sync on is all there is to it. A device
+//  that cannot keep a key in iCloud Keychain uses a passphrase instead.
 //
 
 import Combine
 import Foundation
 #if canImport(UIKit)
     import UIKit
+#elseif canImport(AppKit)
+    import AppKit
 #endif
 
 @MainActor
 public final class CloudSync: ObservableObject {
     public static let shared = CloudSync()
+
+    /// Posted when settings from another device were taken, for what the app
+    /// applies itself (the appearance).
+    public static let settingsDidChange = Notification.Name("CloudSyncSettingsDidChange")
 
     public enum Status: Equatable {
         case off
@@ -22,34 +33,47 @@ public final class CloudSync: ObservableObject {
         case unavailable(String)
         case syncing
         case synced(Date)
-        /// This device's passphrase does not open what is in iCloud.
+        /// What is in iCloud is sealed under a key from iCloud Keychain that
+        /// has not reached this device yet.
+        case waitingForKey
+        /// What is in iCloud is sealed under a passphrase this device does not
+        /// have.
         case locked
+        /// There is no iCloud Keychain here, and so no key without a passphrase.
+        case needsPassphrase
         /// What is in iCloud cannot be read at all.
         case unreadable
         case failed(String)
     }
 
-    @Published public private(set) var status: Status = .off
+    @Published public private(set) var status: Status = .off {
+        didSet { scheduleRetryWhileWaiting() }
+    }
+
     @Published public private(set) var isOn: Bool
 
+    /// Whether the key is kept in iCloud Keychain. When it is not, a
+    /// passphrase takes its place.
+    @Published public private(set) var usesKeychain: Bool
+
     @Published public var syncsServers: Bool {
-        didSet {
-            guard syncsServers != oldValue else { return }
-            defaults.set(syncsServers, forKey: Key.servers)
-            state.machines = [:]
-            generation += 1
-            sync()
-        }
+        didSet { kindChanged(syncsServers, oldValue, Key.servers) { $0.machines = [:]; $0.folders = [:] } }
     }
 
     @Published public var syncsIdentities: Bool {
-        didSet {
-            guard syncsIdentities != oldValue else { return }
-            defaults.set(syncsIdentities, forKey: Key.identities)
-            state.identities = [:]
-            generation += 1
-            sync()
-        }
+        didSet { kindChanged(syncsIdentities, oldValue, Key.identities) { $0.identities = [:] } }
+    }
+
+    @Published public var syncsSnippets: Bool {
+        didSet { kindChanged(syncsSnippets, oldValue, Key.snippets) { $0.snippets = [:] } }
+    }
+
+    @Published public var syncsPortForwards: Bool {
+        didSet { kindChanged(syncsPortForwards, oldValue, Key.portForwards) { $0.portForwards = [:] } }
+    }
+
+    @Published public var syncsSettings: Bool {
+        didSet { kindChanged(syncsSettings, oldValue, Key.settings) { $0.settings = [:] } }
     }
 
     /// Why sync cannot be turned on here, if it cannot.
@@ -61,12 +85,18 @@ public final class CloudSync: ObservableObject {
     /// Whether iCloud already holds data, from this or another device.
     public var hasStoredData: Bool { transport.read() != nil }
 
+    /// Whether this device has a passphrase for sync.
+    public var hasPassphrase: Bool { !(passphrase ?? "").isEmpty }
+
     public static let minimumPassphraseLength = 8
 
     private enum Key {
         static let on = "me.mizorewww.rayon.sync.enabled"
         static let servers = "me.mizorewww.rayon.sync.servers"
         static let identities = "me.mizorewww.rayon.sync.identities"
+        static let snippets = "me.mizorewww.rayon.sync.snippets"
+        static let portForwards = "me.mizorewww.rayon.sync.portForwards"
+        static let settings = "me.mizorewww.rayon.sync.settings"
     }
 
     /// The passphrase as it is kept on the device: with the servers and
@@ -74,6 +104,9 @@ public final class CloudSync: ObservableObject {
     private struct Secret: Codable {
         var passphrase: String
     }
+
+    /// How often a device waiting for the key from iCloud Keychain looks again.
+    private static let keyRetryInterval: UInt64 = 30_000_000_000
 
     private let store = CatusshStore.shared
     private let defaults = UserDefaults.standard
@@ -95,7 +128,11 @@ public final class CloudSync: ObservableObject {
     /// overtaken by one.
     private var generation = 0
     private var debounceTask: Task<Void, Never>?
+    private var retryTask: Task<Void, Never>?
     private var observers: Set<AnyCancellable> = []
+    /// The settings as the last look found them, to tell a change to one from
+    /// the many other writes to the user defaults.
+    private var settings: [String: SyncSetting] = [:]
 
     private func scheduleDebouncedSync() {
         debounceTask?.cancel()
@@ -106,11 +143,42 @@ public final class CloudSync: ObservableObject {
         }
     }
 
+    /// iCloud Keychain says nothing when a key arrives, so a device that waits
+    /// for one looks again from time to time (and whenever the app comes to
+    /// the front).
+    private func scheduleRetryWhileWaiting() {
+        guard status == .waitingForKey else {
+            retryTask?.cancel()
+            retryTask = nil
+            return
+        }
+        guard retryTask == nil else { return }
+        retryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.keyRetryInterval)
+            guard !Task.isCancelled, let self else { return }
+            self.retryTask = nil
+            if self.status == .waitingForKey { self.sync() }
+        }
+    }
+
+    private func kindChanged(_ new: Bool, _ old: Bool, _ key: String, forget: (inout SyncState) -> Void) {
+        guard new != old else { return }
+        defaults.set(new, forKey: key)
+        forget(&state)
+        generation += 1
+        sync()
+    }
+
     private init() {
-        defaults.register(defaults: [Key.servers: true, Key.identities: true])
+        defaults.register(defaults: [
+            Key.servers: true, Key.identities: true, Key.snippets: true, Key.portForwards: true, Key.settings: true,
+        ])
         isOn = defaults.bool(forKey: Key.on)
         syncsServers = defaults.bool(forKey: Key.servers)
         syncsIdentities = defaults.bool(forKey: Key.identities)
+        syncsSnippets = defaults.bool(forKey: Key.snippets)
+        syncsPortForwards = defaults.bool(forKey: Key.portForwards)
+        syncsSettings = defaults.bool(forKey: Key.settings)
         #if DEBUG
             if ProcessInfo.processInfo.environment["CATUSSH_SYNC_LOCAL"] != nil {
                 transport = LocalTransport()
@@ -120,6 +188,7 @@ public final class CloudSync: ObservableObject {
         #else
             transport = CloudKeyValueTransport()
         #endif
+        usesKeychain = transport.problem == nil && SyncKeychain.isAvailable
         passphrase = store.readEncryptedDefault(from: .syncPassphrase, Secret(passphrase: ""))?.passphrase
         if let saved = store.readEncryptedDefault(from: .syncState, SyncState()) { state = saved }
     }
@@ -133,19 +202,17 @@ public final class CloudSync: ObservableObject {
         // Asks iCloud for what it has, well before Settings asks whether
         // there is anything.
         _ = transport.read()
+        settings = SyncedSettings.snapshot()
         // Only trigger sync when sync-relevant content changed, ignoring volatile
         // connection timestamps and banner updates.
-        Publishers.Merge(
-            store.$machineGroup
-                .map { $0.machines.map(\.content) }
-                .removeDuplicates()
-                .dropFirst()
-                .map { _ in () },
-            store.$identityGroup
-                .map { $0.identities.map(\.content) }
-                .removeDuplicates()
-                .dropFirst()
-                .map { _ in () }
+        Publishers.MergeMany(
+            store.$machineGroup.map { $0.machines.map(\.content) }.removeDuplicates().dropFirst().map { _ in () }
+                .eraseToAnyPublisher(),
+            store.$identityGroup.map { $0.identities.map(\.content) }.removeDuplicates().dropFirst().map { _ in () }
+                .eraseToAnyPublisher(),
+            store.$snippetGroup.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            store.$portForwardGroup.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            store.$folderGroup.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
         )
         .sink { [weak self] in
             guard Thread.isMainThread else { return }
@@ -156,10 +223,35 @@ public final class CloudSync: ObservableObject {
             }
         }
         .store(in: &observers)
+        // Settings live in the user defaults, or are written there soon after
+        // they change; @Published says so before the value is set. Either
+        // way, they are looked at once the change is in place.
+        Publishers.MergeMany(
+            NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).map { _ in () }
+                .eraseToAnyPublisher(),
+            store.$machineRedacted.map { _ in () }.eraseToAnyPublisher(),
+            store.$openInterfaceAutomatically.map { _ in () }.eraseToAnyPublisher()
+        )
+        .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+        .sink { [weak self] in
+            MainActor.assumeIsolated { self?.settingsMayHaveChanged() }
+        }
+        .store(in: &observers)
         #if canImport(UIKit)
             NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
                 .sink { [weak self] _ in
                     MainActor.assumeIsolated { self?.sync() }
+                }
+                .store(in: &observers)
+        #elseif canImport(AppKit)
+            NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+                .sink { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        // On the Mac the app comes to the front often; only a
+                        // device that waits for something needs to look.
+                        guard let self, self.status == .waitingForKey else { return }
+                        self.sync()
+                    }
                 }
                 .store(in: &observers)
         #endif
@@ -175,13 +267,36 @@ public final class CloudSync: ObservableObject {
         sync()
     }
 
+    private func settingsMayHaveChanged() {
+        let now = SyncedSettings.snapshot()
+        guard now != settings else { return }
+        settings = now
+        generation += 1
+        scheduleDebouncedSync()
+    }
+
     // MARK: - Settings
 
-    /// Turns sync on, or gives this device the passphrase again after it was
-    /// refused.
+    /// Turns sync on. With iCloud Keychain that is all. Without it, false:
+    /// nothing happens until a passphrase is given with `turnOn(passphrase:)`.
+    @discardableResult
+    public func turnOn() -> Bool {
+        guard problem == nil else { return false }
+        usesKeychain = SyncKeychain.isAvailable
+        guard usesKeychain || hasPassphrase else { return false }
+        switchOn()
+        return true
+    }
+
+    /// Turns sync on with a passphrase, or gives this device the passphrase
+    /// again after it was refused.
     public func turnOn(passphrase new: String) {
         guard problem == nil else { return }
         set(passphrase: new)
+        switchOn()
+    }
+
+    private func switchOn() {
         if !isOn {
             state = SyncState()
             isOn = true
@@ -214,8 +329,11 @@ public final class CloudSync: ObservableObject {
         status = .off
     }
 
-    /// Puts this device's data in place of what is in iCloud, sealed under
-    /// `passphrase` (or the current one). Other devices are then asked for it.
+    /// Puts this device's data in place of what is in iCloud (merged with it,
+    /// when this device can read it), sealed under a new key: in iCloud
+    /// Keychain, or from `passphrase` (or the current one) where there is no
+    /// iCloud Keychain. Other devices pick up the new key from iCloud Keychain,
+    /// or ask for the new passphrase.
     public func replaceStoredData(passphrase new: String? = nil) {
         guard isOn else { return }
         if let new {
@@ -229,8 +347,15 @@ public final class CloudSync: ObservableObject {
         sync()
     }
 
-    /// Removes what is in iCloud and stops syncing here. A device that still
-    /// syncs will store its data again.
+    /// Makes a new key in iCloud Keychain, seals what is in iCloud under it,
+    /// and removes the old keys.
+    public func resetKey() {
+        replaceStoredData()
+    }
+
+    /// Removes what is in iCloud, and the keys in iCloud Keychain, and stops
+    /// syncing here. A device that still syncs will store its data again,
+    /// under a key of its own.
     public func deleteStoredData() {
         do {
             try transport.write(nil)
@@ -241,6 +366,7 @@ public final class CloudSync: ObservableObject {
             status = .failed("The data in iCloud could not be removed: \(error.localizedDescription)")
             return
         }
+        if usesKeychain { SyncKeychain.removeKeys() }
         turnOff()
     }
 
@@ -261,13 +387,21 @@ public final class CloudSync: ObservableObject {
             status = .unavailable(problem)
             return
         }
-        guard let passphrase, !passphrase.isEmpty else {
-            status = .locked
-            return
-        }
         if running {
             pending = true
             return
+        }
+        if !usesKeychain { usesKeychain = SyncKeychain.isAvailable }
+        var keys: [SyncKey] = []
+        if usesKeychain {
+            do {
+                keys = try SyncKeychain.keys()
+            } catch SyncKeychain.Failure.unavailable {
+                usesKeychain = false
+            } catch {
+                status = .failed("The key could not be read from the keychain. Unlock this device and try again.")
+                return
+            }
         }
         running = true
         if case .synced = status {} else { status = .syncing }
@@ -280,18 +414,28 @@ public final class CloudSync: ObservableObject {
             remote: transport.read(),
             key: key
         )
+        input.snippets = store.snippetGroup.snippets
+        input.portForwards = store.portForwardGroup.forwards
+        input.folders = store.folderGroup.folders
+        settings = SyncedSettings.snapshot()
+        input.settings = settings
+        input.keychainKeys = keys
+        input.usesKeychain = usesKeychain
         input.syncsMachines = syncsServers
         input.syncsIdentities = syncsIdentities
+        input.syncsSnippets = syncsSnippets
+        input.syncsPortForwards = syncsPortForwards
+        input.syncsSettings = syncsSettings
         input.replacesRemote = replacesNext
         replacesNext = false
 
         let round = input
         let read = generation
         Task {
-            // Deriving a key takes a few hundred milliseconds.
+            // Deriving a key from a passphrase takes a few hundred milliseconds.
             let outcome = await Task.detached(priority: .utility) { SyncSession.run(round) }.value
             if read == generation {
-                finish(outcome)
+                finish(outcome, replaced: round.replacesRemote)
             } else {
                 // Something was edited meanwhile: what the round worked out
                 // is about data that is gone.
@@ -306,37 +450,37 @@ public final class CloudSync: ObservableObject {
         }
     }
 
-    private func finish(_ outcome: SyncOutcome) {
+    private func finish(_ outcome: SyncOutcome, replaced: Bool) {
         guard isOn else { return }
         switch outcome {
         case .locked:
             status = .locked
+        case .waitingForKey:
+            status = .waitingForKey
+        case .needsPassphrase:
+            status = .needsPassphrase
         case .unreadable:
             status = .unreadable
         case .newer:
             status = .failed("What is in iCloud was written by a newer version of catussh. Update catussh on this device.")
         case let .done(done):
-            key = done.key
-            if !done.machines.isEmpty {
-                var group = store.machineGroup
-                for change in done.machines {
-                    switch change {
-                    case let .put(machine): group.insert(machine)
-                    case let .remove(id): group.delete(id)
-                    }
+            if let newKey = done.newKey {
+                // The key goes to iCloud Keychain before anything sealed
+                // under it goes to iCloud.
+                do {
+                    try SyncKeychain.add(newKey)
+                } catch SyncKeychain.Failure.unavailable {
+                    usesKeychain = false
+                    replacesNext = replaced
+                    if hasPassphrase { pending = true } else { status = .needsPassphrase }
+                    return
+                } catch {
+                    status = .failed("The key could not be saved to the keychain. Unlock this device and try again.")
+                    return
                 }
-                store.machineGroup = group
             }
-            if !done.identities.isEmpty {
-                var group = store.identityGroup
-                for change in done.identities {
-                    switch change {
-                    case let .put(identity): group.insert(identity)
-                    case let .remove(id): group.delete(id)
-                    }
-                }
-                store.identityGroup = group
-            }
+            if let key = done.key { self.key = key }
+            apply(done)
             state = done.state
             if let upload = done.upload {
                 do {
@@ -346,7 +490,63 @@ public final class CloudSync: ObservableObject {
                     return
                 }
             }
+            if replaced, case let .keychain(kept) = done.sealing {
+                SyncKeychain.removeKeys(except: kept.id)
+            }
             status = .synced(Date())
         }
+    }
+
+    private func apply(_ done: SyncOutcome.Done) {
+        if !done.machines.isEmpty { store.machineGroup = applying(done.machines, to: store.machineGroup) }
+        if !done.identities.isEmpty { store.identityGroup = applying(done.identities, to: store.identityGroup) }
+        if !done.snippets.isEmpty { store.snippetGroup = applying(done.snippets, to: store.snippetGroup) }
+        if !done.portForwards.isEmpty {
+            store.portForwardGroup = applying(done.portForwards, to: store.portForwardGroup)
+        }
+        if !done.folders.isEmpty {
+            var group = store.folderGroup
+            for change in done.folders {
+                switch change {
+                case let .put(name, folder):
+                    if let index = group.folders.firstIndex(where: { $0.name == name }) {
+                        group.folders[index] = folder
+                    } else {
+                        group.folders.append(folder)
+                    }
+                case let .remove(name):
+                    group.folders.removeAll { $0.name == name }
+                }
+            }
+            store.folderGroup = group
+        }
+        if !done.settings.isEmpty {
+            SyncedSettings.apply(done.settings)
+            // Taken, so not to be mistaken for a change made here.
+            settings = SyncedSettings.snapshot()
+            NotificationCenter.default.post(name: Self.settingsDidChange, object: self)
+        }
+    }
+
+    /// The group with the changes made. An item is taken as it came, even one
+    /// the group would not insert: refusing it here would read as deleting it
+    /// here, and the deletion would be synced.
+    private func applying<Group: RDGroup>(_ changes: [SyncChange<Group.Item>], to group: Group) -> Group
+        where Group.Item.ID == UUID
+    {
+        var group = group
+        for change in changes {
+            switch change {
+            case let .put(item):
+                if let index = group.items.firstIndex(where: { $0.id == item.id }) {
+                    group.items[index] = item
+                } else {
+                    group.items.append(item)
+                }
+            case let .remove(id):
+                group.delete(id)
+            }
+        }
+        return group
     }
 }

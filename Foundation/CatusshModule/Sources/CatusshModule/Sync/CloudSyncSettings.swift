@@ -11,23 +11,33 @@ import SwiftUI
 public struct CloudSyncSettings: View {
     @ObservedObject private var sync = CloudSync.shared
     @State private var asking: PassphraseSheet.Purpose?
-    @State private var confirmsDelete = false
+    @State private var confirming: Confirmation?
 
     public init() {}
+
+    /// What an alert asks before it is done.
+    private enum Confirmation: Identifiable {
+        /// Delete what is in iCloud.
+        case delete
+        /// Make a new key in iCloud Keychain.
+        case resetKey
+        /// Put this device's data in place of what is in iCloud, under a new key.
+        case replace
+
+        var id: Self { self }
+    }
 
     public var body: some View {
         RXDividedStack {
             // A build that cannot sync shows the switch off and out of reach,
             // whatever was chosen in a build that could, and nothing more.
-            RXFormRow("Sync with iCloud", description: sync.problem ?? """
-            Servers and identities are encrypted on this device, with a passphrase you choose, \
-            before they go to iCloud. Apple cannot read them.
-            """) {
+            RXFormRow("Sync with iCloud", description: sync.problem ?? lead) {
                 Toggle("Sync with iCloud", isOn: Binding(
                     get: { sync.isOn && sync.problem == nil },
                     set: { on in
                         if on {
-                            asking = sync.hasStoredData ? .enter : .create
+                            // Without iCloud Keychain, a passphrase.
+                            if !sync.turnOn() { asking = sync.hasStoredData ? .enter : .create }
                         } else {
                             sync.turnOff()
                         }
@@ -48,10 +58,18 @@ public struct CloudSyncSettings: View {
                         case .locked:
                             Button("Enter Passphrase…") { asking = .enter }
                                 .buttonStyle(.rx(size: .small))
-                            Button("Replace…") { asking = .change }
+                            Button("Replace…", action: replace)
+                                .buttonStyle(.rx(size: .small))
+                        case .needsPassphrase:
+                            Button("Choose Passphrase…") { asking = sync.hasStoredData ? .enter : .create }
+                                .buttonStyle(.rx(size: .small))
+                        case .waitingForKey:
+                            Button("Check Again") { sync.sync() }
+                                .buttonStyle(.rx(size: .small))
+                            Button("Replace…", action: replace)
                                 .buttonStyle(.rx(size: .small))
                         case .unreadable:
-                            Button("Replace…") { asking = .change }
+                            Button("Replace…", action: replace)
                                 .buttonStyle(.rx(size: .small))
                         case .unavailable, .off:
                             EmptyView()
@@ -62,18 +80,39 @@ public struct CloudSyncSettings: View {
                         }
                     }
                 }
-                SwitchRow("Servers", description: "Addresses, names, groups and comments.", isOn: $sync.syncsServers)
+                SwitchRow("Servers", description: "Addresses, names, folders and comments.", isOn: $sync.syncsServers)
                 SwitchRow(
                     "Identities",
                     description: "User names, passwords and private keys.",
                     isOn: $sync.syncsIdentities
                 )
-                RXFormRow("Passphrase", description: "After a change, your other devices ask for the new one.") {
-                    Button("Change…") { asking = .change }
-                        .buttonStyle(.rx(size: .small))
+                SwitchRow("Snippets", description: "Commands, their names and groups.", isOn: $sync.syncsSnippets)
+                SwitchRow(
+                    "Port forwards",
+                    description: "Local, remote and SOCKS forwards.",
+                    isOn: $sync.syncsPortForwards
+                )
+                SwitchRow(
+                    "Settings",
+                    description: "Appearance, sessions, recent servers, SSH, monitor and terminal settings.",
+                    isOn: $sync.syncsSettings
+                )
+                if sync.usesKeychain {
+                    RXFormRow(
+                        "Encryption key",
+                        description: "Kept in iCloud Keychain. A new one replaces it on your other devices too."
+                    ) {
+                        Button("Reset…") { confirming = .resetKey }
+                            .buttonStyle(.rx(size: .small))
+                    }
+                } else {
+                    RXFormRow("Passphrase", description: "After a change, your other devices ask for the new one.") {
+                        Button("Change…") { asking = .change }
+                            .buttonStyle(.rx(size: .small))
+                    }
                 }
                 RXFormRow("Data in iCloud", description: "Remove it and stop syncing on this device.") {
-                    Button("Delete…") { confirmsDelete = true }
+                    Button("Delete…") { confirming = .delete }
                         .buttonStyle(.rx(size: .small))
                 }
             }
@@ -86,14 +125,72 @@ public struct CloudSyncSettings: View {
                 }
             }
         }
-        .alert("Delete what catussh keeps in iCloud?", isPresented: $confirmsDelete) {
-            Button("Delete", role: .destructive) { sync.deleteStoredData() }
+        .alert(
+            alertTitle,
+            isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
+            presenting: confirming
+        ) { confirmation in
+            switch confirmation {
+            case .delete:
+                Button("Delete", role: .destructive) { sync.deleteStoredData() }
+            case .resetKey:
+                Button("Reset", role: .destructive) { sync.resetKey() }
+            case .replace:
+                Button("Replace", role: .destructive) { sync.replaceStoredData() }
+            }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("""
-            Your servers and identities stay on this device. A device that still syncs will store \
-            its own again, so turn sync off there too.
-            """)
+        } message: { confirmation in
+            switch confirmation {
+            case .delete:
+                Text(sync.usesKeychain ? """
+                Your data stays on this device; the key in iCloud Keychain is removed. A device that \
+                still syncs will store its own again, so turn sync off there too.
+                """ : """
+                Your data stays on this device. A device that still syncs will store its own again, \
+                so turn sync off there too.
+                """)
+            case .resetKey:
+                Text("""
+                What is in iCloud is encrypted again with a new key. Your other devices go on syncing \
+                once iCloud Keychain brings it to them.
+                """)
+            case .replace:
+                Text("""
+                What is in iCloud is replaced with this device's data, encrypted with a new key. Your \
+                other devices add theirs once iCloud Keychain brings them the key.
+                """)
+            }
+        }
+    }
+
+    private var lead: String {
+        if sync.usesKeychain {
+            return """
+            Servers, identities, snippets, port forwards and settings are encrypted on this device \
+            before they go to iCloud. The key is kept in iCloud Keychain, so your other devices need \
+            nothing more. Apple cannot read them.
+            """
+        }
+        return """
+        Servers, identities, snippets, port forwards and settings are encrypted on this device, with \
+        a passphrase you choose, before they go to iCloud. Apple cannot read them.
+        """
+    }
+
+    private var alertTitle: String {
+        switch confirming {
+        case .delete, nil: return "Delete what catussh keeps in iCloud?"
+        case .resetKey: return "Make a new encryption key?"
+        case .replace: return "Replace what is in iCloud?"
+        }
+    }
+
+    /// With iCloud Keychain, under a new key; without, under a new passphrase.
+    private func replace() {
+        if sync.usesKeychain {
+            confirming = .replace
+        } else {
+            asking = .change
         }
     }
 
@@ -104,11 +201,25 @@ public struct CloudSyncSettings: View {
         case .syncing: return "Syncing…"
         case let .synced(date):
             return "Up to date. Last synced at \(date.formatted(date: .omitted, time: .shortened))."
+        case .waitingForKey:
+            if sync.usesKeychain {
+                return """
+                Waiting for the key from iCloud Keychain… It comes from the device that turned sync on \
+                first, which can take a few minutes. Make sure iCloud Keychain (Passwords & Keychain in \
+                your Apple Account settings) is on, on this device and on that one.
+                """
+            }
+            return """
+            What is in iCloud is encrypted with a key kept in iCloud Keychain, which catussh cannot \
+            use on this device. Replace it with this device's data, under a passphrase, to go on.
+            """
         case .locked:
             return """
-            The passphrase on this device does not open what is in iCloud. Enter the one your \
-            other device uses, or replace what is stored with this device's data.
+            What is in iCloud is encrypted with a passphrase, chosen on another device or in an \
+            earlier version of catussh. Enter it once, or replace what is stored with this device's data.
             """
+        case .needsPassphrase:
+            return "iCloud Keychain is not available here, so sync needs a passphrase to encrypt your data."
         case .unreadable:
             return "What is in iCloud cannot be read. Replace it with this device's data to go on."
         case let .failed(reason): return reason
@@ -167,15 +278,16 @@ private struct PassphraseSheet: View {
         switch purpose {
         case .create:
             return """
-            It encrypts your servers and identities before they leave this device. You will \
-            enter it once on each of your devices. It cannot be recovered if you forget it.
+            iCloud Keychain is not available here, so a passphrase encrypts your data before it \
+            leaves this device. You will enter it once on each of your devices. It cannot be \
+            recovered if you forget it.
             """
         case .enter:
             return "iCloud already holds data from one of your devices. Enter the passphrase you chose there."
         case .change:
             return """
-            What is in iCloud is replaced with this device's servers and identities, encrypted \
-            with the new passphrase. Your other devices will ask for it.
+            What is in iCloud is replaced with this device's data, encrypted with the new \
+            passphrase. Your other devices will ask for it.
             """
         }
     }

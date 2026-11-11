@@ -7,13 +7,16 @@
 # there is none. Override with CODE_SIGN_IDENTITY / DEVELOPMENT_TEAM.
 #
 # With a provisioning profile made for the app's bundle id and that
-# certificate, the app is also signed for iCloud's key-value store, which the
-# system only grants with one. It is looked for by provisioning-profile.sh;
-# MAC_PROVISIONING_PROFILE names one outright.
+# certificate, the app is also signed for iCloud's key-value store and for the
+# keychain access group shared with the iOS app (where sync keeps its key in
+# iCloud Keychain), which the system only grants with one. It is looked for by
+# provisioning-profile.sh; MAC_PROVISIONING_PROFILE names one outright.
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# After the team: "<team>.me.mizorewww.rayon" on every platform.
+KEYCHAIN_GROUP="me.mizorewww.rayon"
 CONFIGURATION="${1:-Debug}"
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-$ROOT_DIR/DerivedData}"
 
@@ -75,6 +78,14 @@ sign_for_icloud() {
     done
     /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.team-identifier' "$entitlements" 2>/dev/null || true
     /usr/libexec/PlistBuddy -c "Add :com.apple.developer.team-identifier string $DEVELOPMENT_TEAM" "$entitlements"
+    # The key that seals what is synced is kept in iCloud Keychain, in the
+    # access group the iOS app is signed with too (install.sh): the same for
+    # the Debug and Release builds, whose bundle ids differ.
+    /usr/libexec/PlistBuddy -c 'Delete :keychain-access-groups' "$entitlements" 2>/dev/null || true
+    if [[ "$grants" == *keychain-access-groups* ]]; then
+        /usr/libexec/PlistBuddy -c 'Add :keychain-access-groups array' \
+            -c "Add :keychain-access-groups:0 string $DEVELOPMENT_TEAM.$KEYCHAIN_GROUP" "$entitlements"
+    fi
 
     cp "$profile" "$APP_PATH/Contents/embedded.provisionprofile"
     signature="$(/usr/bin/codesign -d --verbose=2 "$APP_PATH" 2>&1 || true)"

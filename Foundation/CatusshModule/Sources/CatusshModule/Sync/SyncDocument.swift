@@ -10,6 +10,9 @@ import CryptoKit
 import Foundation
 
 /// The document kept in iCloud. An entry without a value is a deleted item.
+///
+/// Kinds added after the first version are missing from what an earlier
+/// version stored, and read as empty.
 struct SyncDocument: Codable, Sendable {
     struct Entry<Value: Codable & Sendable>: Codable, Sendable {
         var modified: Date
@@ -18,6 +21,25 @@ struct SyncDocument: Codable, Sendable {
 
     var machines: [String: Entry<RDMachine>] = [:]
     var identities: [String: Entry<RDIdentity>] = [:]
+    var snippets: [String: Entry<RDSnippet>] = [:]
+    var portForwards: [String: Entry<RDPortForward>] = [:]
+    /// By name: servers name their folder, so two devices that made a folder
+    /// of the same name made the same folder.
+    var folders: [String: Entry<RDFolder>] = [:]
+    /// By setting; see `SyncedSettings`.
+    var settings: [String: Entry<SyncSetting>] = [:]
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        machines = try container.decodeIfPresent(type(of: machines), forKey: .machines) ?? [:]
+        identities = try container.decodeIfPresent(type(of: identities), forKey: .identities) ?? [:]
+        snippets = try container.decodeIfPresent(type(of: snippets), forKey: .snippets) ?? [:]
+        portForwards = try container.decodeIfPresent(type(of: portForwards), forKey: .portForwards) ?? [:]
+        folders = try container.decodeIfPresent(type(of: folders), forKey: .folders) ?? [:]
+        settings = try container.decodeIfPresent(type(of: settings), forKey: .settings) ?? [:]
+    }
 }
 
 /// What this device last knew of each item: enough to tell what has changed
@@ -31,22 +53,54 @@ struct SyncState: Codable, Sendable, Equatable {
 
     var machines: [String: Stamp] = [:]
     var identities: [String: Stamp] = [:]
+    var snippets: [String: Stamp] = [:]
+    var portForwards: [String: Stamp] = [:]
+    var folders: [String: Stamp] = [:]
+    var settings: [String: Stamp] = [:]
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        machines = try container.decodeIfPresent(type(of: machines), forKey: .machines) ?? [:]
+        identities = try container.decodeIfPresent(type(of: identities), forKey: .identities) ?? [:]
+        snippets = try container.decodeIfPresent(type(of: snippets), forKey: .snippets) ?? [:]
+        portForwards = try container.decodeIfPresent(type(of: portForwards), forKey: .portForwards) ?? [:]
+        folders = try container.decodeIfPresent(type(of: folders), forKey: .folders) ?? [:]
+        settings = try container.decodeIfPresent(type(of: settings), forKey: .settings) ?? [:]
+    }
 }
 
-/// A change to make on this device.
+/// A change to make on this device to an item kept under its id.
 enum SyncChange<Value: Sendable>: Sendable {
     case put(Value)
     case remove(UUID)
 }
 
-protocol SyncItem: Codable, Sendable, Identifiable where ID == UUID {
-    /// The item without what every device keeps for itself (when it was last
-    /// used here). Two items with the same content are the same item.
+/// A change to make on this device to a value kept under a name (a folder,
+/// a setting).
+enum SyncKeyedChange<Value: Sendable>: Sendable {
+    case put(String, Value)
+    case remove(String)
+}
+
+/// Something that syncs.
+protocol SyncValue: Codable, Sendable {
+    /// The value without what every device keeps for itself (when it was last
+    /// used here). Two values with the same content are the same value.
     var content: Self { get }
-    /// This item as it came from another device, keeping what `local` has of
+    /// This value as it came from another device, keeping what `local` has of
     /// its own.
     func arriving(over local: Self?) -> Self
 }
+
+extension SyncValue {
+    var content: Self { self }
+    func arriving(over _: Self?) -> Self { self }
+}
+
+/// Something that syncs under its id.
+protocol SyncItem: SyncValue, Identifiable where ID == UUID {}
 
 extension RDMachine: SyncItem {
     var content: RDMachine {
@@ -80,18 +134,55 @@ extension RDIdentity: SyncItem {
     }
 }
 
+extension RDSnippet: SyncItem {}
+
+extension RDPortForward: SyncItem {}
+
+/// A folder syncs under its name; its id is each device's own.
+extension RDFolder: SyncValue {
+    var content: RDFolder {
+        var copy = self
+        copy.id = UUID(uuid: UUID_NULL)
+        return copy
+    }
+
+    func arriving(over local: RDFolder?) -> RDFolder {
+        var copy = self
+        copy.id = local?.id ?? UUID()
+        return copy
+    }
+}
+
+/// The value of one setting.
+enum SyncSetting: Codable, Sendable, Equatable, SyncValue {
+    case bool(Bool)
+    case int(Int)
+    case string(String)
+    case strings([String])
+}
+
 enum SyncMerge {
     /// A deletion is remembered this long, so a device that was away learns of
     /// it instead of bringing the item back.
     static let tombstoneLifetime: TimeInterval = 180 * 24 * 3600
 
-    struct Result<Value: SyncItem> {
+    struct Result<Value: SyncValue> {
         /// The document's entries after the merge.
         var entries: [String: SyncDocument.Entry<Value>]
         /// What to change on this device.
-        var changes: [SyncChange<Value>] = []
+        var changes: [SyncKeyedChange<Value>] = []
         /// The entries differ from the remote ones and are to be uploaded.
         var dirty = false
+
+        /// The changes to items kept under their id.
+        func itemChanges() -> [SyncChange<Value>] where Value: SyncItem {
+            changes.compactMap { change in
+                switch change {
+                case let .put(_, value): return .put(value)
+                case let .remove(id): return UUID(uuidString: id).map { .remove($0) }
+                }
+            }
+        }
     }
 
     private static let sharedSyncEncoder: JSONEncoder = {
@@ -102,7 +193,7 @@ enum SyncMerge {
 
     private static let hexLookup = Array("0123456789abcdef".utf8)
 
-    static func digest<Value: SyncItem>(_ value: Value) -> String {
+    static func digest<Value: SyncValue>(_ value: Value) -> String {
         let data = (try? sharedSyncEncoder.encode(value.content)) ?? Data()
         let hash = SHA256.hash(data: data)
         var out: [UInt8] = []
@@ -122,6 +213,16 @@ enum SyncMerge {
     ) -> Result<Value> {
         var items: [String: Value] = [:]
         for value in local { items[value.id.uuidString] = value }
+        return reconcile(local: items, state: &state, remote: remote, now: now)
+    }
+
+    static func reconcile<Value: SyncValue>(
+        local: [String: Value],
+        state: inout [String: SyncState.Stamp],
+        remote: [String: SyncDocument.Entry<Value>],
+        now: Date
+    ) -> Result<Value> {
+        var items = local
 
         // What changed here since the last sync: edited or new items, and
         // items that are gone. A change is dated after the one it follows,
@@ -190,7 +291,7 @@ enum SyncMerge {
         return result
     }
 
-    private static func adopt<Value: SyncItem>(
+    private static func adopt<Value: SyncValue>(
         _ theirs: SyncDocument.Entry<Value>,
         _ id: String,
         _ digest: String?,
@@ -201,10 +302,10 @@ enum SyncMerge {
         if let value = theirs.value {
             let arrived = value.arriving(over: items[id])
             items[id] = arrived
-            result.changes.append(.put(arrived))
-        } else if items[id] != nil, let uuid = UUID(uuidString: id) {
+            result.changes.append(.put(id, arrived))
+        } else if items[id] != nil {
             items[id] = nil
-            result.changes.append(.remove(uuid))
+            result.changes.append(.remove(id))
         }
         state[id] = .init(digest: digest, modified: theirs.modified)
     }

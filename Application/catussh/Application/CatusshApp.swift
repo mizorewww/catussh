@@ -205,6 +205,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_: Notification) {
         AppearancePreference.applyStored()
         CatusshTerminalView.setCopyOnSelect(CatusshStore.shared.terminalCopyOnSelect)
+        // The appearance and copy on select may come from another device,
+        // through iCloud.
+        windowObservers.append(
+            NotificationCenter.default.addObserver(forName: CloudSync.settingsDidChange, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated {
+                    AppearancePreference.applyStored()
+                    CatusshTerminalView.setCopyOnSelect(CatusshStore.shared.terminalCopyOnSelect)
+                }
+            }
+        )
         installShortcutMonitor()
         installWindowPolicyObservers()
         MenubarTool.shared.restore()

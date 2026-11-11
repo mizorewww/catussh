@@ -128,6 +128,20 @@ final class ConfigEditorModel: ObservableObject {
             if values.isEmpty { document.overrides.removeValue(forKey: key) } else { document.set(key, values) }
         }
     }
+    /// Takes settings saved on another device (nil removes one): saved at
+    /// once, over what is being edited here, and not undone by Undo.
+    func adopt(_ changes: [String: [String]?]) {
+        var next = document
+        for (key, values) in changes { next.overrides[key] = values }
+        guard next != document || isDirty else { return }
+        pendingSave?.cancel()
+        let fontChanged = next.overrides["font-size"] != saved.overrides["font-size"]
+        document = next
+        if save(), fontChanged {
+            onApplied?(document.overrides["font-size"]?.first.flatMap(Double.init) ?? 14)
+        }
+    }
+
     func importConfig(_ source: String) throws {
         var next = document
         try next.merge(source)

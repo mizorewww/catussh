@@ -24,7 +24,9 @@
 # REQUIRE_NOTARIZATION=1 makes that an error.
 #
 # With a Developer ID provisioning profile for the app (see build-macos.sh;
-# MAC_PROVISIONING_PROFILE names one), the Mac app can sync with iCloud.
+# MAC_PROVISIONING_PROFILE names one), the Mac app can sync with iCloud: the
+# profile grants the key-value store and the keychain access group sync keeps
+# its key in, which the signing below carries over from the build.
 #
 # Other environment overrides:
 #   CODE_SIGN_IDENTITY    Certificate for the Mac app; "-" signs ad hoc, which
