@@ -90,8 +90,8 @@
 		AF9727EF09D086D1697A72D0 /* PortForwardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortForwardView.swift; sourceTree = "<group>"; };
 		AFD2D10B88DFAB8810741350 /* catussh.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = catussh.icon; sourceTree = "<group>"; };
 		B0D3824C11D77DCA5AB0A17F /* FileTransferPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTransferPage.swift; sourceTree = "<group>"; };
-		B686416B9BF772E20E9141A1 /* EULA */ = {isa = PBXFileReference; path = EULA; sourceTree = "<group>"; };
-		B6B1D7BBF2715F710EA328AA /* LICENSE */ = {isa = PBXFileReference; path = LICENSE; sourceTree = "<group>"; };
+		B686416B9BF772E20E9141A1 /* EULA */ = {isa = PBXFileReference; lastKnownFileType = text; path = EULA; sourceTree = "<group>"; };
+		B6B1D7BBF2715F710EA328AA /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
 		CF2FA665652EF4B465127A8B /* RemoteDesktopPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopPage.swift; sourceTree = "<group>"; };
 		D31865414647C869DB65A5EA /* IdentitiesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentitiesView.swift; sourceTree = "<group>"; };
 		D402A322C1664FF4392E0AE2 /* TerminalPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPage.swift; sourceTree = "<group>"; };
@@ -394,11 +394,6 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
-				TargetAttributes = {
-					7745B0B53C43A647CAFC5B29 = {
-						DevelopmentTeam = "";
-					};
-				};
 			};
 			buildConfigurationList = 378D2C8D3FD45B81D17EBFCD /* Build configuration list for PBXProject "catussh" */;
 			developmentRegion = en;
@@ -581,8 +576,10 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = catussh;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = macOS/macOS.entitlements;
-				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = LT98S43NKA;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = macOS/Info.plist;
@@ -595,7 +592,10 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = me.mizorewww.rayon;
 				PRODUCT_NAME = catussh;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 			};
 			name = Release;
@@ -665,8 +665,10 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = catussh;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = macOS/macOS.entitlements;
-				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = LT98S43NKA;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = macOS/Info.plist;
@@ -679,7 +681,10 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = me.mizorewww.rayon.debug;
 				PRODUCT_NAME = catussh;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 			};
 			name = Debug;
