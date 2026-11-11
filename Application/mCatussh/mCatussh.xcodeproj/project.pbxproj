@@ -52,6 +52,8 @@
 		50D77BE727D2F0FB00177190 /* SettingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50D77BE627D2F0FB00177190 /* SettingView.swift */; };
 		50FD853A27D0445D00F6F01A /* EditSnippetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50FD853927D0445D00F6F01A /* EditSnippetView.swift */; };
 		D7DE448E8B49CA07F4E5CDF1 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D04D4885B33AC1EB4C37B541 /* HomeView.swift */; };
+		53172E9598050B2406402427 /* TerminalTabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2D205578BC2973C0F2DE69B /* TerminalTabs.swift */; };
+		057DB022EC2205319E2BF933 /* UURemoteSessionPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F10AFD10AA0032DAD0BB79A /* UURemoteSessionPickerView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -98,6 +100,8 @@
 		50FD853927D0445D00F6F01A /* EditSnippetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditSnippetView.swift; sourceTree = "<group>"; };
 		CCFD19B327EACC54005DF0A6 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		D04D4885B33AC1EB4C37B541 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HomeView.swift; path = mCatussh/Interface/Navigator/HomeView.swift; sourceTree = SOURCE_ROOT; };
+		B2D205578BC2973C0F2DE69B /* TerminalTabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalTabs.swift; sourceTree = "<group>"; };
+		5F10AFD10AA0032DAD0BB79A /* UURemoteSessionPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UURemoteSessionPickerView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -285,6 +289,8 @@
 		50C90B0B27CF18A100F60B51 /* Terminal */ = {
 			isa = PBXGroup;
 			children = (
+				5F10AFD10AA0032DAD0BB79A /* UURemoteSessionPickerView.swift */,
+				B2D205578BC2973C0F2DE69B /* TerminalTabs.swift */,
 				50C90B0E27CF18BD00F60B51 /* TerminalManager.swift */,
 				5082A1CB27D0AC0900C71C0F /* TerminalContext.swift */,
 				50C90B1027CF18C100F60B51 /* TerminalView.swift */,
@@ -381,6 +387,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				057DB022EC2205319E2BF933 /* UURemoteSessionPickerView.swift in Sources */,
+				53172E9598050B2406402427 /* TerminalTabs.swift in Sources */,
 				5082A1DA27D1B79A00C71C0F /* SnippetExecuteView.swift in Sources */,
 				50C90B0227CF146400F60B51 /* SnippetView.swift in Sources */,
 				501B334827DF16AA00EB6261 /* LogView.swift in Sources */,

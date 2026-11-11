@@ -103,6 +103,19 @@ public extension TerminalManager {
         return result
     }
 
+    /// Every terminal as tab groups: one per server, Quick Connect command
+    /// or the local shell, in the order each group's first tab opened.
+    var tabGroups: [[Context]] {
+        var order: [String] = []
+        var groups: [String: [Context]] = [:]
+        for context in sessionContexts {
+            let key = context.tabGroupKey
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(context)
+        }
+        return order.compactMap { groups[$0] }
+    }
+
     /// The panes shown with `focused` in front: its split group's tabs in
     /// order, or the tab alone.
     func visiblePanes(for focused: Context) -> [Context] {
@@ -161,6 +174,16 @@ public extension TerminalManager.Context {
             return all.filter { $0.remoteType == .command && $0.command?.command == command }
         case .local:
             return all.filter { $0.remoteType == .local }
+        }
+    }
+
+    /// Shared by the tabs of one server, one Quick Connect command, or the
+    /// local shell: what `tabSiblings` groups by, as a key.
+    var tabGroupKey: String {
+        switch remoteType {
+        case .machine: return "server:\(machine.id.uuidString)"
+        case .command: return command.map { "command:\($0.command)" } ?? "tab:\(id.uuidString)"
+        case .local: return "local"
         }
     }
 
