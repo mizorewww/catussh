@@ -4,6 +4,9 @@
 //
 //  Created by Lakr Aream on 2022/3/12.
 //
+//  New / Edit Port Forward: Local (-L), Remote (-R) or SOCKS5 (-D); bind
+//  port, the server it goes through, the target, and the equivalent command.
+//
 
 import CatusshModule
 import SwiftUI
@@ -24,129 +27,145 @@ struct EditPortForwardView: View {
         if let edit = requestPortForward {
             let read = CatusshStore.shared.portForwardGroup[edit]
             _forwardOrientation = State(initialValue: read.forwardOrientation)
-            _bindPort = State(initialValue: String(read.bindPort))
+            _bindPort = State(initialValue: read.bindPort > 0 ? String(read.bindPort) : "")
             _targetHost = State(initialValue: read.targetHost)
-            _targetPort = State(initialValue: String(read.targetPort))
+            _targetPort = State(initialValue: read.targetPort > 0 ? String(read.targetPort) : "")
             _usingMachine = State(initialValue: read.usingMachine)
         } else {
             _forwardOrientation = State(initialValue: .listenLocal)
-            _bindPort = State(initialValue: "3000")
+            _bindPort = State(initialValue: "")
             _targetHost = State(initialValue: "127.0.0.1")
-            _targetPort = State(initialValue: "3000")
+            _targetPort = State(initialValue: "")
             _usingMachine = State(initialValue: nil)
         }
     }
 
-    var parsedBindPort: Int? {
-        guard let value = Int(bindPort), (0 ... 65535).contains(value) else { return nil }
-        return value
+    var machines: [RDMachine] {
+        CatusshStore.shared.machineGroup.machines
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    var parsedTargetPort: Int? {
-        guard let value = Int(targetPort), (0 ... 65535).contains(value) else { return nil }
-        return value
+    /// The forward as the form describes it, on top of what is saved.
+    var draft: RDPortForward {
+        var result = inEditWith.map { CatusshStore.shared.portForwardGroup[$0] } ?? RDPortForward()
+        result.forwardOrientation = forwardOrientation
+        result.bindPort = Int(bindPort) ?? 0
+        result.usingMachine = usingMachine
+        result.targetHost = targetHost.trimmingCharacters(in: .whitespaces)
+        result.targetPort = Int(targetPort) ?? 0
+        return result
     }
 
-    var portsValid: Bool {
-        parsedBindPort != nil && parsedTargetPort != nil
-    }
-
-    var generateObject: RDPortForward {
-        RDPortForward(
-            forwardOrientation: forwardOrientation,
-            bindPort: parsedBindPort ?? 0,
-            targetHost: targetHost,
-            targetPort: parsedTargetPort ?? 0,
-            usingMachine: usingMachine
-        )
-    }
-
-    var forwardDescription: String {
-        generateObject.shortDescription()
+    func portError(_ text: String) -> Bool {
+        !text.isEmpty && (UInt16(text) == nil || text == "0")
     }
 
     var body: some View {
         List {
             Section {
-                Picker("Forward Orientation", selection: $forwardOrientation) {
-                    ForEach(RDPortForward.ForwardOrientation.allCases, id: \.self) { acase in
-                        Text(acase.rawValue)
-                            .tag(acase)
-                    }
+                Picker("Orientation", selection: $forwardOrientation) {
+                    Text("Local (-L)").tag(RDPortForward.ForwardOrientation.listenLocal)
+                    Text("Remote (-R)").tag(RDPortForward.ForwardOrientation.listenRemote)
+                    Text("SOCKS5 (-D)").tag(RDPortForward.ForwardOrientation.dynamicSOCKS)
                 }
-                .pickerStyle(MenuPickerStyle())
+                .pickerStyle(.segmented)
             } header: {
                 RXSectionHeader("Orientation")
+            } footer: {
+                Text(forwardOrientation.flowDescription(device: UIDevice.current.userInterfaceIdiom == .pad ? "This iPad" : "This iPhone"))
             }
 
             Section {
-                TextField("Bind Port", text: $bindPort)
+                TextField(forwardOrientation == .dynamicSOCKS ? "1080" : "5433", text: $bindPort)
                     .disableAutocorrection(true)
                     .textInputAutocapitalization(.never)
                     .keyboardType(.numberPad)
-            } header: {
-                RXSectionHeader("Bind Port")
-            }
-
-            Section {
-                TextField("Target Address", text: $targetHost)
-                    .disableAutocorrection(true)
-                    .textInputAutocapitalization(.never)
-                TextField("Target Port", text: $targetPort)
-                    .disableAutocorrection(true)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.numberPad)
-            } header: {
-                RXSectionHeader("Target Host")
-            }
-
-            Section {
-                Button {
-                    Task { @MainActor in
-                        let machine = await CatusshUtil.selectOneMachine()
-                        usingMachine = machine.first
+                    .font(.rxCode)
+                Picker("Forward through", selection: $usingMachine) {
+                    Text("Choose a server").tag(RDMachine.ID?.none)
+                    ForEach(machines) { machine in
+                        Text(machine.name).tag(RDMachine.ID?.some(machine.id))
                     }
-                } label: {
-                    Label("Select Machine", systemImage: "arrow.right")
-                        .foregroundColor(.accentColor)
                 }
             } header: {
-                RXSectionHeader("Machine")
-            }
-
-            Section {} footer: {
-                if portsValid {
-                    Text(forwardDescription)
-                } else {
-                    Text("Ports must be numbers between 0 and 65535")
+                RXSectionHeader("Bind Port")
+            } footer: {
+                if portError(bindPort) {
+                    Text("The port is a number from 1 to 65535.")
                         .foregroundStyle(.rxDanger)
                 }
             }
+
+            if forwardOrientation == .dynamicSOCKS {
+                Section {} footer: {
+                    Text("Runs a local SOCKS5 proxy on 127.0.0.1:\(bindPort.isEmpty ? "1080" : bindPort) that tunnels all connections through the selected server (ssh -D).")
+                }
+            } else {
+                Section {
+                    TextField("127.0.0.1", text: $targetHost)
+                        .disableAutocorrection(true)
+                        .textInputAutocapitalization(.never)
+                        .font(.rxCode)
+                    TextField("Target Port", text: $targetPort)
+                        .disableAutocorrection(true)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.numberPad)
+                        .font(.rxCode)
+                } header: {
+                    RXSectionHeader("Target Host")
+                } footer: {
+                    if portError(targetPort) {
+                        Text("The port is a number from 1 to 65535.")
+                            .foregroundStyle(.rxDanger)
+                    }
+                }
+            }
+
+            Section {
+                CodeBlock(draft.commandPreview)
+                    .opacity(draft.isValid() ? 1 : 0.5)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
+            } header: {
+                RXSectionHeader("Equivalent Command")
+            }
+
+            Section {
+                Button {
+                    save(start: true)
+                } label: {
+                    Label("Save and Start", systemImage: "play.fill")
+                }
+                .disabled(!draft.isValid())
+            }
         }
         .rxGroupedList()
-        .navigationTitle("Edit Forward")
+        .navigationTitle(inEditWith == nil ? "New Port Forward" : "Edit Port Forward")
         .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { dismiss() }
+            }
             ToolbarItem(placement: .confirmationAction) {
                 Button {
-                    completeSheet()
+                    save(start: false)
                 } label: {
                     Text("Save").bold()
                 }
-                .disabled(!portsValid)
+                .disabled(!draft.isValid())
             }
         }
     }
 
-    func completeSheet() {
-        guard portsValid else {
-            UIBridge.presentError(with: "Invalid Port")
+    func save(start: Bool) {
+        let saved = draft
+        guard saved.isValid() else {
+            UIBridge.presentError(with: "Incomplete Forward")
             return
         }
-        var object = generateObject
-        if let edit = inEditWith {
-            object.id = edit
+        CatusshStore.shared.portForwardGroup.insert(saved)
+        if start {
+            PortForwardBackend.shared.createSession(withPortForwardID: saved.id)
         }
-        CatusshStore.shared.portForwardGroup.insert(object)
         dismiss()
     }
 }
