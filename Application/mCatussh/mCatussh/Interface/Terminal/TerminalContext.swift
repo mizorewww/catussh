@@ -61,6 +61,7 @@ final class IOSTerminalUIHandler: TerminalUIHandler {
                 TerminalFocus.shared.bringForward(context)
                 return
             }
+            if SidebarNavigation.shared.open(terminal: context) { return }
             let host = UIHostingController(
                 rootView: TerminalContext.DefaultPresent(context: context)
                     .environmentObject(CatusshStore.shared)

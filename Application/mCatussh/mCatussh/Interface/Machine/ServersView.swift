@@ -279,6 +279,7 @@ enum ServerActions {
             // An existing monitor is brought forward even when sessions do
             // not open automatically; a new one waits for the setting.
             guard existing != nil || CatusshStore.shared.openInterfaceAutomatically else { return }
+            if SidebarNavigation.shared.open(.monitor(session.id)) { return }
             let host = UIHostingController(rootView: DefaultModalPresenter {
                 MonitorView(session: session)
             }.environmentObject(CatusshStore.shared))
@@ -291,13 +292,14 @@ enum ServerActions {
         }
     }
 
-    /// The server's remote desktop in a hosted stage view — full screen on
-    /// iPhone, a large sheet on iPad, like the terminal.
+    /// The server's remote desktop: beside the iPad sidebar, else in a
+    /// hosted stage view (full screen on iPhone), like the terminal.
     @MainActor
     static func openDesktop(_ machine: RDMachine.ID) {
         let existing = RemoteDesktopManager.shared.session(for: machine)
         let session = RemoteDesktopManager.shared.begin(for: machine)
         guard existing != nil || CatusshStore.shared.openInterfaceAutomatically else { return }
+        if SidebarNavigation.shared.open(.desktop(session.id)) { return }
         let host = UIHostingController(rootView: DefaultModalPresenter {
             RemoteDesktopStageView(session: session)
         }.environmentObject(CatusshStore.shared))

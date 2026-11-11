@@ -229,7 +229,7 @@ struct FileTransferView: View {
                 }
                 .disabled(!context.connected)
                 makeFloatingButton("square.and.pencil") {
-                    editing = EditorCenter.shared.workspace(for: context)
+                    show(EditorCenter.shared.workspace(for: context))
                 }
                 .accessibilityLabel("Open Editor")
                 Divider().frame(height: 20)
@@ -295,6 +295,12 @@ struct FileTransferView: View {
     func edit(path: String) {
         let workspace = EditorCenter.shared.workspace(for: context)
         workspace.open(path: path)
+        show(workspace)
+    }
+
+    /// The editor goes beside the iPad sidebar, else over Files.
+    func show(_ workspace: EditorWorkspace) {
+        if SidebarNavigation.shared.open(.editor(workspace.id)) { return }
         editing = workspace
     }
 
@@ -602,6 +608,8 @@ final class IOSFileTransferUIHandler: FileTransferUIHandler {
     }
 
     func autoOpenInterface(_ context: FileTransferContext) {
+        let opened = MainActor.assumeIsolated { SidebarNavigation.shared.open(.transfer(context.id)) }
+        if opened { return }
         let host = UIHostingController(
             rootView: FileTransferContext.DefaultPresent(context: context)
         )

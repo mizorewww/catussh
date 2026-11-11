@@ -25,6 +25,39 @@ struct ContentView: View {
             }
         }
         .tint(.rxAccent)
+        .onAppear { SidebarNavigation.shared.isShown = horizontalSizeClass != .compact }
+        .onChange(of: horizontalSizeClass) { SidebarNavigation.shared.isShown = $0 != .compact }
+    }
+}
+
+/// What the iPad sidebar shows. While the sidebar is on screen, a session
+/// that opens (a terminal, monitor, desktop, file transfer or editor) takes
+/// the space beside it, as on the Mac, instead of a sheet over it; the tab
+/// bar layout still presents them.
+@MainActor
+final class SidebarNavigation: ObservableObject {
+    static let shared = SidebarNavigation()
+
+    @Published var selection: SidebarView.Route? = .home
+    var isShown = false
+    /// The tab a server's terminal page shows in front when it opens.
+    private(set) var terminalFront: [String: TerminalContext.ID] = [:]
+
+    private init() {}
+
+    /// Shows `route` beside the sidebar; false when there is no sidebar and
+    /// the caller is to present the session itself.
+    @discardableResult
+    func open(_ route: SidebarView.Route) -> Bool {
+        guard isShown else { return false }
+        selection = route
+        return true
+    }
+
+    func open(terminal context: TerminalContext) -> Bool {
+        guard isShown else { return false }
+        terminalFront[context.tabGroupKey] = context.id
+        return open(.terminals(context.tabGroupKey))
     }
 }
 
@@ -98,11 +131,11 @@ struct SidebarView: View {
     @ObservedObject var transfers = FileTransferManager.shared
     @ObservedObject var desktops = RemoteDesktopManager.shared
     @ObservedObject var editors = EditorCenter.shared
-    @State private var selection: Route? = .home
+    @ObservedObject var navigation = SidebarNavigation.shared
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selection) {
+            List(selection: $navigation.selection) {
                 Label("Home", systemImage: "house").tag(Route.home)
                 Section("Manage") {
                     row("Servers", "server.rack", .servers, badge: store.machineGroup.count)
@@ -178,7 +211,7 @@ struct SidebarView: View {
     }
 
     @ViewBuilder var detail: some View {
-        switch selection ?? .home {
+        switch navigation.selection ?? .home {
         case .home: HomeView()
         case .servers: ServersView()
         case .identities: IdentityView()
@@ -187,8 +220,12 @@ struct SidebarView: View {
         case .desktops: RemoteDesktopsView()
         case .settings: SettingView()
         case let .terminals(key):
-            // Any tab of the group: the page picks the tab in front itself.
-            if let context = terminals.terminals.first(where: { $0.tabGroupKey == key }) {
+            // The tab just opened, else any tab of the group: the page
+            // keeps track of the tab in front itself.
+            let front = navigation.terminalFront[key]
+            if let context = terminals.terminals.first(where: { $0.id == front && $0.tabGroupKey == key })
+                ?? terminals.terminals.first(where: { $0.tabGroupKey == key })
+            {
                 TerminalView(context: context).id(key)
             } else {
                 sessionGone
@@ -207,7 +244,12 @@ struct SidebarView: View {
             }
         case let .desktop(id):
             if let session = desktops.session(withID: id) {
-                RemoteDesktopStageView(session: session).id(id)
+                // The screen takes the whole detail; its own bar closes it.
+                RemoteDesktopStageView(session: session) {
+                    RemoteDesktopManager.shared.end(session.id)
+                }
+                .toolbar(.hidden, for: .navigationBar)
+                .id(id)
             } else {
                 sessionGone
             }
@@ -224,7 +266,7 @@ struct SidebarView: View {
     /// the dangling selection.
     var sessionGone: some View {
         HomeView()
-            .onAppear { selection = .home }
+            .onAppear { navigation.selection = .home }
     }
 }
 

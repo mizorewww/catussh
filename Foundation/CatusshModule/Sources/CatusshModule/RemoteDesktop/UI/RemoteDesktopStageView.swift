@@ -212,55 +212,76 @@ public struct RemoteDesktopStageView: View {
 
     // MARK: - Control bar
 
+    /// On a touch screen the bar is taller, every control is a finger-sized
+    /// target, and what does not fit scrolls sideways; Connect and Close
+    /// stay at the end either way.
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+        static let barHeight: CGFloat = 48
+        static let controlFont = Font.system(size: 17)
+    #else
+        static let barHeight: CGFloat = 34
+        static let controlFont = Font.system(size: 13)
+    #endif
+
     private var controlBar: some View {
         HStack(spacing: 4) {
-            statusPill
-            Divider().frame(height: 16)
-            Text(metricsText)
-                .font(.rxCaption)
-                .foregroundStyle(Color.rxInkSecondary)
-                .lineLimit(1)
-            Divider().frame(height: 16)
-            if session.displays.count > 1 { displayMenu }
-            if session.protocolType == .uuRemote { qualityMenu }
-            viewOnlyButton
-            specialKeysMenu
-            Button { showsTextInput = true } label: {
-                Label("Type Text", systemImage: "textformat").labelStyle(.iconOnly)
-            }
-            .popover(isPresented: $showsTextInput) { textInputPopover }
-            #if !targetEnvironment(macCatalyst)
-                // A Mac has a keyboard; a touch screen shows one on request.
-                Button { keyboardRequests += 1 } label: {
-                    Label("Software Keyboard", systemImage: "keyboard").labelStyle(.iconOnly)
+            #if os(iOS) && !targetEnvironment(macCatalyst)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) { controls }
                 }
-                .help("Toggle the software keyboard")
+            #else
+                controls
+                Spacer(minLength: 8)
             #endif
-            clipboardMenu
-            Button { session.refresh() } label: {
-                Label("Refresh Screen", systemImage: "arrow.clockwise").labelStyle(.iconOnly)
-            }
-            .help("Ask the host for a full refresh")
-            #if !targetEnvironment(macCatalyst)
-                if session.protocolType == .uuRemote { officialAppMenu }
-            #endif
-            Spacer(minLength: 8)
             connectButton
             if let onClose {
                 Button { onClose() } label: {
-                    Label("Close Session", systemImage: "xmark.circle").labelStyle(.iconOnly)
+                    Label("Close Session", systemImage: "xmark.circle").stageControl()
                 }
                 .help("Close this session")
             }
         }
         .buttonStyle(.borderless)
-        .font(.system(size: 13))
+        .font(Self.controlFont)
         .foregroundStyle(Color.rxInk)
         .padding(.horizontal, 10)
-        .frame(height: 34)
+        .frame(height: Self.barHeight)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.rxSurface)
         .overlay(alignment: .bottom) { Color.rxHairline.frame(height: 1) }
+    }
+
+    @ViewBuilder private var controls: some View {
+        statusPill
+        Divider().frame(height: 16)
+        Text(metricsText)
+            .font(.rxCaption)
+            .foregroundStyle(Color.rxInkSecondary)
+            .lineLimit(1)
+        Divider().frame(height: 16)
+        if session.displays.count > 1 { displayMenu }
+        if session.protocolType == .uuRemote { qualityMenu }
+        viewOnlyButton
+        specialKeysMenu
+        Button { showsTextInput = true } label: {
+            Label("Type Text", systemImage: "textformat").stageControl()
+        }
+        .popover(isPresented: $showsTextInput) { textInputPopover }
+        #if !targetEnvironment(macCatalyst)
+            // A Mac has a keyboard; a touch screen shows one on request.
+            Button { keyboardRequests += 1 } label: {
+                Label("Software Keyboard", systemImage: "keyboard").stageControl()
+            }
+            .help("Toggle the software keyboard")
+        #endif
+        clipboardMenu
+        Button { session.refresh() } label: {
+            Label("Refresh Screen", systemImage: "arrow.clockwise").stageControl()
+        }
+        .help("Ask the host for a full refresh")
+        #if !targetEnvironment(macCatalyst)
+            if session.protocolType == .uuRemote { officialAppMenu }
+        #endif
     }
 
     private var statusPill: some View {
@@ -318,7 +339,7 @@ public struct RemoteDesktopStageView: View {
                 }
             }
         } label: {
-            Label("Display", systemImage: "rectangle.on.rectangle").labelStyle(.iconOnly)
+            Label("Display", systemImage: "rectangle.on.rectangle").stageControl()
         }
         .help("Switch display")
     }
@@ -352,7 +373,7 @@ public struct RemoteDesktopStageView: View {
                 }
             }
         } label: {
-            Label("Quality", systemImage: "slider.horizontal.3").labelStyle(.iconOnly)
+            Label("Quality", systemImage: "slider.horizontal.3").stageControl()
         }
         .help("Frame rate and image quality")
     }
@@ -407,7 +428,7 @@ public struct RemoteDesktopStageView: View {
                 Button("Backspace") { send(RemoteDesktopSpecialKeys.click(RemoteDesktopSpecialKeys.backspace)) }
             }
         } label: {
-            Label("Send Keys", systemImage: "command").labelStyle(.iconOnly)
+            Label("Send Keys", systemImage: "command").stageControl()
         }
         .help("Send a special key the local keyboard can not reach")
     }
@@ -418,7 +439,7 @@ public struct RemoteDesktopStageView: View {
 
     private var viewOnlyButton: some View {
         Button { session.viewOnly.toggle() } label: {
-            Label(session.viewOnly ? "View Only" : "Control", systemImage: session.viewOnly ? "eye" : "cursorarrow.motionlines").labelStyle(.iconOnly)
+            Label(session.viewOnly ? "View Only" : "Control", systemImage: session.viewOnly ? "eye" : "cursorarrow.motionlines").stageControl()
                 .foregroundStyle(session.viewOnly ? Color.rxAccent : Color.rxInk)
         }
         .help(session.viewOnly ? "View only: input stays local. Click to take control" : "Watch without sending mouse or keys")
@@ -449,7 +470,7 @@ public struct RemoteDesktopStageView: View {
                 Label("Pull remote clipboard", systemImage: "clipboard")
             }
         } label: {
-            Label("Clipboard", systemImage: "clipboard").labelStyle(.iconOnly)
+            Label("Clipboard", systemImage: "clipboard").stageControl()
         }
         .help("Clipboard sync")
     }
@@ -484,7 +505,7 @@ public struct RemoteDesktopStageView: View {
             }
             #endif
         } label: {
-            Label("Official App", systemImage: "pip").labelStyle(.iconOnly)
+            Label("Official App", systemImage: "pip").stageControl()
         }
         .help("Hand off to the official UU Remote app")
     }
@@ -493,12 +514,12 @@ public struct RemoteDesktopStageView: View {
         Group {
             if session.phase.isTerminal || session.phase == .idle {
                 Button { session.connect() } label: {
-                    Label("Connect", systemImage: "play.circle").labelStyle(.iconOnly)
+                    Label("Connect", systemImage: "play.circle").stageControl()
                 }
                 .help("Connect")
             } else {
                 Button { session.disconnect() } label: {
-                    Label("Disconnect", systemImage: "stop.circle").labelStyle(.iconOnly)
+                    Label("Disconnect", systemImage: "stop.circle").stageControl()
                 }
                 .help("Disconnect")
             }
@@ -536,6 +557,20 @@ public struct RemoteDesktopStageView: View {
                 if toast == message { toast = nil }
             }
         }
+    }
+}
+
+private extension Label {
+    /// An icon-only control of the stage's bar; on a touch screen it takes a
+    /// 44-point square, however small the symbol.
+    func stageControl() -> some View {
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+            labelStyle(.iconOnly)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        #else
+            labelStyle(.iconOnly)
+        #endif
     }
 }
 
