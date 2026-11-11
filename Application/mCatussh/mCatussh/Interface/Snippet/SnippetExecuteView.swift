@@ -4,174 +4,218 @@
 //
 //  Created by Lakr Aream on 2022/3/4.
 //
+//  Running one snippet on several servers, on the shared
+//  BatchSnippetExecContext like the Mac's BatchRunSheet: per-server state
+//  and time (Done `success`, Running `accent`, Failed `danger`), that
+//  server's output, overall progress, Stop and Done. The servers sit beside
+//  the output on iPad and above it on iPhone.
+//
 
-import NSRemoteShell
 import CatusshModule
-import SwiftUI
 import CatusshTerminal
+import Combine
+import SwiftUI
 
 struct SnippetExecuteView: View {
-    @ObservedObject var context: SnippetExecuteContext
+    let snippet: RDSnippet
+    let machines: [RDMachine.ID]
+
+    @StateObject private var context: BatchSnippetExecContext
+    @State private var selection: RDMachine.ID?
+    @State private var tick = Date()
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    @State var widthInstructor: CGSize = .init()
+    private let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
-    var terminalWidth: CGFloat {
-        if context.machineGroup.count == 1 {
-            return CGFloat(widthInstructor.width)
+    init(snippet: RDSnippet, machines: [RDMachine.ID]) {
+        self.snippet = snippet
+        self.machines = machines
+        _context = StateObject(wrappedValue: BatchSnippetExecContext(snippet: snippet, machines: machines))
+        _selection = State(initialValue: machines.first)
+    }
+
+    var completedCount: Int { context.completedCount }
+    var finished: Bool { completedCount >= machines.count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: RX.Space.s3) {
+            if horizontalSizeClass == .compact {
+                serverList
+                    .frame(maxHeight: 180)
+                output
+            } else {
+                HStack(alignment: .top, spacing: RX.Space.s3) {
+                    serverList
+                        .frame(width: 240)
+                    output
+                }
+            }
+            RXProgressBar(machines.isEmpty ? 1 : Double(completedCount) / Double(machines.count))
+            Text("\(completedCount) of \(machines.count) finished")
+                .font(.footnote.monospacedDigit())
+                .foregroundStyle(.rxInkSecondary)
         }
-        if widthInstructor.width < 300 {
-            return 250
+        .padding(RX.Space.s4)
+        .background(RXBackdrop().ignoresSafeArea())
+        .navigationTitle("Run \(snippet.name)")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !finished {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Stop") { context.stopAll() }
+                }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button {
+                    done()
+                } label: {
+                    Text("Done").bold()
+                }
+            }
         }
-        if widthInstructor.width > 500 {
-            return 500
+        .onAppear { context.start() }
+        .onReceive(timer) { date in
+            if !finished { tick = date }
         }
-        return CGFloat(widthInstructor.width)
+    }
+
+    func done() {
+        if finished {
+            dismiss()
+            return
+        }
+        UIBridge.requiresConfirmation(
+            message: "Stop running \(snippet.name)?",
+            confirmTitle: "Stop and Close"
+        ) { confirmed in
+            guard confirmed else { return }
+            context.stopAll()
+            dismiss()
+        }
+    }
+
+    var serverList: some View {
+        ScrollView {
+            VStack(spacing: 2) {
+                ForEach(machines, id: \.self) { machine in
+                    let state = context.state(for: machine)
+                    Button {
+                        selection = machine
+                    } label: {
+                        HStack(spacing: RX.Space.s2) {
+                            stateLabel(state)
+                                .frame(width: 18)
+                            Text(context.names[machine] ?? "Unknown server")
+                                .font(.rxBody)
+                                .foregroundStyle(.rxInk)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(duration(state))
+                                .font(.footnote.monospacedDigit())
+                                .foregroundStyle(.rxInkSecondary)
+                        }
+                        .padding(.horizontal, RX.Space.s2)
+                        .frame(minHeight: 36)
+                        .background(
+                            RoundedRectangle(cornerRadius: RX.Radius.md, style: .continuous)
+                                .fill(selection == machine ? Color.rxAccent.opacity(0.15) : Color.clear)
+                        )
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        if !state.isFinished {
+                            Button(role: .destructive) {
+                                context.stop(machine: machine)
+                            } label: {
+                                Label("Stop", systemImage: "stop.circle")
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(RX.Space.s2)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: RX.Radius.lg, style: .continuous)
+                .fill(.regularMaterial)
+        )
+    }
+
+    @ViewBuilder
+    func stateLabel(_ state: BatchSnippetExecContext.MachineState) -> some View {
+        switch state {
+        case .waiting: Image(systemName: "circle.dashed").foregroundStyle(.rxInkSecondary).accessibilityLabel("Waiting")
+        case .running: ProgressView().controlSize(.small)
+        case .done: Image(systemName: "checkmark").foregroundStyle(.rxSuccess).accessibilityLabel("Done")
+        case .failed: Image(systemName: "xmark").foregroundStyle(.rxDanger).accessibilityLabel("Failed")
+        }
+    }
+
+    func duration(_ state: BatchSnippetExecContext.MachineState) -> String {
+        let seconds: TimeInterval
+        switch state {
+        case .waiting: return ""
+        case let .running(since): seconds = tick.timeIntervalSince(since)
+        case let .done(duration), let .failed(duration): seconds = duration
+        }
+        return String(format: "%.1f s", max(0, seconds))
+    }
+
+    @ViewBuilder var output: some View {
+        ZStack {
+            ForEach(machines, id: \.self) { machine in
+                BatchOutputView(machine: machine, isSelected: selection == machine)
+                    .opacity(selection == machine ? 1 : 0)
+                    .allowsHitTesting(selection == machine)
+            }
+        }
+        .padding(RX.Space.s2)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: RX.Radius.md, style: .continuous)
+                .fill(Color.rxTerminalBackground)
+        )
+        .environmentObject(context)
+    }
+}
+
+/// One server's output in a terminal surface.
+private struct BatchOutputView: View {
+    let machine: RDMachine.ID
+    let isSelected: Bool
+    @EnvironmentObject var context: BatchSnippetExecContext
+
+    private let timer = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
+    @State private var terminalId = UUID()
+    @State private var terminalView: CatusshTerminalView = {
+        let view = CatusshTerminalView()
+        view.setTerminalFontSize(with: CatusshStore.shared.terminalFontSize)
+        return view
+    }()
+
+    @State private var drainedAfterFinish = false
+
+    private func flushPending() {
+        let incoming = context.requestBuffer(for: terminalId, machine: machine)
+        if !incoming.isEmpty {
+            terminalView.write(incoming)
+        }
+        if context.state(for: machine).isFinished {
+            drainedAfterFinish = true
+        }
     }
 
     var body: some View {
-        Group {
-            if context.interfaceAllocated {
-                contentView
-            } else {
-                ProgressView().expended()
+        terminalView
+            .onAppear { flushPending() }
+            .onChange(of: isSelected) { selected in
+                if selected { flushPending() }
             }
-        }
-        .padding(.horizontal)
-        .padding(.bottom)
-        .onAppear {
-            guard !context.interfaceAllocated else {
-                return
+            .onReceive(timer) { _ in
+                guard isSelected || !drainedAfterFinish else { return }
+                flushPending()
             }
-            context.beginBootstrap()
-        }
-        .navigationTitle("Snippet - " + context.snippet.name)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            Button {
-                if context.running.isEmpty {
-                    dismiss()
-                    return
-                } else {
-                    UIBridge.requiresConfirmation(
-                        message: "Process in progress, terminate them all?"
-                    ) { yes in
-                        if yes {
-                            for machine in context.machineGroup {
-                                context.close(for: machine.id)
-                            }
-                            dismiss()
-                        }
-                    }
-                }
-            } label: {
-                Label("Terminate", systemImage: "xmark")
-            }
-        }
-    }
-
-    var contentView: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            GeometryReader { r in
-                ScrollView(.horizontal) {
-                    HStack(spacing: 10) {
-                        ForEach(0 ..< context.machineGroup.count, id: \.self) { idx in
-                            makeView(for: idx)
-                        }
-                    }
-                }
-                .onChange(of: r.size) { newValue in
-                    widthInstructor = newValue
-                }
-            }
-            .expended()
-        }
-    }
-
-    var header: some View {
-        Group {
-            VStack(alignment: .leading, spacing: 5) {
-                if context.running.isEmpty {
-                    Image(
-                        systemName: context.hasError
-                            ? "checkmark.circle.trianglebadge.exclamationmark" : "checkmark.circle.fill"
-                    )
-                    .foregroundColor(
-                        context.hasError
-                            ? .orange : .green
-                    )
-                    .font(.system(.headline, design: .rounded))
-                    .frame(maxWidth: .infinity)
-                } else {
-                    runningItems
-                }
-                ProgressView(
-                    context.running.isEmpty ? "Execution Complete" : "Execution In Progress",
-                    value: context.completedProgress,
-                    total: context.totalProgress
-                )
-                .animation(.interactiveSpring(), value: context.completedProgress)
-                .font(.system(.headline, design: .rounded))
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .animation(.interactiveSpring(), value: context.running)
-        .padding()
-        .background(
-            Color(UIColor.systemGray6)
-                .cornerRadius(8)
-        )
-    }
-
-    var runningItems: some View {
-        HStack(spacing: 2) {
-            Image(systemName: "play.fill")
-            Spacer()
-                .frame(width: 2, height: 0)
-            ScrollView(.horizontal) {
-                HStack(spacing: 2) {
-                    ForEach(context.running) { machine in
-                        Text(machine.name)
-                            .padding(4)
-                            .background(
-                                Color.accentColor
-                                    .opacity(0.1)
-                                    .cornerRadius(4)
-                            )
-                            .padding(4)
-                    }
-                }
-            }
-            Text("\(context.running.count)")
-        }
-        .animation(.interactiveSpring(), value: context.running)
-        .font(.system(.subheadline, design: .rounded))
-    }
-
-    func makeView(for idx: Int) -> some View {
-        VStack(alignment: .center, spacing: 8) {
-            HStack {
-                Label(context.machineGroup[idx].name, systemImage: "arrow.right")
-                    .font(.system(.headline, design: .rounded))
-                Spacer()
-                Button {
-                    context.close(for: context.machineGroup[idx].id)
-                } label: {
-                    Image(systemName: "xmark")
-                        .foregroundColor(.red)
-                }
-                .disabled(context.completed.contains(context.machineGroup[idx]))
-            }
-            Divider()
-            context.terminalGroup[idx]
-        }
-        .expended()
-        .padding(12)
-        .background(
-            Color(UIColor.systemGray6)
-                .cornerRadius(8)
-        )
-        .frame(width: terminalWidth)
     }
 }

@@ -52,6 +52,7 @@ struct SnippetElementView: View {
                     Button {
                         var copy = snippet
                         copy.id = .init()
+                        copy.name += " copy"
                         store.snippetGroup.insert(copy)
                     } label: {
                         Label("Duplicate", systemImage: "plus.square.on.square")

@@ -12,9 +12,17 @@ struct SnippetView: View {
     @EnvironmentObject var store: CatusshStore
     @State private var searchKey = ""
     @State private var openCreate = false
+    @State private var groupFilter: String?
+
+    var groupNames: [String] {
+        Set(store.snippetGroup.snippets.map(\.group)).filter { !$0.isEmpty }.sorted()
+    }
 
     var filtered: [RDSnippet] {
-        let all = store.snippetGroup.snippets.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        var all = store.snippetGroup.snippets.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        if let groupFilter {
+            all = all.filter { $0.group == groupFilter }
+        }
         guard !searchKey.isEmpty else { return all }
         return all.filter { $0.isQualifiedForSearch(text: searchKey.lowercased()) }
     }
@@ -46,13 +54,28 @@ struct SnippetView: View {
         }
         .navigationTitle("Snippets")
         .toolbar {
-            ToolbarItem {
+            ToolbarItemGroup {
+                if !groupNames.isEmpty {
+                    Menu {
+                        Picker("Group", selection: $groupFilter) {
+                            Text("All Groups").tag(String?.none)
+                            ForEach(groupNames, id: \.self) { Text($0).tag(String?.some($0)) }
+                        }
+                    } label: {
+                        Label("Filter by Group", systemImage: groupFilter == nil
+                            ? "line.3.horizontal.decrease.circle"
+                            : "line.3.horizontal.decrease.circle.fill")
+                    }
+                }
                 Button {
                     openCreate = true
                 } label: {
                     Label("New Snippet", systemImage: "plus")
                 }
             }
+        }
+        .onChange(of: groupNames) { names in
+            if let groupFilter, !names.contains(groupFilter) { self.groupFilter = nil }
         }
         .sheet(isPresented: $openCreate) {
             NavigationStack { EditSnippetView() }

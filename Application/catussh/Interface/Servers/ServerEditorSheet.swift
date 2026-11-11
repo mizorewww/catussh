@@ -7,7 +7,6 @@
 //  start folder; Comment; Last banner (read-only, captured on connect).
 //
 
-import NSRemoteShell
 import CatusshModule
 import SwiftUI
 
@@ -399,33 +398,17 @@ struct ServerEditorSheet: View {
         let chosen = identity.map { store.identityGroup[$0] }
         let candidates = store.identityGroupForAutoAuth
         DispatchQueue.global().async {
-            let shell = NSRemoteShell.configured(for: draft, timeout: CatusshStore.shared.timeoutNumber)
-            shell.requestConnectAndWait()
-            guard shell.isConnected else {
-                let refusal = shell.connectFailureReason
-                onMainThread {
-                    connecting = false
-                    error = refusal ?? "Could not reach \(host) on port \(port)."
-                }
-                return
-            }
-            var authenticatedWith: RDIdentity.ID?
-            if let chosen {
-                chosen.callAuthenticationWith(remote: shell)
-                if shell.isAuthenticated { authenticatedWith = chosen.id }
-            } else {
-                for candidate in candidates {
-                    if shell.isAuthenticated { break }
-                    if !shell.isConnected { shell.requestConnectAndWait() }
-                    candidate.callAuthenticationWith(remote: shell)
-                    if shell.isAuthenticated { authenticatedWith = candidate.id }
-                }
-            }
-            let banner = shell.remoteBanner ?? ""
-            shell.requestDisconnectAndWait()
+            let outcome = ServerConnectionCheck.run(
+                draft,
+                identity: chosen,
+                candidates: candidates,
+                timeout: CatusshStore.shared.timeoutNumber
+            )
             onMainThread {
                 connecting = false
-                if let authenticatedWith {
+                if case let .unreachable(refusal) = outcome {
+                    error = refusal ?? "Could not reach \(host) on port \(port)."
+                } else if case let .authenticated(authenticatedWith, banner) = outcome {
                     finishCreation(banner: banner, identity: authenticatedWith)
                 } else if chosen != nil {
                     error = "The selected identity could not sign in to \(host)."

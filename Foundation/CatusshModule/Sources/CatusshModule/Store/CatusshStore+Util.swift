@@ -359,9 +359,12 @@ public extension CatusshStore {
 
     /// Parses an OpenSSH `~/.ssh/config` text and imports any non-wildcard `Host` entries
     /// (along with referenced `IdentityFile` keys and `ProxyJump` links).
+    /// `keyDirectory` is where to look for a key, by its file name, when its
+    /// path cannot be read: on iOS, the `.ssh` folder the person picked, since
+    /// the home folder there is the app's own container.
     @MainActor
     @discardableResult
-    func importOpenSSHConfig(_ text: String, baseDirectory: URL? = nil) -> (importedServers: Int, importedIdentities: Int) {
+    func importOpenSSHConfig(_ text: String, baseDirectory: URL? = nil, keyDirectory: URL? = nil) -> (importedServers: Int, importedIdentities: Int) {
         struct RawHostBlock {
             var aliases: [String] = []
             var hostName: String?
@@ -434,9 +437,13 @@ public extension CatusshStore {
                         } else {
                             fileURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".ssh").appendingPathComponent(expanded)
                         }
-                        if let priv = try? String(contentsOf: fileURL, encoding: .utf8), RDIdentity.looksLikePrivateKey(priv) {
+                        var keyURL = fileURL
+                        if let keyDirectory, !FileManager.default.isReadableFile(atPath: keyURL.path) {
+                            keyURL = keyDirectory.appendingPathComponent(fileURL.lastPathComponent)
+                        }
+                        if let priv = try? String(contentsOf: keyURL, encoding: .utf8), RDIdentity.looksLikePrivateKey(priv) {
                             loadedPriv = priv
-                            let pubURL = URL(fileURLWithPath: fileURL.path + ".pub")
+                            let pubURL = URL(fileURLWithPath: keyURL.path + ".pub")
                             if let pub = try? String(contentsOf: pubURL, encoding: .utf8) {
                                 loadedPub = pub
                             }

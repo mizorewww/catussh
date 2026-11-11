@@ -2,7 +2,8 @@
 //  ServersView.swift
 //  mCatussh
 //
-//  Servers grouped, with redaction and Batch Startup.
+//  Servers in their folders, with redaction, folders, ssh_config import and
+//  Batch Startup.
 //
 
 import MachineStatusView
@@ -15,6 +16,7 @@ struct ServersView: View {
     @State private var searchKey = ""
     @State private var openNewServer = false
     @State private var editing: RDMachine.ID?
+    @State private var sshConfigSource: SSHConfigSource?
 
     var filtered: [RDMachine] {
         let all = store.machineGroup.machines
@@ -22,20 +24,23 @@ struct ServersView: View {
         return all.filter { $0.isQualifiedForSearch(text: searchKey.lowercased()) }
     }
 
+    /// The folders in order, Default last; empty folders only while not
+    /// searching.
     var groups: [(name: String, machines: [RDMachine])] {
-        let names = Set(filtered.map(\.group)).sorted { lhs, rhs in
-            if lhs.isEmpty { return false }
-            if rhs.isEmpty { return true }
-            return lhs.localizedStandardCompare(rhs) == .orderedAscending
-        }
-        return names.map { name in
-            (name, filtered.filter { $0.group == name }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending })
+        let machines = filtered
+        var names = store.folders.map(\.name)
+        if machines.contains(where: { $0.group.isEmpty }) { names.append("") }
+        return names.compactMap { name in
+            let inside = machines.filter { $0.group == name }
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            if inside.isEmpty, !searchKey.isEmpty { return nil }
+            return (name, inside)
         }
     }
 
     var body: some View {
         Group {
-            if store.machineGroup.machines.isEmpty {
+            if store.machineGroup.machines.isEmpty, store.folders.isEmpty {
                 EmptyStateView(
                     "No servers yet",
                     systemImage: "server.rack",
@@ -63,12 +68,18 @@ struct ServersView: View {
                     }
                     ForEach(groups, id: \.name) { group in
                         Section {
+                            if group.machines.isEmpty {
+                                Text(store.folder(named: group.name)?.isLinked == true ? "No desktop devices on the account" : "Empty — move servers here from their menu")
+                                    .font(.footnote)
+                                    .foregroundStyle(.rxInkSecondary)
+                                    .rxListRow()
+                            }
                             ForEach(group.machines) { machine in
                                 ServerListRow(machine: machine.id, edit: { editing = machine.id })
                                     .rxListRow()
                             }
                         } header: {
-                            RXSectionHeader(group.name.isEmpty ? "Default" : group.name)
+                            FolderSectionHeader(name: group.name, count: group.machines.count)
                         }
                     }
                 }
@@ -87,6 +98,13 @@ struct ServersView: View {
                     }
                     Divider()
                     Button {
+                        FolderActions.newFolder()
+                    } label: {
+                        Label("New Folder…", systemImage: "folder.badge.plus")
+                    }
+                    SSHConfigImportMenuItems(source: $sshConfigSource)
+                    Divider()
+                    Button {
                         ServerActions.batchStartup()
                     } label: {
                         Label("Batch Startup", systemImage: "wind")
@@ -102,6 +120,7 @@ struct ServersView: View {
                 }
             }
         }
+        .sshConfigImporter($sshConfigSource)
         .sheet(isPresented: $openNewServer) {
             NavigationStack { EditMachineView() }
         }
@@ -130,10 +149,17 @@ struct ServerListRow: View {
                     RedactableText(read.name, redacted: store.machineRedacted == .all)
                         .foregroundStyle(.rxInk)
                         .lineLimit(1)
-                    RedactableText("\(read.remoteAddress):\(read.remotePort)", redacted: store.machineRedacted != .none)
-                        .font(.rxCode)
-                        .foregroundStyle(.rxInkSecondary)
-                        .lineLimit(1)
+                    if read.isUURemoteDevice {
+                        Text("UU Remote")
+                            .font(.footnote)
+                            .foregroundStyle(.rxInkSecondary)
+                    } else {
+                        RedactableText(read.displayAddress, redacted: store.machineRedacted != .none)
+                            .font(.rxCode)
+                            .foregroundStyle(.rxInkSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                 }
                 Spacer()
                 if let session = monitors.session(for: machine) {
@@ -174,7 +200,8 @@ private struct ServerRowState: View {
     }
 }
 
-/// Open Terminal, Monitor, File Transfer; Edit, Duplicate, Copy; Delete.
+/// Open Terminal, Monitor, File Transfer; Edit, Move to Folder, Duplicate,
+/// Copy, Forget Host Key, Check Terminfo Again; Delete.
 struct ServerMenuItems: View {
     let machine: RDMachine.ID
     var edit: (() -> Void)?
@@ -206,16 +233,33 @@ struct ServerMenuItems: View {
             if let edit {
                 Button(action: edit) { Label("Edit", systemImage: "pencil") }
             }
+            MoveToFolderMenu(machine: machine)
             Button { ServerActions.duplicate(machine) } label: {
                 Label("Duplicate", systemImage: "plus.square.on.square")
             }
-            Button {
-                UIBridge.sendPasteboard(str: CatusshStore.shared.machineGroup[machine].getCommand())
-            } label: {
-                Label("Copy SSH Command", systemImage: "doc.on.doc")
+        }
+        Section {
+            let read = CatusshStore.shared.machineGroup[machine]
+            if read.isUURemoteDevice {
+                // Its address is the device id; no ssh command reaches it.
+                Button { UIBridge.sendPasteboard(str: read.uuDeviceID) } label: {
+                    Label("Copy Device ID", systemImage: "doc.on.doc")
+                }
+            } else {
+                Button { UIBridge.sendPasteboard(str: "\(read.remoteAddress):\(read.remotePort)") } label: {
+                    Label("Copy Address", systemImage: "doc.on.doc")
+                }
+                Button { UIBridge.sendPasteboard(str: read.getCommand()) } label: {
+                    Label("Copy SSH Command", systemImage: "chevron.left.forwardslash.chevron.right")
+                }
             }
             Button { ServerActions.forgetHostKey(machine) } label: {
                 Label("Forget Host Key", systemImage: "key.slash")
+            }
+            if read.hasGhosttyTerminfo {
+                Button { ServerActions.reinstallTerminfo(machine) } label: {
+                    Label("Check Terminfo Again", systemImage: "arrow.triangle.2.circlepath")
+                }
             }
         }
         Section {
@@ -282,10 +326,24 @@ enum ServerActions {
         }
     }
 
+    /// The next terminal checks the server for Ghostty's terminfo again and
+    /// installs it if it is missing (say, after ~/.terminfo was cleared).
+    @MainActor
+    static func reinstallTerminfo(_ machine: RDMachine.ID) {
+        var read = CatusshStore.shared.machineGroup[machine]
+        guard read.isNotPlaceholder() else { return }
+        read.forgetGhosttyTerminfo()
+        CatusshStore.shared.machineGroup[machine] = read
+    }
+
     @MainActor
     static func delete(_ machine: RDMachine.ID) {
         let name = CatusshStore.shared.machineGroup[machine].name
-        UIBridge.requiresConfirmation(message: "Delete \(name)?") { confirmed in
+        UIBridge.requiresConfirmation(
+            message: "Delete \(name)?",
+            informative: "Port forwards through it stop working.",
+            confirmTitle: "Delete"
+        ) { confirmed in
             guard confirmed else { return }
             if let session = MonitorCenter.shared.session(for: machine) {
                 MonitorCenter.shared.end(session.id)
@@ -303,5 +361,12 @@ enum ServerActions {
                 TerminalManager.shared.begin(for: machine, force: true)
             }
         }
+    }
+}
+
+private extension RDMachine {
+    /// host, or host:port when the port is not 22.
+    var displayAddress: String {
+        remotePort.isEmpty || remotePort == "22" ? remoteAddress : "\(remoteAddress):\(remotePort)"
     }
 }

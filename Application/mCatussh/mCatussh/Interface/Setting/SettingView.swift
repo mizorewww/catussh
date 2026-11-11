@@ -31,7 +31,7 @@ struct SettingView: View {
                 ConfigHostSettingsSection(id: "general.sync", keywords: "icloud sync cloud encrypted passphrase servers identities credentials devices") {
                     CloudSyncSettings()
                 },
-                ConfigHostSettingsSection(id: "general.data", keywords: "data container files log diagnostics") {
+                ConfigHostSettingsSection(id: "general.data", keywords: "data container files log diagnostics backup export import restore ssh config openssh archive") {
                     DataSettings()
                 },
                 ConfigHostSettingsSection(id: "connection.ssh", keywords: "ssh timeout connect wait host key known hosts fingerprint") {
@@ -161,6 +161,7 @@ private struct DataSettings: View {
 
     var body: some View {
         RXDividedStack {
+            DataBackupRows()
             RXFormRow("App container", description: "Files the app keeps, in the Files app.") {
                 Button("Show") { UIBridge.openFileContainer() }
                     .buttonStyle(.rx(size: .small))
