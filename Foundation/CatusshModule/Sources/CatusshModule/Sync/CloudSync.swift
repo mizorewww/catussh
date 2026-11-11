@@ -225,9 +225,14 @@ public final class CloudSync: ObservableObject {
         .store(in: &observers)
         // Settings live in the user defaults, or are written there soon after
         // they change; @Published says so before the value is set. Either
-        // way, they are looked at once the change is in place.
+        // way, they are looked at once the change is in place. The store
+        // writes the defaults on a queue of its own, so the notification is
+        // brought to the main thread before any closure here, all of which
+        // belong to the main actor, sees it.
         Publishers.MergeMany(
-            NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification).map { _ in () }
+            NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+                .receive(on: DispatchQueue.main)
+                .map { _ in () }
                 .eraseToAnyPublisher(),
             store.$machineRedacted.map { _ in () }.eraseToAnyPublisher(),
             store.$openInterfaceAutomatically.map { _ in () }.eraseToAnyPublisher()
