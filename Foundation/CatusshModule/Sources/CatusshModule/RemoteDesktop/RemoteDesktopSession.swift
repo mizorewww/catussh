@@ -112,21 +112,32 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
     // MARK: - Input (called by the stage view)
 
     public func pointerMoved(normalizedX: Double, normalizedY: Double) {
-        guard acceptsInput else { return }
-        lastPointer = (normalizedX, normalizedY)
-        driver?.sendPointerMove(normalizedX: normalizedX, normalizedY: normalizedY)
+        guard acceptsInput, let (x, y) = Self.onScreen(normalizedX, normalizedY) else { return }
+        lastPointer = (x, y)
+        driver?.sendPointerMove(normalizedX: x, normalizedY: y)
     }
 
     public func pointerButton(_ button: MouseButton, isDown: Bool, normalizedX: Double, normalizedY: Double) {
         guard acceptsInput else { return }
-        lastPointer = (normalizedX, normalizedY)
+        // A position that is no number keeps the last one: a release must
+        // still go out.
+        let (x, y) = Self.onScreen(normalizedX, normalizedY) ?? lastPointer
+        lastPointer = (x, y)
         if isDown { pressedButtons.insert(button) } else { pressedButtons.remove(button) }
-        driver?.sendPointerButton(button, isDown: isDown, normalizedX: normalizedX, normalizedY: normalizedY)
+        driver?.sendPointerButton(button, isDown: isDown, normalizedX: x, normalizedY: y)
     }
 
     public func scrolled(deltaX: Double, deltaY: Double, normalizedX: Double, normalizedY: Double) {
-        guard acceptsInput else { return }
-        driver?.sendScroll(deltaX: deltaX, deltaY: deltaY, normalizedX: normalizedX, normalizedY: normalizedY)
+        guard acceptsInput, deltaX.isFinite, deltaY.isFinite, deltaX != 0 || deltaY != 0 else { return }
+        let (x, y) = Self.onScreen(normalizedX, normalizedY) ?? lastPointer
+        driver?.sendScroll(deltaX: deltaX, deltaY: deltaY, normalizedX: x, normalizedY: y)
+    }
+
+    /// A normalized position clamped onto the screen; nil when it is no
+    /// number at all, which no driver may be handed (VNC traps on it).
+    nonisolated static func onScreen(_ x: Double, _ y: Double) -> (x: Double, y: Double)? {
+        guard x.isFinite, y.isFinite else { return nil }
+        return (min(max(x, 0), 1), min(max(y, 0), 1))
     }
 
     public func keyPressed(keyCode: UInt16, keySym: UInt32?, characters: String, isDown: Bool) {

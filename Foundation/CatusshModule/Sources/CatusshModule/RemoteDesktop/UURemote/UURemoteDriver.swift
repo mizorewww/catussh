@@ -152,11 +152,28 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     /// SimpleAction / RpcRequest control messages.
     public func sendPointerMove(normalizedX: Double, normalizedY: Double) {
         guard controlChannelOpen else { return }
-        sendControlChannel(UUControlProtocol.mouseMoveAbsolute(x: normalizedX, y: normalizedY))
+        movePointer(normalizedX, normalizedY)
+    }
+
+    /// Where the pointer was last sent. Buttons and the wheel carry no
+    /// position on the wire: a press where no move went first (a finger or
+    /// pencil touching down) is preceded by one.
+    private var sentPointer: (x: Double, y: Double)?
+
+    private func movePointer(_ x: Double, _ y: Double) {
+        guard x.isFinite, y.isFinite else { return }
+        sentPointer = (x, y)
+        sendControlChannel(UUControlProtocol.mouseMoveAbsolute(x: x, y: y), kind: .pointerMove)
+    }
+
+    private func pointerAt(_ x: Double, _ y: Double) {
+        if let sentPointer, sentPointer.x == x, sentPointer.y == y { return }
+        movePointer(x, y)
     }
 
     public func sendPointerButton(_ button: MouseButton, isDown: Bool, normalizedX: Double, normalizedY: Double) {
         guard controlChannelOpen else { return }
+        pointerAt(normalizedX, normalizedY)
         let uuButton: UUControlProtocol.Button = switch button {
         case .left: .left
         case .middle: .middle
@@ -164,7 +181,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         case .back: .back
         case .forward: .forward
         }
-        sendControlChannel(UUControlProtocol.mouseButton(uuButton, isDown: isDown))
+        sendControlChannel(UUControlProtocol.mouseButton(uuButton, isDown: isDown), kind: .input)
     }
 
     public func sendScroll(deltaX: Double, deltaY: Double, normalizedX: Double, normalizedY: Double) {
@@ -172,7 +189,11 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         // Upstream feeds browser wheel deltas (~±60 per notch at desktop
         // scale); our contract is wheel ticks, so scale a notch back out.
         // Positive `delta_y` scrolls up on both sides of the wire.
-        sendControlChannel(UUControlProtocol.mouseScroll(dx: Int32(deltaX * 60), dy: Int32(deltaY * 60)))
+        guard deltaX.isFinite, deltaY.isFinite else { return }
+        pointerAt(normalizedX, normalizedY)
+        let dx = Int32(clamping: Int((deltaX * 60).rounded()))
+        let dy = Int32(clamping: Int((deltaY * 60).rounded()))
+        sendControlChannel(UUControlProtocol.mouseScroll(dx: dx, dy: dy), kind: .input)
     }
 
     public func sendKey(keyCode: UInt16, keySym: UInt32?, characters: String, isDown: Bool) {
@@ -182,12 +203,12 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         let key = targetIsWindows
             ? (RemoteDesktopKeymap.windowsVKForCarbon[keyCode] ?? Int32(keyCode))
             : Int32(keyCode)
-        sendControlChannel(UUControlProtocol.keyPress(key: key, isDown: isDown, windowsTarget: targetIsWindows))
+        sendControlChannel(UUControlProtocol.keyPress(key: key, isDown: isDown, windowsTarget: targetIsWindows), kind: .input)
     }
 
     public func sendText(_ text: String) {
         guard controlChannelOpen else { return }
-        sendControlChannel(UUControlProtocol.textInput(text))
+        sendControlChannel(UUControlProtocol.textInput(text), kind: .input)
     }
 
     /// Clipboard V3: `RpcRequest` case 10 `ClipboardTextChangeRequest`
@@ -487,7 +508,11 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         }
         await peer.setDataChannelStateHandler("CONTROL_DATA_CHANNEL") { [weak self] (state: String) in
             guard let self else { return }
-            if state != "open", self.controlChannelOpen { self.lose("The UU Remote connection closed.") }
+            if state != "open", self.controlChannelOpen {
+                let since = self.lastInputAt.map { String(format: "%.2fs", Date().timeIntervalSince($0)) } ?? "never"
+                Self.log.error("CONTROL_DATA_CHANNEL \(state, privacy: .public) after \(self.inputSent) input messages, the last \(since, privacy: .public) ago")
+                self.lose("The UU Remote connection closed.")
+            }
             self.controlChannelOpen = state == "open"
             if state == "open" { self.startControlChannelHeartbeat() }
         }
@@ -776,42 +801,58 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
 
     // MARK: - Data channel senders
 
-    /// Serializes outbound WebRTC JS evaluations in FIFO order so frames never race out of order.
-    private struct OutboundEvalQueue: Sendable {
-        private let continuation: AsyncStream<String>.Continuation
+    /// What waits to go out, and whether a batch is on its way (see
+    /// `UUChannelOutbox`). Input comes from the main thread, heartbeats from
+    /// their task: both under `outboxLock`.
+    private var outbox = UUChannelOutbox()
+    private var flushing = false
+    private let outboxLock = NSLock()
+    /// Input messages handed to the page, and when the last went: a log of
+    /// the channel closing says whether input came just before. Main thread.
+    private var inputSent = 0
+    private var lastInputAt: Date?
 
-        init(peerProvider: @escaping @Sendable @MainActor () -> UURTCPeerConnection?) {
-            let (stream, cont) = AsyncStream<String>.makeStream()
-            self.continuation = cont
-            Task { @MainActor in
-                for await script in stream {
-                    guard let peer = peerProvider() else { continue }
-                    _ = try? await peer.evaluate(script) as String?
+    private func enqueueChannelSend(_ label: String, data: Data, kind: UUChannelOutbox.Kind = .other) {
+        let start = outboxLock.withLock { () -> Bool in
+            outbox.push(.init(label: label, data: data, kind: kind))
+            guard !flushing else { return false }
+            flushing = true
+            return true
+        }
+        guard start else { return }
+        Task { @MainActor [weak self] in await self?.flushOutbox() }
+    }
+
+    /// Sends what waits, a batch per call into the page, in order, until
+    /// nothing does.
+    @MainActor private func flushOutbox() async {
+        while true {
+            let batch = outboxLock.withLock { () -> [UUChannelOutbox.Message] in
+                let batch = outbox.take()
+                if batch.isEmpty { flushing = false }
+                return batch
+            }
+            guard !batch.isEmpty else { return }
+            guard let peer else { continue }
+            for message in batch where message.kind != .other {
+                inputSent += 1
+                lastInputAt = Date()
+                Self.log.debug("input on \(message.label, privacy: .public): \(String(decoding: message.data, as: UTF8.self), privacy: .public)")
+            }
+            do {
+                let result: String? = try await peer.evaluate(UUChannelOutbox.script(for: batch))
+                if let result, result != "ok" {
+                    Self.log.error("batch of \(batch.count) not all sent: \(result, privacy: .public)")
                 }
+            } catch {
+                Self.log.error("batch of \(batch.count) failed: \(error.localizedDescription, privacy: .public)")
             }
         }
-
-        func enqueue(_ script: String) {
-            continuation.yield(script)
-        }
-
-        func finish() {
-            continuation.finish()
-        }
     }
 
-    private lazy var outboundEvalQueue = OutboundEvalQueue { [weak self] in
-        self?.peer
-    }
-
-    private func enqueueChannelSend(_ label: String, data: Data) {
-        let base64 = data.base64EncodedString()
-        outboundEvalQueue.enqueue("dcSendB64('\(label)', '\(base64)')")
-    }
-
-    private func sendControlChannel(_ data: Data) {
+    private func sendControlChannel(_ data: Data, kind: UUChannelOutbox.Kind = .other) {
         guard controlChannelOpen else { return }
-        enqueueChannelSend("CONTROL_DATA_CHANNEL", data: data)
+        enqueueChannelSend("CONTROL_DATA_CHANNEL", data: data, kind: kind)
     }
 
     private func sendBinaryChannel(_ data: Data) {
@@ -860,6 +901,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             if case let .bytes(body) = inbound.field.value,
                let change = UUControlProtocol.decodeSystemStateChange(body) {
                 if let locked = change.isLocked {
+                    Self.log.info("host says the screen is \(locked ? "locked" : "unlocked", privacy: .public)")
                     session.reportPhase(locked ? .authenticating : .connected)
                 }
                 if let cursor = change.cursor { session.reportCursor(cursor) }
@@ -869,7 +911,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
                 portMapping.handle(frame: frame)
             }
         default:
-            break
+            Self.log.info("control message \(inbound.field.number) not handled, \(data.count) bytes")
         }
     }
 
@@ -891,7 +933,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         case UUSimpleActionType.echoResponse:
             session.reportHint("UU Remote echo \(action.argsJSON ?? "")")
         default:
-            break
+            Self.log.info("simple action \(action.action) not handled: \(action.argsJSON ?? "", privacy: .public)")
         }
     }
 
@@ -1384,6 +1426,16 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
             const arr = new Uint8Array(bin.length);
             for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
             c.send(arr);
+        }
+        // Sends each [label, base64]; 'ok', or what did not go and why.
+        function dcSendBatch(items) {
+            const failed = [];
+            for (const [label, b64] of items) {
+                const c = channels[label];
+                if (!c || c.readyState !== 'open') { failed.push(label + ' ' + (c ? c.readyState : 'missing')); continue; }
+                try { dcSendB64(label, b64); } catch (e) { failed.push(label + ' ' + e); }
+            }
+            return failed.length ? failed.join('; ') : 'ok';
         }
         function dcClose(label) { channels[label] && channels[label].close(); }
         function closeAll() { if (frameTimer) { clearInterval(frameTimer); frameTimer = null; } for (const k in channels) { try { channels[k].close(); } catch (e) {} } if (pc) { try { pc.close(); } catch (e) {} } return 'ok'; }

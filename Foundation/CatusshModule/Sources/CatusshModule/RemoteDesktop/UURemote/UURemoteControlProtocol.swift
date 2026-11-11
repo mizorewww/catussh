@@ -275,9 +275,10 @@ public enum UUControlProtocol {
 
     public static func mouseMoveAbsolute(x: Double, y: Double) -> Data {
         // Mac hosts take normalized 0...1 axes (clamped, like upstream's
-        // `normalizeAbsolutePointerAxis`).
-        let cx = min(1, max(0, x))
-        let cy = min(1, max(0, y))
+        // `normalizeAbsolutePointerAxis`). What is no number becomes 0
+        // rather than a bare `nan` the host's JSON cannot read.
+        let cx = x.isFinite ? min(1, max(0, x)) : 0
+        let cy = y.isFinite ? min(1, max(0, y)) : 0
         return #"{"action":"mouse_move_absolute","abs_x":\#(cx),"abs_y":\#(cy)}"#.data(using: .utf8)!
     }
 

@@ -557,9 +557,10 @@ public final class RemoteDesktopCanvasView: UIView {
 #if os(iOS) && !targetEnvironment(macCatalyst)
     extension RemoteDesktopCanvasView: UIPointerInteractionDelegate {
         /// The host's pointer is drawn over the picture: the iPad's own would
-        /// be a second one.
+        /// be a second one. One drawn off the view shows nothing, so the
+        /// iPad's stays then.
         public func pointerInteraction(_: UIPointerInteraction, styleFor _: UIPointerRegion) -> UIPointerStyle? {
-            cursorView.isHidden ? nil : .hidden()
+            cursorView.isHidden || !bounds.intersects(cursorView.frame) ? nil : .hidden()
         }
     }
 #endif
