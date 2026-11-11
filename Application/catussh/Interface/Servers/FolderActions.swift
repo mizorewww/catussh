@@ -50,25 +50,16 @@ enum FolderActions {
 
     @MainActor
     static func delete(_ name: String) {
-        let store = CatusshStore.shared
-        let account = UURemoteAccountStore.shared
-        // The signed-in account's folder: deleting it signs out, or the next
-        // refresh would make it again.
-        let unlinks = account.isLoggedIn && store.folder(named: name) == account.folder(store: store)
-        let count = store.machines(inFolder: name).count
-        var consequences: [String] = []
-        if unlinks { consequences.append("catussh signs out of UU Remote; the devices stay on the account.") }
-        if count > 0 { consequences.append("Servers you added to it by hand move to Default.") }
+        let plan = FolderDeletionPlan(folder: name)
         UIBridge.requiresConfirmation(
-            message: "Delete the folder \"\(name)\"?",
-            informative: consequences.isEmpty ? nil : consequences.joined(separator: " "),
-            confirmTitle: unlinks ? "Delete and Sign Out" : "Delete Folder",
+            message: plan.message,
+            informative: plan.informative,
+            confirmTitle: plan.confirmTitle,
             destructive: true
         ) { confirmed in
             guard confirmed else { return }
             MainActor.assumeIsolated {
-                if unlinks { account.logout() }
-                store.deleteFolder(name)
+                plan.perform()
             }
         }
     }

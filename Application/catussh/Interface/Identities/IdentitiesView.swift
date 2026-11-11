@@ -6,7 +6,6 @@
 //
 
 import CatusshModule
-import NSRemoteShell
 import SwiftUI
 
 struct IdentitiesView: View {
@@ -193,51 +192,13 @@ enum IdentityActions {
             allowsMany: true
         ) { machines in
             guard !machines.isEmpty else { return }
-            let escapedKey = pub.replacingOccurrences(of: "'", with: "'\\''")
-            let installCmd = "umask 077 && mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && (grep -qxF '\(escapedKey)' ~/.ssh/authorized_keys || printf '%s\\n' '\(escapedKey)' >> ~/.ssh/authorized_keys)"
             DispatchQueue.global().async {
-                var succeeded: [String] = []
-                var failed: [String] = []
-                for machineID in machines {
-                    let machine = CatusshStore.shared.workerMachine(for: machineID)
-                    guard machine.isNotPlaceholder() else { continue }
-                    let shell = NSRemoteShell.configured(for: machine, timeout: CatusshStore.shared.workerTimeoutNumber)
-                    let auth = shell.connectAndAuthenticate(
-                        identity: CatusshStore.shared.workerAssociatedIdentity(for: machine),
-                        autoIdentities: CatusshStore.shared.workerIdentitiesForAutoAuth
-                    )
-                    guard auth == .success else {
-                        failed.append(machine.name)
-                        shell.requestDisconnectAndWait()
-                        shell.destroyPermanently()
-                        continue
-                    }
-                    let rc = shell.beginExecute(
-                        withCommand: installCmd,
-                        withTimeout: 15,
-                        withOnCreate: {},
-                        withOutput: nil,
-                        withContinuationHandler: { true }
-                    )
-                    shell.requestDisconnectAndWait()
-                    shell.destroyPermanently()
-                    if rc == 0 {
-                        succeeded.append(machine.name)
-                    } else {
-                        failed.append(machine.name)
-                    }
-                }
+                let outcome = PublicKeyDeployment.deploy(pub, to: machines)
                 onMainThread {
-                    if !failed.isEmpty {
-                        UIBridge.presentError(with: "Failed to deploy public key to: \(failed.joined(separator: ", ")).")
-                    } else if !succeeded.isEmpty {
-                        for machineID in machines {
-                            var m = CatusshStore.shared.machineGroup[machineID]
-                            if m.isNotPlaceholder(), m.associatedIdentity == nil {
-                                m.associatedIdentity = identityID.uuidString
-                                CatusshStore.shared.machineGroup[machineID] = m
-                            }
-                        }
+                    if !outcome.failed.isEmpty {
+                        UIBridge.presentError(with: "Failed to deploy public key to: \(outcome.failed.joined(separator: ", ")).")
+                    } else if !outcome.succeeded.isEmpty {
+                        PublicKeyDeployment.adopt(identity: identityID, on: machines)
                     }
                 }
             }
@@ -348,13 +309,7 @@ struct IdentityForm: View {
                             matches: RDIdentity.looksLikePrivateKey
                         )
                         Button("Generate Ed25519") {
-                            let label = draft.comment.isEmpty
-                                ? (draft.username.isEmpty ? "catussh" : "\(draft.username)@catussh")
-                                : draft.comment
-                            let pair = RDIdentity.generateEd25519KeyPair(comment: label)
-                            draft.privateKey = pair.privateKey
-                            draft.publicKey = pair.publicKey
-                            draft.passphrase = ""
+                            draft.generateEd25519KeyPair()
                         }
                         .buttonStyle(.rx)
                         .fixedSize()

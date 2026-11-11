@@ -139,23 +139,10 @@ private struct PortForwardRow: View {
 
     var running: Bool { backend.sessionExists(withPortForwardID: forward.id) }
 
-    var orientationLabel: String {
-        switch forward.forwardOrientation {
-        case .listenLocal: return "Listen local"
-        case .listenRemote: return "Listen remote"
-        case .dynamicSOCKS: return "SOCKS5 (-D)"
-        }
-    }
-
-    var targetLabel: String {
-        if forward.forwardOrientation == .dynamicSOCKS { return "SOCKS5 proxy" }
-        return forward.targetHost.isEmpty ? "—" : "\(forward.targetHost):\(forward.targetPort)"
-    }
-
     var body: some View {
         let status = PortForwardPresentation(state: backend.lastStatus[forward.id], running: running)
         HStack(spacing: 0) {
-            RXTag(orientationLabel)
+            RXTag(forward.forwardOrientation.label)
                 .frame(width: ForwardColumns.orientation, alignment: .leading)
             Text(verbatim: ":\(forward.bindPort)")
                 .font(.rxCode)
@@ -166,7 +153,7 @@ private struct PortForwardRow: View {
                 .foregroundStyle(forward.usingMachine == nil ? Color.rxInkSecondary : Color.rxInk)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Text(verbatim: targetLabel)
+            Text(verbatim: forward.targetLabel)
                 .font(.rxCode)
                 .foregroundStyle(forward.forwardOrientation == .dynamicSOCKS ? Color.rxInkSecondary : Color.rxInk)
                 .lineLimit(1)
@@ -256,18 +243,10 @@ struct PortForwardEditorSheet: View {
         return result
     }
 
-    var leadText: String {
-        switch orientation {
-        case .listenLocal: return "This Mac :port → server → target"
-        case .listenRemote: return "Server :port → this Mac → target"
-        case .dynamicSOCKS: return "This Mac :port (SOCKS5) → server → any destination"
-        }
-    }
-
     var body: some View {
         SheetScaffold(
             forward == nil ? "New Port Forward" : "Edit Port Forward",
-            lead: leadText
+            lead: orientation.flowDescription(device: "This Mac")
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 RXField("Orientation") {
@@ -308,9 +287,7 @@ struct PortForwardEditorSheet: View {
                     HelpText("Runs a local SOCKS5 proxy on 127.0.0.1:\(bindPort.isEmpty ? "1080" : bindPort) that tunnels all connections through the selected server (`ssh -D`).")
                 }
                 RXField("Equivalent command") {
-                    CodeBlock(draft.getCommand() ?? (orientation == .dynamicSOCKS
-                        ? "ssh -D \(bindPort.isEmpty ? "1080" : bindPort) <server>"
-                        : "ssh \(orientation == .listenLocal ? "-L" : "-R") \(bindPort.isEmpty ? "port" : bindPort):\(targetHost.isEmpty ? "127.0.0.1" : targetHost):\(targetPort.isEmpty ? "port" : targetPort) <server>"))
+                    CodeBlock(draft.commandPreview)
                         .opacity(draft.isValid() ? 1 : 0.5)
                 }
             }
