@@ -132,7 +132,8 @@ struct ServersView: View {
     private struct EditTarget: Identifiable { let id: RDMachine.ID }
 }
 
-/// A server row: name, address, state; tap for actions.
+/// A server row: name, address, state. A tap goes into the server's
+/// terminal; its actions are in the ⋯ menu and on a long press.
 struct ServerListRow: View {
     let machine: RDMachine.ID
     let edit: () -> Void
@@ -141,8 +142,8 @@ struct ServerListRow: View {
 
     var body: some View {
         let read = store.machineGroup[machine]
-        Menu {
-            ServerMenuItems(machine: machine, edit: edit)
+        Button {
+            ServerActions.openTerminal(machine)
         } label: {
             HStack(spacing: RX.Space.s3) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -169,10 +170,21 @@ struct ServerListRow: View {
                         .font(.footnote)
                         .foregroundStyle(.rxInkSecondary)
                 }
+                Menu {
+                    ServerMenuItems(machine: machine, edit: edit)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.rxInkSecondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Actions")
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu { ServerMenuItems(machine: machine, edit: edit) }
         .swipeActions {
             Button(role: .destructive) {
                 ServerActions.delete(machine)
@@ -271,6 +283,16 @@ struct ServerMenuItems: View {
 }
 
 enum ServerActions {
+    /// The server's terminal on its page: the one open, else a new one.
+    @MainActor
+    static func openTerminal(_ machine: RDMachine.ID) {
+        if SessionDirectory.hasSession(machine, .terminal) {
+            SessionNavigation.shared.reveal(.server(machine), tool: .terminal)
+        } else {
+            TerminalManager.shared.begin(for: machine)
+        }
+    }
+
     @MainActor
     static func openMonitor(_ machine: RDMachine.ID) {
         do {
@@ -279,34 +301,19 @@ enum ServerActions {
             // An existing monitor is brought forward even when sessions do
             // not open automatically; a new one waits for the setting.
             guard existing != nil || CatusshStore.shared.openInterfaceAutomatically else { return }
-            if SidebarNavigation.shared.open(.monitor(session.id)) { return }
-            let host = UIHostingController(rootView: DefaultModalPresenter {
-                MonitorView(session: session)
-            }.environmentObject(CatusshStore.shared))
-            host.modalTransitionStyle = .coverVertical
-            host.modalPresentationStyle = .formSheet
-            host.preferredContentSize = preferredPopOverSize
-            PresentationQueue.present(next: host)
+            SessionNavigation.shared.reveal(.server(session.machine.id), tool: .monitor)
         } catch {
             UIBridge.presentError(with: "Cannot open monitor")
         }
     }
 
-    /// The server's remote desktop: beside the iPad sidebar, else in a
-    /// hosted stage view (full screen on iPhone), like the terminal.
+    /// The server's remote desktop, on the server's page.
     @MainActor
     static func openDesktop(_ machine: RDMachine.ID) {
         let existing = RemoteDesktopManager.shared.session(for: machine)
         let session = RemoteDesktopManager.shared.begin(for: machine)
         guard existing != nil || CatusshStore.shared.openInterfaceAutomatically else { return }
-        if SidebarNavigation.shared.open(.desktop(session.id)) { return }
-        let host = UIHostingController(rootView: DefaultModalPresenter {
-            RemoteDesktopStageView(session: session)
-        }.environmentObject(CatusshStore.shared))
-        host.modalTransitionStyle = .coverVertical
-        host.modalPresentationStyle = UIDevice.current.userInterfaceIdiom == .phone ? .fullScreen : .formSheet
-        host.preferredContentSize = preferredPopOverSize
-        PresentationQueue.present(next: host)
+        SessionNavigation.shared.reveal(.server(session.machine.id), tool: .desktop)
     }
 
     static func duplicate(_ machine: RDMachine.ID) {

@@ -13,11 +13,11 @@ import UniformTypeIdentifiers
 struct FileTransferView: View {
     @ObservedObject var context: FileTransferContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.inServerWorkspace) private var inServerWorkspace
 
     @State var openFilePicker: Bool = false
     @State var searchKey: String = ""
     /// The editor, when it is shown over Files.
-    @State var editing: EditorWorkspace?
     @State private var dropTargeted = false
     /// The folder in the order the list shows it: folders first, then by
     /// name. Sorted when the folder changes, not on every redraw.
@@ -57,9 +57,6 @@ struct FileTransferView: View {
         .animation(.interactiveSpring(), value: context.processConnection)
         .navigationTitle(context.machine.name)
         .navigationBarTitleDisplayMode(.inline)
-        .fullScreenCover(item: $editing) { workspace in
-            EditorWorkspaceScreen(workspace: workspace)
-        }
         .onReceive(context.$currentFileList) { sorted = FileTransferContext.sortedForDisplay($0) }
         // iPad: files dragged in from Files or another app are uploaded here.
         .onDrop(of: [.item], isTargeted: $dropTargeted, perform: handleDrop)
@@ -189,7 +186,8 @@ struct FileTransferView: View {
                     if context.connected {
                         context.processShutdown()
                     } else {
-                        FileTransferSessionActions.close(context) { dismiss() }
+                        // On a server's page, the page stays for its other tools.
+                        FileTransferSessionActions.close(context) { if !inServerWorkspace { dismiss() } }
                     }
                 }
                 // stays available while a connection attempt hangs
@@ -298,10 +296,9 @@ struct FileTransferView: View {
         show(workspace)
     }
 
-    /// The editor goes beside the iPad sidebar, else over Files.
+    /// The server's page switches to its editor.
     func show(_ workspace: EditorWorkspace) {
-        if SidebarNavigation.shared.open(.editor(workspace.id)) { return }
-        editing = workspace
+        SessionNavigation.shared.reveal(.server(workspace.context.machine.id), tool: .editor)
     }
 
     func handleDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -585,18 +582,6 @@ enum FileTransferSessionActions {
     }
 }
 
-extension FileTransferContext {
-    struct DefaultPresent: View {
-        let context: FileTransferContext
-
-        var body: some View {
-            DefaultModalPresenter {
-                FileTransferView(context: context)
-            }
-        }
-    }
-}
-
 /// Bridges CatusshModule's shared file-transfer core to UIKit UI.
 final class IOSFileTransferUIHandler: FileTransferUIHandler {
     func presentError(_ message: String) {
@@ -608,17 +593,9 @@ final class IOSFileTransferUIHandler: FileTransferUIHandler {
     }
 
     func autoOpenInterface(_ context: FileTransferContext) {
-        let opened = MainActor.assumeIsolated { SidebarNavigation.shared.open(.transfer(context.id)) }
-        if opened { return }
-        let host = UIHostingController(
-            rootView: FileTransferContext.DefaultPresent(context: context)
-        )
-        host.modalTransitionStyle = .coverVertical
-        host.modalPresentationStyle = .formSheet
-        host.preferredContentSize = preferredPopOverSize
-        UIWindow.shutUpKeyWindow?
-            .topMostViewController?
-            .present(next: host)
+        MainActor.assumeIsolated {
+            SessionNavigation.shared.reveal(.server(context.machine.id), tool: .files)
+        }
     }
 
     func downloadCompleted() {

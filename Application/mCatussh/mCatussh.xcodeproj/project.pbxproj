@@ -19,6 +19,7 @@
 		501B334A27DF1B6F00EB6261 /* SymbolPicker in Frameworks */ = {isa = PBXBuildFile; productRef = 501B334927DF1B6F00EB6261 /* SymbolPicker */; };
 		501FF78B27CEFADD00380D59 /* mCatusshApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501FF78A27CEFADD00380D59 /* mCatusshApp.swift */; };
 		501FF78D27CEFADD00380D59 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501FF78C27CEFADD00380D59 /* ContentView.swift */; };
+		3B03D36067DDD573FB3F664B /* ServerWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 796660E5550D8CCF69D875E8 /* ServerWorkspaceView.swift */; };
 		501FF78F27CEFADD00380D59 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 501FF78E27CEFADD00380D59 /* Assets.xcassets */; };
 		501FF79B27CEFC6300380D59 /* CatusshModule in Frameworks */ = {isa = PBXBuildFile; productRef = 501FF79A27CEFC6300380D59 /* CatusshModule */; };
 		5047BE9D27DCCC8B008887A7 /* EditPortForwardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5047BE9C27DCCC8B008887A7 /* EditPortForwardView.swift */; };
@@ -73,6 +74,7 @@
 		501FF78727CEFADD00380D59 /* mCatussh.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = mCatussh.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		501FF78A27CEFADD00380D59 /* mCatusshApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = mCatusshApp.swift; sourceTree = "<group>"; };
 		501FF78C27CEFADD00380D59 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		796660E5550D8CCF69D875E8 /* ServerWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerWorkspaceView.swift; sourceTree = "<group>"; };
 		501FF78E27CEFADD00380D59 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		501FF79827CEFAFA00380D59 /* mCatussh.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = mCatussh.entitlements; sourceTree = "<group>"; };
 		5047BE9C27DCCC8B008887A7 /* EditPortForwardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditPortForwardView.swift; sourceTree = "<group>"; };
@@ -247,6 +249,7 @@
 			isa = PBXGroup;
 			children = (
 				501FF78C27CEFADD00380D59 /* ContentView.swift */,
+				796660E5550D8CCF69D875E8 /* ServerWorkspaceView.swift */,
 				D04D4885B33AC1EB4C37B541 /* HomeView.swift */,
 			);
 			path = Navigator;
@@ -420,6 +423,7 @@
 				5013B51927E4B14E00EF01C4 /* FileTransferView.swift in Sources */,
 				7F45A79934808873CB99B543 /* EditorWorkspaceView.swift in Sources */,
 				501FF78D27CEFADD00380D59 /* ContentView.swift in Sources */,
+				3B03D36067DDD573FB3F664B /* ServerWorkspaceView.swift in Sources */,
 				5082A1C327D087FB00C71C0F /* Util.swift in Sources */,
 				50C90B1527CF18D500F60B51 /* PortForwardView.swift in Sources */,
 				5082A1D827D1A95400C71C0F /* PickMachineView.swift in Sources */,

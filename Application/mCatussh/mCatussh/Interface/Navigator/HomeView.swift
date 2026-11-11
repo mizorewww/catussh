@@ -277,7 +277,7 @@ struct RecentRow: View {
     func connect() {
         switch record {
         case let .command(command): TerminalManager.shared.begin(for: command)
-        case let .machine(machine): TerminalManager.shared.begin(for: machine)
+        case let .machine(machine): ServerActions.openTerminal(machine)
         }
     }
 }

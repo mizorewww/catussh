@@ -38,6 +38,7 @@ struct EditorWorkspaceView: View {
     @ObservedObject var context: FileTransferContext
     @ObservedObject var store = CatusshStore.shared
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.inServerWorkspace) private var inServerWorkspace
 
     @AppStorage("me.mizorewww.rayon.editor.wrapsLines") private var wrapsLines = false
     @State private var openPrompt = false
@@ -227,7 +228,8 @@ struct EditorWorkspaceView: View {
 
     private func closeEditor() {
         let end = {
-            dismiss()
+            // On a server's page, the page stays for its other tools.
+            if !inServerWorkspace { dismiss() }
             EditorCenter.shared.end(workspace.id)
         }
         guard workspace.hasUnsavedChanges else { return end() }

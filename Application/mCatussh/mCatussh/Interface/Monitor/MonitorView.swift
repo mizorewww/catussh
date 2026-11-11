@@ -15,6 +15,7 @@ struct MonitorView: View {
     @ObservedObject var session: MonitorSession
     @EnvironmentObject var store: CatusshStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.inServerWorkspace) private var inServerWorkspace
 
     var body: some View {
         ScrollView {
@@ -65,7 +66,8 @@ struct MonitorView: View {
                     }
                     Button(role: .destructive) {
                         MonitorCenter.shared.end(session.id)
-                        dismiss()
+                        // On a server's page, the page stays for its other tools.
+                        if !inServerWorkspace { dismiss() }
                     } label: {
                         Label("Close Monitor", systemImage: "xmark")
                     }

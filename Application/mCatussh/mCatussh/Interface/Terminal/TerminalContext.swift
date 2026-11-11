@@ -11,18 +11,6 @@ import UIKit
 
 typealias TerminalContext = TerminalManager.Context
 
-extension TerminalContext {
-    struct DefaultPresent: View {
-        let context: TerminalContext
-
-        var body: some View {
-            DefaultModalPresenter {
-                TerminalView(context: context)
-            }
-        }
-    }
-}
-
 /// Which terminal screens are up, and which tab each shows in front. A
 /// terminal opened as another tab of a server whose terminal is on screen
 /// joins that screen's tabs instead of covering it with a new one.
@@ -59,17 +47,9 @@ final class IOSTerminalUIHandler: TerminalUIHandler {
         MainActor.assumeIsolated {
             if TerminalFocus.shared.isShowingSiblings(of: context) {
                 TerminalFocus.shared.bringForward(context)
-                return
             }
-            if SidebarNavigation.shared.open(terminal: context) { return }
-            let host = UIHostingController(
-                rootView: TerminalContext.DefaultPresent(context: context)
-                    .environmentObject(CatusshStore.shared)
-            )
-            host.modalTransitionStyle = .coverVertical
-            host.modalPresentationStyle = UIDevice.current.userInterfaceIdiom == .phone ? .fullScreen : .formSheet
-            host.preferredContentSize = preferredPopOverSize
-            PresentationQueue.present(next: host)
+            // On its server's page, which switches to the terminal.
+            SessionNavigation.shared.reveal(terminal: context)
         }
     }
 }

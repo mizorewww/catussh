@@ -26,6 +26,7 @@ struct TerminalView: View {
     @ObservedObject var terminals = TerminalManager.shared
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.inServerWorkspace) private var inServerWorkspace
 
     /// The tab in front; `context` until another tab is chosen.
     @State private var focusedID: TerminalContext.ID?
@@ -464,7 +465,8 @@ struct TerminalView: View {
                 return
             }
         }
-        if !alive.contains(context.id) { dismiss() }
+        // On a server's page, the page stays for its other tools.
+        if !alive.contains(context.id), !inServerWorkspace { dismiss() }
     }
 
     private func openAnotherTab() {

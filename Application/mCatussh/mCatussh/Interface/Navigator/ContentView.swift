@@ -6,7 +6,8 @@
 //
 //  iPhone uses a tab bar: Home · Servers · Sessions · Snippets · More.
 //  iPad keeps the macOS sidebar layout: the Mac's places (Remote Desktop
-//  among them), then the open sessions, a server's terminal tabs as one row.
+//  among them), then one row per server with something open, whose page
+//  holds its terminal, files, editor, monitor and desktop.
 //
 
 import MachineStatusView
@@ -25,39 +26,8 @@ struct ContentView: View {
             }
         }
         .tint(.rxAccent)
-        .onAppear { SidebarNavigation.shared.isShown = horizontalSizeClass != .compact }
-        .onChange(of: horizontalSizeClass) { SidebarNavigation.shared.isShown = $0 != .compact }
-    }
-}
-
-/// What the iPad sidebar shows. While the sidebar is on screen, a session
-/// that opens (a terminal, monitor, desktop, file transfer or editor) takes
-/// the space beside it, as on the Mac, instead of a sheet over it; the tab
-/// bar layout still presents them.
-@MainActor
-final class SidebarNavigation: ObservableObject {
-    static let shared = SidebarNavigation()
-
-    @Published var selection: SidebarView.Route? = .home
-    var isShown = false
-    /// The tab a server's terminal page shows in front when it opens.
-    private(set) var terminalFront: [String: TerminalContext.ID] = [:]
-
-    private init() {}
-
-    /// Shows `route` beside the sidebar; false when there is no sidebar and
-    /// the caller is to present the session itself.
-    @discardableResult
-    func open(_ route: SidebarView.Route) -> Bool {
-        guard isShown else { return false }
-        selection = route
-        return true
-    }
-
-    func open(terminal context: TerminalContext) -> Bool {
-        guard isShown else { return false }
-        terminalFront[context.tabGroupKey] = context.id
-        return open(.terminals(context.tabGroupKey))
+        .onAppear { SessionNavigation.shared.isSidebarShown = horizontalSizeClass != .compact }
+        .onChange(of: horizontalSizeClass) { SessionNavigation.shared.isSidebarShown = $0 != .compact }
     }
 }
 
@@ -78,10 +48,8 @@ struct TabsView: View {
     @ObservedObject var desktops = RemoteDesktopManager.shared
     @ObservedObject var editors = EditorCenter.shared
 
-    var sessionCount: Int {
-        terminals.terminals.count + monitors.sessions.count + transfers.transfers.count
-            + desktops.sessions.count + editors.workspaces.count
-    }
+    /// Servers with something open.
+    var sessionCount: Int { SessionDirectory.owners.count }
 
     var body: some View {
         TabView(selection: $selection) {
@@ -116,13 +84,8 @@ struct SidebarView: View {
         /// Every server with a remote desktop, and the UU Remote account.
         case desktops
         case settings
-        /// A server's (or Quick Connect command's) terminal tabs, by `tabGroupKey`.
-        case terminals(String)
-        case monitor(UUID)
-        case transfer(UUID)
-        /// A server's editor, by the id of the SFTP session it works over.
-        case editor(UUID)
-        case desktop(UUID)
+        /// A server's (or Quick Connect command's) page.
+        case session(SessionOwner)
     }
 
     @EnvironmentObject var store: CatusshStore
@@ -131,7 +94,7 @@ struct SidebarView: View {
     @ObservedObject var transfers = FileTransferManager.shared
     @ObservedObject var desktops = RemoteDesktopManager.shared
     @ObservedObject var editors = EditorCenter.shared
-    @ObservedObject var navigation = SidebarNavigation.shared
+    @ObservedObject var navigation = SessionNavigation.shared
 
     var body: some View {
         NavigationSplitView {
@@ -144,43 +107,13 @@ struct SidebarView: View {
                     row("Port Forward", "arrow.right", .portForward, badge: store.portForwardGroup.count)
                     row("Remote Desktop", "display", .desktops, badge: store.machineGroup.machines.filter(\.hasRemoteDesktop).count)
                 }
-                if !terminals.terminals.isEmpty || !monitors.sessions.isEmpty || !desktops.sessions.isEmpty {
+                let owners = SessionDirectory.owners
+                if !owners.isEmpty {
                     Section("Sessions") {
-                        ForEach(terminals.tabGroups, id: \.first?.id) { tabs in
-                            if let first = tabs.first {
-                                Label(first.displayName, systemImage: "terminal")
-                                    .badge(tabs.count > 1 ? tabs.count : 0)
-                                    .tag(Route.terminals(first.tabGroupKey))
-                                    .swipeActions {
-                                        closeButton {
-                                            for tab in tabs { TerminalManager.shared.end(for: tab.id) }
-                                        }
-                                    }
-                            }
-                        }
-                        ForEach(monitors.sessions) { session in
-                            Label(session.machine.name, systemImage: "waveform.path.ecg")
-                                .tag(Route.monitor(session.id))
-                                .swipeActions { closeButton { MonitorCenter.shared.end(session.id) } }
-                        }
-                        ForEach(desktops.sessions) { session in
-                            Label(session.machine.name, systemImage: "display")
-                                .tag(Route.desktop(session.id))
-                                .swipeActions { closeButton { RemoteDesktopManager.shared.end(session.id) } }
-                        }
-                    }
-                }
-                if !transfers.transfers.isEmpty {
-                    Section("File Transfer") {
-                        ForEach(transfers.transfers) { context in
-                            Label(context.machine.name, systemImage: "arrow.up.arrow.down")
-                                .tag(Route.transfer(context.id))
-                                .swipeActions { closeButton { FileTransferSessionActions.close(context) } }
-                        }
-                        ForEach(editors.workspaces) { workspace in
-                            Label(workspace.context.machine.name, systemImage: "square.and.pencil")
-                                .tag(Route.editor(workspace.id))
-                                .swipeActions { closeButton { EditorCenter.shared.end(workspace.id) } }
+                        ForEach(owners, id: \.self) { owner in
+                            SessionOwnerRow(owner: owner)
+                                .tag(Route.session(owner))
+                                .swipeActions { closeButton { SessionDirectory.closeAll(owner) } }
                         }
                     }
                 }
@@ -219,43 +152,9 @@ struct SidebarView: View {
         case .portForward: PortForwardView()
         case .desktops: RemoteDesktopsView()
         case .settings: SettingView()
-        case let .terminals(key):
-            // The tab just opened, else any tab of the group: the page
-            // keeps track of the tab in front itself.
-            let front = navigation.terminalFront[key]
-            if let context = terminals.terminals.first(where: { $0.id == front && $0.tabGroupKey == key })
-                ?? terminals.terminals.first(where: { $0.tabGroupKey == key })
-            {
-                TerminalView(context: context).id(key)
-            } else {
-                sessionGone
-            }
-        case let .editor(id):
-            if let workspace = editors.workspaces.first(where: { $0.id == id }) {
-                EditorWorkspaceView(workspace: workspace).id(id)
-            } else {
-                sessionGone
-            }
-        case let .monitor(id):
-            if let session = monitors.session(withID: id) {
-                MonitorView(session: session).id(id)
-            } else {
-                sessionGone
-            }
-        case let .desktop(id):
-            if let session = desktops.session(withID: id) {
-                // The screen takes the whole detail; its own bar closes it.
-                RemoteDesktopStageView(session: session) {
-                    RemoteDesktopManager.shared.end(session.id)
-                }
-                .toolbar(.hidden, for: .navigationBar)
-                .id(id)
-            } else {
-                sessionGone
-            }
-        case let .transfer(id):
-            if let context = transfers.transfers.first(where: { $0.id == id }) {
-                FileTransferView(context: context).id(id)
+        case let .session(owner):
+            if SessionDirectory.isOpen(owner) {
+                ServerWorkspaceView(owner: owner).id(owner)
             } else {
                 sessionGone
             }
@@ -291,76 +190,18 @@ struct SessionsView: View {
                 .background(RXBackdrop().ignoresSafeArea())
             } else {
                 List {
-                    if !terminals.terminals.isEmpty {
-                        Section {
-                            ForEach(terminals.tabGroups, id: \.first?.id) { tabs in
-                                if let first = tabs.first {
-                                    NavigationLink {
-                                        TerminalView(context: first)
-                                    } label: {
-                                        SessionRow(title: first.displayName, systemImage: "terminal", count: tabs.count)
-                                    }
-                                    .swipeActions {
-                                        Button("Close", role: .destructive) {
-                                            for tab in tabs { TerminalManager.shared.end(for: tab.id) }
-                                        }
-                                    }
-                                    .rxListRow()
-                                }
+                    Section {
+                        ForEach(SessionDirectory.owners, id: \.self) { owner in
+                            NavigationLink {
+                                ServerWorkspaceView(owner: owner)
+                            } label: {
+                                SessionOwnerRow(owner: owner)
                             }
-                        } header: { RXSectionHeader("Terminals") }
-                    }
-                    if !monitors.sessions.isEmpty {
-                        Section {
-                            ForEach(monitors.sessions) { session in
-                                NavigationLink {
-                                    MonitorView(session: session)
-                                } label: {
-                                    MonitorSessionRow(session: session)
-                                }
-                                .swipeActions { Button("Close", role: .destructive) { MonitorCenter.shared.end(session.id) } }
-                                .rxListRow()
+                            .swipeActions {
+                                Button("Close", role: .destructive) { SessionDirectory.closeAll(owner) }
                             }
-                        } header: { RXSectionHeader("Monitors") }
-                    }
-                    if !desktops.sessions.isEmpty {
-                        Section {
-                            ForEach(desktops.sessions) { session in
-                                NavigationLink {
-                                    RemoteDesktopStageView(session: session)
-                                } label: {
-                                    SessionRow(title: session.machine.name, systemImage: "display")
-                                }
-                                .swipeActions { Button("Close", role: .destructive) { RemoteDesktopManager.shared.end(session.id) } }
-                                .rxListRow()
-                            }
-                        } header: { RXSectionHeader("Desktops") }
-                    }
-                    if !transfers.transfers.isEmpty {
-                        Section {
-                            ForEach(transfers.transfers) { context in
-                                NavigationLink {
-                                    FileTransferView(context: context)
-                                } label: {
-                                    SessionRow(title: context.machine.name, systemImage: "arrow.up.arrow.down")
-                                }
-                                .swipeActions { Button("Close", role: .destructive) { FileTransferSessionActions.close(context) } }
-                                .rxListRow()
-                            }
-                        } header: { RXSectionHeader("File Transfers") }
-                    }
-                    if !editors.workspaces.isEmpty {
-                        Section {
-                            ForEach(editors.workspaces) { workspace in
-                                NavigationLink {
-                                    EditorWorkspaceView(workspace: workspace)
-                                } label: {
-                                    SessionRow(title: workspace.context.machine.name, systemImage: "square.and.pencil", count: workspace.documents.count)
-                                }
-                                .swipeActions { Button("Close", role: .destructive) { EditorCenter.shared.end(workspace.id) } }
-                                .rxListRow()
-                            }
-                        } header: { RXSectionHeader("Editors") }
+                            .rxListRow()
+                        }
                     }
                 }
                 .rxGroupedList()
@@ -392,13 +233,6 @@ struct SessionRow: View {
                     .monospacedDigit()
             }
         }
-    }
-}
-
-private struct MonitorSessionRow: View {
-    @ObservedObject var session: MonitorSession
-    var body: some View {
-        SessionRow(title: session.machine.name, systemImage: "waveform.path.ecg")
     }
 }
 
