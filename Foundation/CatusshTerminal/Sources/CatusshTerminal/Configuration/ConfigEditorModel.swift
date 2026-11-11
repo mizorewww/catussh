@@ -150,13 +150,28 @@ final class ConfigEditorModel: ObservableObject {
 enum CatusshTerminalConfiguration {
     static let didApply = Notification.Name("CatusshTerminalConfigurationDidApply")
     static var appliedFontSize: Double? = ConfigEditorModel.storedDocument().overrides["font-size"]?.first.flatMap(Double.init)
+    /// The app's Copy on Select preference. It is not a setting of the editor's
+    /// document: the app stores it with its own preferences and sets it here.
+    static private(set) var copyOnSelect = true
     static let controller: TerminalController = {
         let result = TerminalController(configuration: TerminalConfiguration.default
+            .custom("copy-on-select", copyOnSelectValue)
             .custom("clipboard-read", "ask").custom("clipboard-write", "ask"))
         let document = ConfigEditorModel.storedDocument()
         if !document.overrides.isEmpty { try? apply(document, to: result) }
         return result
     }()
+
+    /// `clipboard`, not `true`: the runtime advertises a selection clipboard
+    /// that nothing on Apple platforms reads, and `true` may copy only there.
+    private static var copyOnSelectValue: String { copyOnSelect ? "clipboard" : "none" }
+
+    /// Applies to every terminal, open ones included, keeping their scrollback.
+    static func setCopyOnSelect(_ enabled: Bool) {
+        guard copyOnSelect != enabled else { return }
+        copyOnSelect = enabled
+        try? apply(ConfigEditorModel.shared.saved)
+    }
 
     /// Values catussh's terminal starts from where they differ from Ghostty's own
     /// defaults (font size 14, thickened text, blinking block cursor). The editor
@@ -186,7 +201,7 @@ enum CatusshTerminalConfiguration {
         "adjust-box-thickness", "adjust-overline-position", "adjust-overline-thickness",
         "mouse-hide-while-typing", "mouse-shift-capture", "mouse-scroll-multiplier", "scrollback-limit",
         "window-padding-x", "window-padding-y", "window-padding-balance", "window-padding-color",
-        "copy-on-select", "clipboard-trim-trailing-spaces", "clipboard-paste-protection", "clipboard-paste-bracketed-safe",
+        "clipboard-trim-trailing-spaces", "clipboard-paste-protection", "clipboard-paste-bracketed-safe",
         "link-url", "image-storage-limit", "title", "vt-kam-allowed", "enquiry-response"
     ]
     nonisolated static let supportedActions: Set<String> = [
@@ -213,7 +228,7 @@ enum CatusshTerminalConfiguration {
                 lines.append("\(key) = \(value)")
             }
         }
-        lines += ["clipboard-read = ask", "clipboard-write = ask"]
+        lines += ["copy-on-select = \(copyOnSelectValue)", "clipboard-read = ask", "clipboard-write = ask"]
         return lines.joined(separator: "\n")
     }
     static func apply(_ document: ConfigDocument, to target: TerminalController? = nil) throws {

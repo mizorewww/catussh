@@ -204,6 +204,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_: Notification) {
         AppearancePreference.applyStored()
+        CatusshTerminalView.setCopyOnSelect(CatusshStore.shared.terminalCopyOnSelect)
         installShortcutMonitor()
         installWindowPolicyObservers()
         MenubarTool.shared.restore()

@@ -97,10 +97,12 @@ struct ConfigLayout {
             Group("padding", "Padding", keys: ["window-padding-x", "window-padding-y", "window-padding-balance", "window-padding-color"]),
         ]),
         Category(id: "input", title: "Mouse & Clipboard", icon: "cursorarrow.click", section: .terminal, groups: [
-            Group("copy", "Copy and Paste", keys: [
-                "copy-on-select", "clipboard-trim-trailing-spaces", "selection-clear-on-copy",
+            // Copy on Select is the app's own row (`terminal.copyOnSelect`): a
+            // touch selection never passes through Ghostty's `copy-on-select`.
+            Group("copy", "Copy and Paste", [.host("terminal.copyOnSelect")] + [
+                "clipboard-trim-trailing-spaces", "selection-clear-on-copy",
                 "selection-clear-on-typing", "clipboard-paste-protection", "clipboard-paste-bracketed-safe",
-            ]),
+            ].map(Item.setting)),
             Group("mouse", "Mouse", keys: ["mouse-scroll-multiplier", "mouse-hide-while-typing", "mouse-shift-capture", "cursor-click-to-move", "link-url"]),
         ]),
         Category(id: "keyboard", title: "Keyboard", icon: "keyboard", section: .terminal, groups: [

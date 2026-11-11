@@ -46,6 +46,7 @@ struct mCatusshApp: App {
                 #endif
                 .onAppear {
                     AppearancePreference.applyStored()
+                    CatusshTerminalView.setCopyOnSelect(store.terminalCopyOnSelect)
                     checkAgreement()
                 }
                 .onChange(of: store.licenseAgreed) { _ in

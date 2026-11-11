@@ -102,6 +102,8 @@ struct ConfigGroupCard: View {
                     .padding(.leading, RX.Space.s4)
                 VStack(spacing: 0) {
                     ForEach(hosts) { $0.content }
+                    // App rows above Ghostty's on one card, ruled as one list.
+                    if !hosts.isEmpty, !settings.isEmpty { Hairline() }
                     if !settings.isEmpty {
                         RXDividedStack {
                             ForEach(settings) { setting in
