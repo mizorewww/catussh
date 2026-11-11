@@ -356,6 +356,7 @@ public final class UURemoteAccountStore: ObservableObject {
         var group = store.machineGroup
         UURemoteFolderSync.apply(devices: devices, folder: folder.name, ownDeviceID: credentials.deviceID, to: &group)
         if group != store.machineGroup { store.machineGroup = group }
+        store.collapseUURemoteDuplicates()
     }
 
     /// The account's folder the first time: the "UU Remote" folder earlier

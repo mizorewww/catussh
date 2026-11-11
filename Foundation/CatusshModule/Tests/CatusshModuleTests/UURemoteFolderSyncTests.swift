@@ -81,5 +81,45 @@ final class UURemoteFolderSyncTests: XCTestCase {
         UURemoteFolderSync.apply(devices: [signIn, pc], folder: "UU", to: &group)
         XCTAssertEqual(group.machines.map(\.uuDeviceID), ["d1"])
     }
-}
 
+    func testEveryDeviceGivesADevicesServerTheSameID() {
+        var mac = RDMachineGroup(), pad = RDMachineGroup()
+        UURemoteFolderSync.apply(devices: [device("d1", "Mac")], folder: "UU", to: &mac)
+        UURemoteFolderSync.apply(devices: [device("d1", "Mac")], folder: "UU", to: &pad)
+        XCTAssertEqual(mac.machines.map(\.id), pad.machines.map(\.id))
+        XCTAssertEqual(mac.machines.first?.id, UURemoteFolderSync.machineID(for: "d1"))
+    }
+
+    func testDuplicatesFromOtherDevicesBecomeOneUnderTheSharedID() {
+        func old(_ id: String, name: String) -> RDMachine {
+            var machine = UURemoteFolderSync.makeMachine(for: device("d1", "Mac"), folder: "UU")
+            machine.id = UUID(uuidString: id)!
+            machine.name = name
+            return machine
+        }
+        var jump = RDMachine()
+        jump.name = "Behind"
+        jump.remoteAddress = "10.0.0.2"
+        jump.remotePort = "22"
+        jump.proxyJumpMachineID = "BBBBBBBB-0000-0000-0000-000000000000"
+        var one = RDMachineGroup(), two = RDMachineGroup()
+        one.insert(old("BBBBBBBB-0000-0000-0000-000000000000", name: "From iPad"))
+        one.insert(old("AAAAAAAA-0000-0000-0000-000000000000", name: "From Mac"))
+        one.insert(jump)
+        two.insert(old("AAAAAAAA-0000-0000-0000-000000000000", name: "From Mac"))
+        two.insert(old("BBBBBBBB-0000-0000-0000-000000000000", name: "From iPad"))
+
+        let replaced = UURemoteFolderSync.collapseDuplicates(in: &one)
+        UURemoteFolderSync.collapseDuplicates(in: &two)
+        let shared = UURemoteFolderSync.machineID(for: "d1")
+        let kept = one.machines.filter { $0.uuDeviceID == "d1" }
+        XCTAssertEqual(kept.map(\.id), [shared])
+        // Both devices keep the same one: the lowest id.
+        XCTAssertEqual(kept.first?.name, "From Mac")
+        XCTAssertEqual(two.machines.map(\.name), ["From Mac"])
+        XCTAssertEqual(replaced.count, 2)
+        XCTAssertEqual(one.machines.first { $0.name == "Behind" }?.proxyJumpMachineID, shared.uuidString)
+        // Nothing left to do the second time.
+        XCTAssertTrue(UURemoteFolderSync.collapseDuplicates(in: &one).isEmpty)
+    }
+}

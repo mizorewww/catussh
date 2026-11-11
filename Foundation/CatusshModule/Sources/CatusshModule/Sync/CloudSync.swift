@@ -198,6 +198,9 @@ public final class CloudSync: ObservableObject {
     public func start() {
         guard !started else { return }
         started = true
+        // Duplicates synced in by an earlier version go before they are
+        // looked at.
+        store.collapseUURemoteDuplicates()
         transport.changed = { [weak self] in self?.sync() }
         // Asks iCloud for what it has, well before Settings asks whether
         // there is anything.
@@ -503,7 +506,12 @@ public final class CloudSync: ObservableObject {
     }
 
     private func apply(_ done: SyncOutcome.Done) {
-        if !done.machines.isEmpty { store.machineGroup = applying(done.machines, to: store.machineGroup) }
+        if !done.machines.isEmpty {
+            store.machineGroup = applying(done.machines, to: store.machineGroup)
+            // Other devices signed in to UU Remote made their own servers
+            // for its devices before those had a shared id.
+            store.collapseUURemoteDuplicates()
+        }
         if !done.identities.isEmpty { store.identityGroup = applying(done.identities, to: store.identityGroup) }
         if !done.snippets.isEmpty { store.snippetGroup = applying(done.snippets, to: store.snippetGroup) }
         if !done.portForwards.isEmpty {
