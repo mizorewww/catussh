@@ -102,6 +102,15 @@ public struct RemoteDesktopStageView: View {
     @State private var showsTextInput = false
     @State private var textDraft = ""
     @State private var toast: String?
+    /// Asked once: the bar is drawn again for every frame, and each ask is
+    /// a trip to the system.
+    @State private var officialAppInstalled = false
+    /// How fingers drive the pointer, kept on this device for every desktop.
+    @AppStorage(RemoteDesktopTouchMode.defaultsKey) private var touchModeName = RemoteDesktopTouchMode.trackpad.rawValue
+
+    private var touchMode: RemoteDesktopTouchMode {
+        RemoteDesktopTouchMode(rawValue: touchModeName) ?? .trackpad
+    }
 
     public init(session: RemoteDesktopSession, onClose: (() -> Void)? = nil) {
         self.session = session
@@ -117,6 +126,11 @@ public struct RemoteDesktopStageView: View {
                 .clipped()
         }
         .background(Color.black.ignoresSafeArea())
+        #if os(iOS)
+            .onAppear {
+                if session.protocolType == .uuRemote { officialAppInstalled = UULocalBridge.officialAppInstalled }
+            }
+        #endif
         .overlay(alignment: .bottom) {
             if let toast {
                 Text(toast)
@@ -134,7 +148,7 @@ public struct RemoteDesktopStageView: View {
     // MARK: - Canvas + status overlays
 
     @ViewBuilder private var canvasLayer: some View {
-        RemoteDesktopCanvas(session: session, keyboardRequests: keyboardRequests)
+        RemoteDesktopCanvas(session: session, keyboardRequests: keyboardRequests, touchMode: touchMode)
         switch session.phase {
         case .connected:
             EmptyView()
@@ -273,6 +287,9 @@ public struct RemoteDesktopStageView: View {
                 Label("Software Keyboard", systemImage: "keyboard").stageControl()
             }
             .help("Toggle the software keyboard")
+        #endif
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+            touchModeMenu
         #endif
         clipboardMenu
         Button { session.refresh() } label: {
@@ -445,6 +462,42 @@ public struct RemoteDesktopStageView: View {
         .help(session.viewOnly ? "View only: input stays local. Click to take control" : "Watch without sending mouse or keys")
     }
 
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+        /// Trackpad (the pointer moves as far as the finger) or direct touch
+        /// (the pointer goes under it). A pencil, mouse or trackpad always
+        /// points where it is.
+        private var touchModeMenu: some View {
+            Menu {
+                Section {
+                    ForEach(RemoteDesktopTouchMode.allCases, id: \.self) { mode in
+                        Button {
+                            touchModeName = mode.rawValue
+                        } label: {
+                            if mode == touchMode {
+                                Label(mode.title, systemImage: "checkmark")
+                            } else {
+                                Text(mode.title)
+                            }
+                        }
+                    }
+                }
+                Section {
+                    switch touchMode {
+                    case .trackpad:
+                        Text("Drag to move the pointer, tap to click, hold then drag to drag")
+                    case .direct:
+                        Text("Tap to click there, drag to drag, hold to right-click")
+                    }
+                    Text("Two fingers: tap to right-click, drag to scroll, pinch to zoom")
+                    Text("Three fingers: tap for the keyboard")
+                }
+            } label: {
+                Label(touchMode.title, systemImage: touchMode.systemImage).stageControl()
+            }
+            .help("How a finger moves the pointer")
+        }
+    #endif
+
     private var clipboardMenu: some View {
         Menu {
             Button {
@@ -493,7 +546,7 @@ public struct RemoteDesktopStageView: View {
                 Text("UURemote.app is not installed")
             }
             #else
-            if UULocalBridge.officialAppInstalled {
+            if officialAppInstalled {
                 Button("Open in UU Remote app (PiP)") {
                     UULocalBridge.openControlInOfficialApp(for: session.machine)
                 }
