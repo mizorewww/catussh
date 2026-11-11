@@ -54,6 +54,8 @@
 		D7DE448E8B49CA07F4E5CDF1 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D04D4885B33AC1EB4C37B541 /* HomeView.swift */; };
 		53172E9598050B2406402427 /* TerminalTabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2D205578BC2973C0F2DE69B /* TerminalTabs.swift */; };
 		057DB022EC2205319E2BF933 /* UURemoteSessionPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F10AFD10AA0032DAD0BB79A /* UURemoteSessionPickerView.swift */; };
+		0C708A7063F42E2B5568DFD2 /* RemoteDesktopsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2EE08574E137CE01A9C5732 /* RemoteDesktopsView.swift */; };
+		61D1C635EBB8A217BB22E253 /* UURemoteAccountSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03BF184FF356809CAF611B9 /* UURemoteAccountSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -102,6 +104,8 @@
 		D04D4885B33AC1EB4C37B541 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = HomeView.swift; path = mCatussh/Interface/Navigator/HomeView.swift; sourceTree = SOURCE_ROOT; };
 		B2D205578BC2973C0F2DE69B /* TerminalTabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalTabs.swift; sourceTree = "<group>"; };
 		5F10AFD10AA0032DAD0BB79A /* UURemoteSessionPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UURemoteSessionPickerView.swift; sourceTree = "<group>"; };
+		D2EE08574E137CE01A9C5732 /* RemoteDesktopsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteDesktopsView.swift; sourceTree = "<group>"; };
+		D03BF184FF356809CAF611B9 /* UURemoteAccountSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UURemoteAccountSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -209,6 +213,7 @@
 		50C90AF927CF12F400F60B51 /* Interface */ = {
 			isa = PBXGroup;
 			children = (
+				3D5B93B8F94C2C4047B47936 /* RemoteDesktop */,
 				500D726B27CF268400149A43 /* Generic */,
 				50C90AFB27CF142900F60B51 /* Navigator */,
 				50C90AFC27CF142F00F60B51 /* Machine */,
@@ -307,6 +312,15 @@
 			path = Setting;
 			sourceTree = "<group>";
 		};
+		3D5B93B8F94C2C4047B47936 /* RemoteDesktop */ = {
+			isa = PBXGroup;
+			children = (
+				D03BF184FF356809CAF611B9 /* UURemoteAccountSheet.swift */,
+				D2EE08574E137CE01A9C5732 /* RemoteDesktopsView.swift */,
+			);
+			path = RemoteDesktop;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -387,6 +401,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				61D1C635EBB8A217BB22E253 /* UURemoteAccountSheet.swift in Sources */,
+				0C708A7063F42E2B5568DFD2 /* RemoteDesktopsView.swift in Sources */,
 				057DB022EC2205319E2BF933 /* UURemoteSessionPickerView.swift in Sources */,
 				53172E9598050B2406402427 /* TerminalTabs.swift in Sources */,
 				5082A1DA27D1B79A00C71C0F /* SnippetExecuteView.swift in Sources */,

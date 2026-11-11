@@ -262,21 +262,7 @@ private struct DesktopServerRow: View {
     }
 
     private var target: String {
-        switch machine.remoteDesktopProtocol {
-        case .vnc:
-            var parts = ["VNC", machine.remoteAddress + ":" + machine.vncPort]
-            if machine.vncOverSSH { parts.append("over SSH") }
-            return parts.joined(separator: " · ")
-        case .uuRemote:
-            var parts = ["UU Remote"]
-            // The device's name only when the server's says something else.
-            let alias = machine.uuDeviceAlias
-            if !alias.isEmpty, alias != machine.name { parts.append(alias) }
-            if let uuDevice { parts.append(uuDevice.isOnline ? "Online" : "Offline") }
-            return parts.joined(separator: " · ")
-        case .none:
-            return ""
-        }
+        machine.remoteDesktopTarget(uuDevice: uuDevice)
     }
 }
 
@@ -293,23 +279,7 @@ private struct SessionPhaseLabel: View {
         }
     }
 
-    private var status: RXStatus {
-        switch session.phase {
-        case .connected: .success
-        case .idle: .off
-        case .connecting, .authenticating: .running
-        case .closed: .warning
-        case .failed: .danger
-        }
-    }
+    private var status: RXStatus { session.phaseStatus }
 
-    private var title: String {
-        switch session.phase {
-        case .connected: session.viewOnly ? "Viewing" : "Connected"
-        case .idle: "Idle"
-        case .connecting, .authenticating: "Connecting"
-        case .closed: "Closed"
-        case .failed: "Failed"
-        }
-    }
+    private var title: String { session.phaseTitle }
 }
