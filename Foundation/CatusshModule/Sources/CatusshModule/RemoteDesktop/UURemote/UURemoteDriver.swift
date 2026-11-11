@@ -33,7 +33,10 @@ private struct UUJsonBox: @unchecked Sendable {
 /// The RemoteDesktopDriver that speaks native UU Remote.
 public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     private let session: RemoteDesktopSession
-    private let signalClient = UURemoteSignalingClient()
+    /// The device's room, shared with its other connections (see
+    /// `UURemoteRooms`); nil before the join and once stopped.
+    private var roomLease: UURemoteRoomLease?
+    private var signalClient: UURemoteSignalingClient? { roomLease?.signal }
     private let videoAssembler = UURTPVideoAssembler()
     private let videoDecoder = UURemoteRTPVideoDecoder()
     /// Encoded WebRTC frames are decoded here, in arrival order, off the
@@ -120,7 +123,12 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         videoRequestTask?.cancel()
         portMapping.shutdown()
         UURemotePortMappingTunnelProvider.shared.unregister(portMapping, for: deviceID)
-        Task { await signalClient.disconnect() }
+        // Leaves the room, not the socket: the device's other connections
+        // (its terminals, a desktop) still ask for control over it.
+        if let lease = roomLease {
+            roomLease = nil
+            Task { @MainActor in UURemoteRooms.shared.leave(lease) }
+        }
         // Capture the peer before clearing it: `self?.peer` inside the
         // MainActor task would already be nil and closeAll() would never
         // run, leaving the WKWebView peer alive until deinit.
@@ -249,29 +257,30 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             // Room bootstrap, once the saved account is in the client.
             await UURemoteAccountStore.shared.ready()
             session.reportPhase(.connecting("Joining room"), hint: "Joining UU Remote room…")
-            let roomConfig: UURoomConfig
-            if !session.machine.uuAssistID.isEmpty {
-                roomConfig = try await UURemoteAccountStore.shared.apiClient.joinShareByCode(
-                    connectID: session.machine.uuAssistID,
-                    code: session.machine.uuAssistCode
-                )
-            } else {
-                roomConfig = try await UURemoteAccountStore.shared.apiClient.roomJoinByDevice(deviceID, forceJoin: true)
+            // The room and its signal channel, joined and opened once per
+            // device: a second join would take the room from the device's
+            // other connections, and the host would drop them.
+            let lease = try await UURemoteRooms.shared.join(
+                session.machine,
+                deviceID: deviceID,
+                onEvent: { [weak self] event, args, _ in
+                    self?.handleSignalEvent(event, args: args)
+                },
+                onSOAC: { [weak self] soac in
+                    let box = UUJsonBox(soac)
+                    Task { await self?.handleSOAC(box.dict) }
+                }
+            )
+            guard !closed else {
+                await MainActor.run { UURemoteRooms.shared.leave(lease) }
+                return
             }
+            roomLease = lease
+            let roomConfig = lease.config
             self.roomConfig = roomConfig
             session.reportHint("Signal servers: \(roomConfig.signalServers.joined(separator: ", "))")
-
-            // Signaling
-            session.reportPhase(.connecting("Opening signal channel"), hint: "Connecting to signal server…")
-            await signalClient.setOnSignalEvent { [weak self] event, args, _ in
-                self?.handleSignalEvent(event, args: args)
-            }
-            await signalClient.setOnSOAC { [weak self] soac in
-                let box = UUJsonBox(soac)
-                Task { await self?.handleSOAC(box.dict) }
-            }
-            try await signalClient.connect(roomConfig: roomConfig)
             session.reportHint("Signal channel open")
+            guard let signalClient else { throw UUSignalError.notConnected }
 
             // Control emit — the upstream viewer asks to be controlled
             // *before* it knows the ICE servers; the ack carries them.
@@ -514,7 +523,8 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         switch event {
         case "control":
             // The host may push an offer through a control event too.
-            if let first = args.first, let sdp = Self.sdpField(first) {
+            // The room's socket is shared: only an offer for this session.
+            if let first = args.first, matchesRoute(first), let sdp = Self.sdpField(first) {
                 Task { await self.handleRemoteOffer(sdp) }
             }
         // "soac" is intentionally NOT routed here: `onSOAC` on the
@@ -525,6 +535,17 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         default:
             break
         }
+    }
+
+    /// Route filtering (upstream `matches_route`): ids must match when
+    /// present. The room's socket carries every session on the device (see
+    /// `UURemoteRooms`), so nothing is for this one before its control ack:
+    /// the host answers our offer, sent after it.
+    private func matchesRoute(_ body: [String: Any]) -> Bool {
+        guard !remoteClientID.isEmpty else { return false }
+        if let ice = body["ice_id"] as? String, ice != iceID { return false }
+        if let app = body["app_control_id"] as? String, app != appControlID { return false }
+        return true
     }
 
     /// `sdp` arrives either plain or as `gzip_sdp` base64 (the placeholder
@@ -542,11 +563,8 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         // Upstream `Peer::receive`: the payload sits under `data` when the
         // envelope is {client_id, data:{…}}, or is the event itself.
         let soac = (raw["data"] as? [String: Any]) ?? raw
-        // Route filtering (upstream `matches_route`): ids must match when
-        // present.
-        if let client = raw["client_id"] as? String, !remoteClientID.isEmpty, client != remoteClientID { return }
-        if let ice = soac["ice_id"] as? String, ice != iceID { return }
-        if let app = soac["app_control_id"] as? String, app != appControlID { return }
+        if let client = raw["client_id"] as? String, client != remoteClientID { return }
+        guard matchesRoute(soac) else { return }
         switch soac["type"] as? String {
         case "offer":
             guard let sdp = Self.sdpField(soac) else { return }
@@ -580,6 +598,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         if !sdp.contains("a=max-message-size:") {
             sdp = Self.withMaxMessageSize(sdp)
         }
+        guard let signalClient else { throw UUSignalError.notConnected }
         try await signalClient.sendSOAC([
             "client_id": remoteClientID,
             "data": [
@@ -617,6 +636,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             guard let answerSDP: String = try await peer.evaluate(
                 "offerDesc(\(Self.javascriptString(sdp)))"
             ) else { return }
+            guard let signalClient else { throw UUSignalError.notConnected }
             try await signalClient.sendSOAC([
                 "client_id": remoteClientID,
                 "data": [
@@ -647,7 +667,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             "sdpMid": candidate["sdpMid"] ?? NSNull(),
             "sdpMLineIndex": candidate["sdpMLineIndex"] ?? NSNull(),
         ]
-        try? await signalClient.sendSOAC([
+        try? await signalClient?.sendSOAC([
             "client_id": remoteClientID,
             "data": [
                 "type": "candidate",

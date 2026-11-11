@@ -6,7 +6,8 @@
 //  connection per device (room, signaling, control, WebRTC data channels)
 //  carries that device's terminals, shared by every terminal tab on it and
 //  closed a little after the last one. The desktop keeps a connection of its own,
-//  which streams the screen.
+//  which streams the screen; both are sessions in the device's one room
+//  (`UURemoteRooms`), so neither takes the room from the other.
 //
 
 import Foundation

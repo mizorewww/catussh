@@ -71,6 +71,8 @@ private final class UUTerminalLink {
     private var sentSize: CGSize = .zero
     private var openedAt = Date.distantFuture
     private var ended = false
+    /// When the connection last dropped under a session that was resumed.
+    private var resumes: [Date] = []
     private let decoder = UTF8StreamDecoder()
 
     init(machine: RDMachine, finished: DispatchSemaphore, wake: DispatchSemaphore) {
@@ -145,9 +147,7 @@ private final class UUTerminalLink {
     func pump(typed: String, size: CGSize, context: TerminalContext) {
         guard let driver, let id = terminalID, !ended else { return }
         if driver.isClosed {
-            context.putInformation("\r\n[!] The UU Remote connection dropped.")
-            finished.signal()
-            wake.signal()
+            resume(after: driver, size: size, context: context)
             return
         }
         let input = Date().timeIntervalSince(openedAt) < Self.startupReplyWindow ? TerminalReplies.dropping(from: typed) : typed
@@ -159,6 +159,33 @@ private final class UUTerminalLink {
     }
 
     static let startupReplyWindow: TimeInterval = 3
+
+    /// The connection dropped under the tab. The host keeps the session
+    /// through it, so the tab attaches to it again on a new connection, a few
+    /// times at most: a device that keeps dropping it ends the tab.
+    private func resume(after dropped: UURemoteDriver, size: CGSize, context: TerminalContext) {
+        self.driver = nil
+        terminalID = nil
+        UURemoteConnections.shared.release(machine, driver: dropped)
+        let now = Date()
+        resumes = resumes.filter { now.timeIntervalSince($0) < Self.resumeWindow }
+        guard context.uuSessionID != nil, resumes.count < Self.resumeLimit else {
+            context.putInformation("\r\n[!] The UU Remote connection dropped.")
+            finished.signal()
+            wake.signal()
+            return
+        }
+        resumes.append(now)
+        context.putInformation("\r\n[*] The UU Remote connection dropped, reconnecting")
+        Task { @MainActor [weak self, weak context] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard let self, let context, !self.ended else { return }
+            self.connect(context: context, size: size)
+        }
+    }
+
+    static let resumeLimit = 3
+    static let resumeWindow: TimeInterval = 300
 
     func end() {
         guard !ended else { return }
