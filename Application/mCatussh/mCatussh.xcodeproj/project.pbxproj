@@ -34,6 +34,7 @@
 		5082A1D327D0E10000C71C0F /* EULA in Resources */ = {isa = PBXBuildFile; fileRef = 5082A1D127D0E10000C71C0F /* EULA */; };
 		5082A1D427D0E10000C71C0F /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 5082A1D227D0E10000C71C0F /* LICENSE */; };
 		5082A1D627D0E10000C71C0F /* catussh.icon in Resources */ = {isa = PBXBuildFile; fileRef = 5082A1D527D0E10000C71C0F /* catussh.icon */; };
+		7D5FD892AAE3A569DB36A246 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A7149222C8C758956034A9B7 /* PrivacyInfo.xcprivacy */; };
 		5082A1D627D1228900C71C0F /* UIViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5082A1D527D1228900C71C0F /* UIViewController.swift */; };
 		5082A1D827D1A95400C71C0F /* PickMachineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5082A1D727D1A95400C71C0F /* PickMachineView.swift */; };
 		5082A1DA27D1B79A00C71C0F /* SnippetExecuteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5082A1D927D1B79A00C71C0F /* SnippetExecuteView.swift */; };
@@ -84,6 +85,8 @@
 		5082A1D127D0E10000C71C0F /* EULA */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; name = EULA; path = ../../../../Resources/EULA; sourceTree = "<group>"; };
 		5082A1D227D0E10000C71C0F /* LICENSE */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; name = LICENSE; path = ../../../../Resources/LICENSE; sourceTree = "<group>"; };
 		5082A1D527D0E10000C71C0F /* catussh.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer; name = catussh.icon; path = "../../../../Resources/catussh.icon"; sourceTree = "<group>"; };
+		A7149222C8C758956034A9B7 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		D8C65817651D1CF43EA3FC58 /* mCatussh-iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "mCatussh-iOS.entitlements"; sourceTree = "<group>"; };
 		5082A1D527D1228900C71C0F /* UIViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIViewController.swift; sourceTree = "<group>"; };
 		5082A1D727D1A95400C71C0F /* PickMachineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PickMachineView.swift; sourceTree = "<group>"; };
 		5082A1D927D1B79A00C71C0F /* SnippetExecuteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnippetExecuteView.swift; sourceTree = "<group>"; };
@@ -169,6 +172,8 @@
 			children = (
 				5082A1E127D1F92D00C71C0F /* Info.plist */,
 				501FF79827CEFAFA00380D59 /* mCatussh.entitlements */,
+				D8C65817651D1CF43EA3FC58 /* mCatussh-iOS.entitlements */,
+				A7149222C8C758956034A9B7 /* PrivacyInfo.xcprivacy */,
 				50C90AFA27CF12FB00F60B51 /* Application */,
 				50C90AF927CF12F400F60B51 /* Interface */,
 				50C90AF827CF12F000F60B51 /* Extension */,
@@ -397,6 +402,7 @@
 				501FF78F27CEFADD00380D59 /* Assets.xcassets in Resources */,
 				5082A1D327D0E10000C71C0F /* EULA in Resources */,
 				5082A1D627D0E10000C71C0F /* catussh.icon in Resources */,
+				7D5FD892AAE3A569DB36A246 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -584,12 +590,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = catussh;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = mCatussh/mCatussh.entitlements;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Mac Developer";
-				CODE_SIGN_STYLE = Manual;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]" = "mCatussh/mCatussh-iOS.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_ASSET_PATHS = "";
-				DEVELOPMENT_TEAM = GXZ23M5TP2;
+				DEVELOPMENT_TEAM = LT98S43NKA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = mCatussh/Info.plist;
@@ -617,8 +623,6 @@
 				MARKETING_VERSION = 2.6.2;
 				PRODUCT_BUNDLE_IDENTIFIER = me.mizorewww.rayon;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				PROVISIONING_PROFILE_SPECIFIER = "Rayon iOS Development";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = "QAQ Wiki macOS Wildcard";
 				SUPPORTS_MACCATALYST = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -632,12 +636,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = catussh;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = mCatussh/mCatussh.entitlements;
-				CODE_SIGN_IDENTITY = "iPhone Distribution";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Mac Developer";
-				CODE_SIGN_STYLE = Manual;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]" = "mCatussh/mCatussh-iOS.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_ASSET_PATHS = "";
-				DEVELOPMENT_TEAM = GXZ23M5TP2;
+				DEVELOPMENT_TEAM = LT98S43NKA;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = mCatussh/Info.plist;
@@ -665,8 +669,6 @@
 				MARKETING_VERSION = 2.6.2;
 				PRODUCT_BUNDLE_IDENTIFIER = me.mizorewww.rayon;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				PROVISIONING_PROFILE_SPECIFIER = "QAQ Wiki iOS Distribution Wildcard";
-				"PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]" = "QAQ Wiki macOS Wildcard";
 				SUPPORTS_MACCATALYST = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
