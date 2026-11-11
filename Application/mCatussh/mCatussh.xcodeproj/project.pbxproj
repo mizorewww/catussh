@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		4A788CD5FEFDAF3683EBCC7F /* DataBackupSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 771BEB9C5B44CF10ECB82077 /* DataBackupSettings.swift */; };
+		249F7203CEA8A1612AAB34A2 /* FolderActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7535DEABE9DF921F618B72C6 /* FolderActions.swift */; };
 		4E7249EE914355DEEC0D434C /* ServersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A2048D0A4ED7235ED40374E /* ServersView.swift */; };
 		500D726A27CF1C0800149A43 /* View.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500D726927CF1C0800149A43 /* View.swift */; };
 		500D727127CF40CC00149A43 /* EditIdentityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500D727027CF40CC00149A43 /* EditIdentityView.swift */; };
@@ -55,6 +57,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		771BEB9C5B44CF10ECB82077 /* DataBackupSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataBackupSettings.swift; sourceTree = "<group>"; };
+		7535DEABE9DF921F618B72C6 /* FolderActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderActions.swift; sourceTree = "<group>"; };
 		0A2048D0A4ED7235ED40374E /* ServersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ServersView.swift; path = mCatussh/Interface/Machine/ServersView.swift; sourceTree = SOURCE_ROOT; };
 		500D726927CF1C0800149A43 /* View.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = View.swift; sourceTree = "<group>"; };
 		500D727027CF40CC00149A43 /* EditIdentityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditIdentityView.swift; sourceTree = "<group>"; };
@@ -244,6 +248,7 @@
 		50C90AFC27CF142F00F60B51 /* Machine */ = {
 			isa = PBXGroup;
 			children = (
+				7535DEABE9DF921F618B72C6 /* FolderActions.swift */,
 				50D3AEFA27D05D6D0085F899 /* EditMachineView.swift */,
 				5082A1D727D1A95400C71C0F /* PickMachineView.swift */,
 				0A2048D0A4ED7235ED40374E /* ServersView.swift */,
@@ -295,6 +300,7 @@
 		50D77BE527D2F0FB00177190 /* Setting */ = {
 			isa = PBXGroup;
 			children = (
+				771BEB9C5B44CF10ECB82077 /* DataBackupSettings.swift */,
 				50D77BE627D2F0FB00177190 /* SettingView.swift */,
 				501B334727DF16AA00EB6261 /* LogView.swift */,
 			);
@@ -381,6 +387,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4A788CD5FEFDAF3683EBCC7F /* DataBackupSettings.swift in Sources */,
+				249F7203CEA8A1612AAB34A2 /* FolderActions.swift in Sources */,
 				5082A1DA27D1B79A00C71C0F /* SnippetExecuteView.swift in Sources */,
 				50C90B0227CF146400F60B51 /* SnippetView.swift in Sources */,
 				501B334827DF16AA00EB6261 /* LogView.swift in Sources */,
