@@ -15,6 +15,8 @@ struct PickMachineView: View {
 
     @Binding var selection: [RDMachine.ID]
     @State var rawSelection: [RDMachine.ID] = []
+    @State var searchKey = ""
+    @ObservedObject var uuAccount = UURemoteAccountStore.shared
 
     init(selection: Binding<[RDMachine.ID]>, canSelectMany: Bool = true) {
         _selection = selection
@@ -32,6 +34,24 @@ struct PickMachineView: View {
     }
 
     @Environment(\.dismiss) private var dismiss
+
+    var machines: [RDMachine] {
+        let all = store.machineGroup.machines.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        guard !searchKey.isEmpty else { return all }
+        return all.filter { $0.isQualifiedForSearch(text: searchKey.lowercased()) }
+    }
+
+    /// An offline UU Remote device can't be reached for anything picked here.
+    func isReachable(_ machine: RDMachine) -> Bool {
+        guard machine.isUURemoteDevice else { return true }
+        return uuAccount.devices.first { $0.deviceID == machine.uuDeviceID }?.isOnline ?? false
+    }
+
+    var selectable: [RDMachine] { machines.filter(isReachable) }
+
+    var allSelected: Bool {
+        !selectable.isEmpty && selectable.allSatisfy { rawSelection.contains($0.id) }
+    }
 
     var selectionFooter: String {
         rawSelection
@@ -58,15 +78,38 @@ struct PickMachineView: View {
             }
 
             Section {
-                if store.machineGroup.machines.isEmpty {
-                    Label("No servers yet", systemImage: "questionmark.square.dashed")
+                if machines.isEmpty {
+                    Label(store.machineGroup.machines.isEmpty ? "No servers yet" : "No matches", systemImage: "questionmark.square.dashed")
                 } else {
-                    ForEach(store.machineGroup.machines) { machine in
+                    ForEach(machines) { machine in
                         Button {
                             toggleSelection(for: machine.id)
                         } label: {
-                            Label(machine.shortDescription(), systemImage: sysImage(for: machine))
+                            HStack {
+                                Label {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        RedactableText(machine.name, redacted: store.machineRedacted == .all)
+                                            .foregroundStyle(.rxInk)
+                                        if machine.isUURemoteDevice {
+                                            Text(isReachable(machine) ? "UU Remote · Online" : "UU Remote · Offline")
+                                                .font(.caption)
+                                                .foregroundStyle(.rxInkSecondary)
+                                        } else {
+                                            RedactableText("\(machine.remoteAddress):\(machine.remotePort)", redacted: store.machineRedacted != .none)
+                                                .font(.rxCode)
+                                                .foregroundStyle(.rxInkSecondary)
+                                        }
+                                    }
+                                } icon: {
+                                    Image(systemName: sysImage(for: machine))
+                                }
+                                Spacer()
+                                if !machine.group.isEmpty {
+                                    RXTag(machine.group)
+                                }
+                            }
                         }
+                        .disabled(!isReachable(machine))
                     }
                 }
             } header: {
@@ -74,6 +117,20 @@ struct PickMachineView: View {
             }
 
             Section {
+                if canSelectMany {
+                    Button {
+                        if allSelected {
+                            rawSelection.removeAll { id in selectable.contains { $0.id == id } }
+                        } else {
+                            for machine in selectable where !rawSelection.contains(machine.id) {
+                                rawSelection.append(machine.id)
+                            }
+                        }
+                    } label: {
+                        Label(allSelected ? "Deselect All" : "Select All", systemImage: "checklist")
+                    }
+                    .disabled(selectable.isEmpty)
+                }
                 Button {
                     rawSelection = []
                 } label: {
@@ -83,9 +140,16 @@ struct PickMachineView: View {
             }
         }
         .rxGroupedList()
+        .searchable(text: $searchKey, prompt: "Search servers")
         .navigationTitle("Choose Servers")
         .toolbar {
-            ToolbarItem {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    dismiss()
+                    completion?([])
+                }
+            }
+            ToolbarItem(placement: .confirmationAction) {
                 Button {
                     dismiss()
                     completion?(rawSelection)
