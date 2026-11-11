@@ -106,21 +106,18 @@ struct EditSnippetView: View {
     }
 
     func completeSheet() {
-        guard !name.isEmpty else {
+        guard !name.trimmingCharacters(in: .whitespaces).isEmpty else {
             UIBridge.presentError(with: "Empty Name")
             return
         }
 
-        let id = inEditWith ?? UUID()
-
-        var newSnippet = RDSnippet(
-            id: id,
-            name: name,
-            group: group,
-            code: code,
-            comment: comment,
-            attachment: [:]
-        )
+        // Edit the saved snippet, so its attachment is kept.
+        var newSnippet = inEditWith.map { CatusshStore.shared.snippetGroup[$0] }
+            ?? RDSnippet(name: "", group: "", code: "", comment: "")
+        newSnippet.name = name.trimmingCharacters(in: .whitespaces)
+        newSnippet.group = group
+        newSnippet.code = code
+        newSnippet.comment = comment
         if avatar.isEmpty {
             newSnippet.clearSFAvatar()
         } else {

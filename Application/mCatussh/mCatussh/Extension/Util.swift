@@ -109,13 +109,9 @@ enum CatusshUtil {
             }
             onMainThread {
                 let runner = NavigationStack {
-                    let context = SnippetExecuteContext(snippet: snippet, machineGroup: machineIds.map { machineId in
-                        CatusshStore.shared.machineGroup[machineId]
-                    })
-                    SnippetExecuteView(context: context)
+                    SnippetExecuteView(snippet: snippet, machines: machineIds)
                 }
                 .expended()
-                .navigationBarTitleDisplayMode(.inline)
                 // The picker sheet is still animating out when the
                 // selection comes back; the queue waits it out.
                 presentModalSheet(rootView: runner)

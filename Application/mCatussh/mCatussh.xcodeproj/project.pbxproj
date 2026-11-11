@@ -36,7 +36,6 @@
 		5082A1D627D1228900C71C0F /* UIViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5082A1D527D1228900C71C0F /* UIViewController.swift */; };
 		5082A1D827D1A95400C71C0F /* PickMachineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5082A1D727D1A95400C71C0F /* PickMachineView.swift */; };
 		5082A1DA27D1B79A00C71C0F /* SnippetExecuteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5082A1D927D1B79A00C71C0F /* SnippetExecuteView.swift */; };
-		5082A1DC27D1D7DE00C71C0F /* SnippetExecuteContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5082A1DB27D1D7DE00C71C0F /* SnippetExecuteContext.swift */; };
 		5082A1DE27D1ECF300C71C0F /* LicenseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5082A1DD27D1ECF300C71C0F /* LicenseView.swift */; };
 		5082A1E027D1ED5800C71C0F /* AgreementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5082A1DF27D1ED5800C71C0F /* AgreementView.swift */; };
 		50C90AF327CF125200F60B51 /* DoubleConfirm.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50C90AF127CF125200F60B51 /* DoubleConfirm.swift */; };
@@ -82,7 +81,6 @@
 		5082A1D527D1228900C71C0F /* UIViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIViewController.swift; sourceTree = "<group>"; };
 		5082A1D727D1A95400C71C0F /* PickMachineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PickMachineView.swift; sourceTree = "<group>"; };
 		5082A1D927D1B79A00C71C0F /* SnippetExecuteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnippetExecuteView.swift; sourceTree = "<group>"; };
-		5082A1DB27D1D7DE00C71C0F /* SnippetExecuteContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnippetExecuteContext.swift; sourceTree = "<group>"; };
 		5082A1DD27D1ECF300C71C0F /* LicenseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LicenseView.swift; sourceTree = "<group>"; };
 		5082A1DF27D1ED5800C71C0F /* AgreementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgreementView.swift; sourceTree = "<group>"; };
 		5082A1E127D1F92D00C71C0F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -262,7 +260,6 @@
 				50C90B0127CF146400F60B51 /* SnippetView.swift */,
 				50D3AEF827D0582F0085F899 /* SnippetElementView.swift */,
 				5082A1D927D1B79A00C71C0F /* SnippetExecuteView.swift */,
-				5082A1DB27D1D7DE00C71C0F /* SnippetExecuteContext.swift */,
 				50FD853927D0445D00F6F01A /* EditSnippetView.swift */,
 			);
 			path = Snippet;
@@ -409,7 +406,6 @@
 				50FD853A27D0445D00F6F01A /* EditSnippetView.swift in Sources */,
 				501B334227DF0DD100EB6261 /* LogRedirect.swift in Sources */,
 				500D727527CF43CE00149A43 /* FilePicker.swift in Sources */,
-				5082A1DC27D1D7DE00C71C0F /* SnippetExecuteContext.swift in Sources */,
 				50C90AF427CF125200F60B51 /* UIBridge.swift in Sources */,
 				50D77BE727D2F0FB00177190 /* SettingView.swift in Sources */,
 				501FF78B27CEFADD00380D59 /* mCatusshApp.swift in Sources */,
