@@ -281,8 +281,8 @@ public class CatusshStore: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// Folders of servers; kept on this device. The servers carry their
-    /// folder's name, which is what syncs.
+    /// Folders of servers. The servers carry their folder's name, and a
+    /// folder syncs by its name.
     @Published public var folderGroup: RDFolderGroup = .init() {
         didSet {
             storeEncryptedDefault(

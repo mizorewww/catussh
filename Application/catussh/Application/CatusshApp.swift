@@ -204,6 +204,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_: Notification) {
         AppearancePreference.applyStored()
+        // The appearance may come from another device, through iCloud.
+        windowObservers.append(
+            NotificationCenter.default.addObserver(forName: CloudSync.settingsDidChange, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { AppearancePreference.applyStored() }
+            }
+        )
         installShortcutMonitor()
         installWindowPolicyObservers()
         MenubarTool.shared.restore()

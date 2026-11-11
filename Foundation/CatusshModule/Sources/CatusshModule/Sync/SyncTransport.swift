@@ -3,9 +3,10 @@
 //  CatusshModule
 //
 //  Where the sealed document is kept. iCloud's key-value store holds it as one
-//  value: it is small (servers and identities compress to a few kilobytes), it
-//  reaches every device signed in to the same iCloud account, and a change
-//  made elsewhere is announced.
+//  value: it is small (a few dozen servers, identities, snippets and the
+//  settings compress to a few kilobytes; hundreds, with private keys, to some
+//  200 KB of the 1 MB it allows), it reaches every device signed in to the
+//  same iCloud account, and a change made elsewhere is announced.
 //
 
 import Foundation
