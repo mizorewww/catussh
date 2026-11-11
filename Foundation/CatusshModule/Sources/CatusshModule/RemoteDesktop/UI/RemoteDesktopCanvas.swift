@@ -21,15 +21,22 @@ public struct RemoteDesktopCanvas: UIViewRepresentable {
     @ObservedObject public var session: RemoteDesktopSession
     /// Bumped to toggle the software keyboard on platforms that have one.
     public var keyboardRequests: Int
+    /// How fingers drive the pointer on a touch screen.
+    public var touchMode: RemoteDesktopTouchMode
 
-    public init(session: RemoteDesktopSession, keyboardRequests: Int = 0) {
+    public init(session: RemoteDesktopSession, keyboardRequests: Int = 0, touchMode: RemoteDesktopTouchMode = .trackpad) {
         self.session = session
         self.keyboardRequests = keyboardRequests
+        self.touchMode = touchMode
     }
 
     public func makeUIView(context _: Context) -> RemoteDesktopCanvasView {
         let view = RemoteDesktopCanvasView()
         view.session = session
+        view.touchMode = touchMode
+        // A canvas made again (the page came back) does not bring up the
+        // keyboard for requests an earlier one already answered.
+        view.syncKeyboardRequests(keyboardRequests)
         view.applyFrame(session.frameImage, framebufferSize: session.framebufferSize)
         view.applyCursor(session.remoteCursor)
         return view
@@ -37,20 +44,40 @@ public struct RemoteDesktopCanvas: UIViewRepresentable {
 
     public func updateUIView(_ view: RemoteDesktopCanvasView, context _: Context) {
         view.session = session
+        view.touchMode = touchMode
         view.applyFrame(session.frameImage, framebufferSize: session.framebufferSize)
         view.applyCursor(session.remoteCursor)
         view.applyKeyboardRequest(keyboardRequests)
     }
 }
 
-/// Draws the remote framebuffer and captures local input. UIKit gives both
-/// apps the same pointer model: iPadOS trackpads/mice and Mac Catalyst
-/// report through `UIHoverGestureRecognizer`, wheel/trackpad scrolls
-/// through `UIPanGestureRecognizer` scroll types, and hardware keys
-/// through `presses*`; `UIKeyInput` brings up the software keyboard.
+/// Draws the remote framebuffer and captures local input. iPadOS
+/// trackpads/mice and Mac Catalyst report through `UIHoverGestureRecognizer`
+/// and the press recognizers, wheel/trackpad scrolls through
+/// `UIPanGestureRecognizer` scroll types, and hardware keys through
+/// `presses*`; all of them point where they are. On a touch screen, fingers
+/// go through `RemoteDesktopTouchGestures` (a trackpad by default, or
+/// direct touch), and the software keyboard comes up only when asked for.
 public final class RemoteDesktopCanvasView: UIView {
     /// The session receiving input; set by the representable.
     public var session: RemoteDesktopSession?
+    /// How fingers drive the pointer; a gesture under way is let go of when
+    /// it changes.
+    public var touchMode: RemoteDesktopTouchMode = .trackpad {
+        didSet {
+            guard touchMode != oldValue else { return }
+            perform(gestures.cancelled())
+            gestures.mode = touchMode
+        }
+    }
+
+    /// Fingers work as on Moonlight on an iPad or iPhone; Mac Catalyst has
+    /// no touch screen and keeps its pointer model.
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+        static let usesTouchGestures = true
+    #else
+        static let usesTouchGestures = false
+    #endif
 
     private let frameView = UIImageView()
     private let cursorView = UIImageView()
@@ -60,10 +87,23 @@ public final class RemoteDesktopCanvasView: UIView {
     private var appliedKeyboardRequests = 0
     private var scrollAccumX: CGFloat = 0
     private var scrollAccumY: CGFloat = 0
+    /// Where the pointer is, normalized: where a pencil, mouse or finger put
+    /// it, and where a trackpad finger moves it from.
     private var lastNormalized = CGPoint(x: 0.5, y: 0.5)
     private var primaryPress: UILongPressGestureRecognizer!
     private var secondaryPress: UITapGestureRecognizer!
     private var tertiaryPress: UITapGestureRecognizer!
+    private var gestures = RemoteDesktopTouchGestures()
+    /// The picture's pinch zoom.
+    private var viewport = RemoteDesktopViewport()
+    /// The text input the software keyboard comes up for. The canvas takes
+    /// hardware keys itself and is no text input, so focusing it never
+    /// shows a keyboard.
+    private let keyboardProxy = RemoteDesktopKeyboardProxy()
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+        private var pointerInteraction: UIPointerInteraction?
+        private let dragFeedback = UIImpactFeedbackGenerator(style: .light)
+    #endif
 
     public override init(frame: CGRect) {
         super.init(frame: frame)
@@ -78,12 +118,17 @@ public final class RemoteDesktopCanvasView: UIView {
     private func commonInit() {
         backgroundColor = .black
         isUserInteractionEnabled = true
+        isMultipleTouchEnabled = Self.usesTouchGestures
         frameView.contentMode = .scaleToFill // it is sized to the fit rect already
         frameView.isUserInteractionEnabled = false
         cursorView.isUserInteractionEnabled = false
         cursorView.isHidden = true
         addSubview(frameView)
         addSubview(cursorView)
+        keyboardProxy.canvas = self
+        keyboardProxy.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
+        keyboardProxy.isUserInteractionEnabled = false
+        addSubview(keyboardProxy)
 
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(hoverMoved(_:)))
         addGestureRecognizer(hover)
@@ -93,6 +138,14 @@ public final class RemoteDesktopCanvasView: UIView {
         primaryPress = UILongPressGestureRecognizer(target: self, action: #selector(pressRecognized(_:)))
         primaryPress.minimumPressDuration = 0
         primaryPress.allowableMovement = .greatestFiniteMagnitude
+        if Self.usesTouchGestures {
+            // Fingers are the touch handlers'; a pencil and a mouse or
+            // trackpad button press where they are.
+            primaryPress.allowedTouchTypes = [
+                NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
+                NSNumber(value: UITouch.TouchType.pencil.rawValue),
+            ]
+        }
         addGestureRecognizer(primaryPress)
 
         // `buttonMaskRequired` only exists on UITapGestureRecognizer, so
@@ -114,6 +167,12 @@ public final class RemoteDesktopCanvasView: UIView {
         scroll.minimumNumberOfTouches = 0
         scroll.maximumNumberOfTouches = 0
         addGestureRecognizer(scroll)
+
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+            let pointer = UIPointerInteraction(delegate: self)
+            addInteraction(pointer)
+            pointerInteraction = pointer
+        #endif
     }
 
     // MARK: - Frames
@@ -127,6 +186,7 @@ public final class RemoteDesktopCanvasView: UIView {
     }
 
     func applyCursor(_ cursor: RemoteCursorInfo?) {
+        let wasHidden = cursorView.isHidden
         if let cursor, cursor.visible, let image = cursor.image {
             cursorView.image = UIImage(cgImage: image)
             cursorView.isHidden = false
@@ -135,6 +195,9 @@ public final class RemoteDesktopCanvasView: UIView {
         } else {
             cursorView.isHidden = true
         }
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+            if wasHidden != cursorView.isHidden { pointerInteraction?.invalidate() }
+        #endif
         setNeedsLayout()
     }
 
@@ -154,11 +217,16 @@ public final class RemoteDesktopCanvasView: UIView {
         )
     }
 
+    /// Where the framebuffer is drawn: `imageRect`, pinch-zoomed.
+    var displayRect: CGRect {
+        viewport.rect(fitting: imageRect, in: bounds)
+    }
+
     public override func layoutSubviews() {
         super.layoutSubviews()
-        frameView.frame = imageRect
+        let rect = displayRect
+        frameView.frame = rect
         if !cursorView.isHidden {
-            let rect = imageRect
             let fb = framebufferSize
             let w = fb.width > 0 ? cursorPixelSize.width * rect.width / fb.width : cursorPixelSize.width
             let h = fb.height > 0 ? cursorPixelSize.height * rect.height / fb.height : cursorPixelSize.height
@@ -177,7 +245,7 @@ public final class RemoteDesktopCanvasView: UIView {
     /// so presses near the letterbox edge still land inside the remote
     /// display. Returns nil while there is no framebuffer.
     private func normalizedPoint(_ location: CGPoint) -> CGPoint? {
-        let rect = imageRect
+        let rect = displayRect
         guard rect.width > 0, rect.height > 0, framebufferSize.width > 0 else { return nil }
         let nx = (location.x - rect.minX) / rect.width
         let ny = (location.y - rect.minY) / rect.height
@@ -202,7 +270,7 @@ public final class RemoteDesktopCanvasView: UIView {
         let point = normalizedPoint(recognizer.location(in: self)) ?? lastNormalized
         switch recognizer.state {
         case .began:
-            _ = becomeFirstResponder()
+            takeKeyFocus()
             lastNormalized = point
             session?.pointerButton(.left, isDown: true, normalizedX: point.x, normalizedY: point.y)
         case .changed:
@@ -231,11 +299,16 @@ public final class RemoteDesktopCanvasView: UIView {
             scrollAccumX = 0
             scrollAccumY = 0
         }
-        // translation.y follows the finger/wheel direction: positive under
-        // natural scrolling means content pulled down = scroll up, which
-        // matches the driver's "positive y = scroll up" contract.
-        scrollAccumX += translation.x
-        scrollAccumY += translation.y
+        scroll(by: CGVector(dx: translation.x, dy: translation.y), at: point)
+    }
+
+    /// Turns a scroll of `delta` view points into wheel ticks at `point`.
+    /// `delta.dy` follows the finger/wheel direction: positive under natural
+    /// scrolling means content pulled down = scroll up, which matches the
+    /// driver's "positive y = scroll up" contract.
+    private func scroll(by delta: CGVector, at point: CGPoint) {
+        scrollAccumX += delta.dx
+        scrollAccumY += delta.dy
         var dx: Double = 0
         var dy: Double = 0
         let tickPx: CGFloat = 28
@@ -247,28 +320,134 @@ public final class RemoteDesktopCanvasView: UIView {
         session?.scrolled(deltaX: dx, deltaY: dy, normalizedX: point.x, normalizedY: point.y)
     }
 
+    // MARK: - Touch input
+
+    /// The fingers among `touches`, by a stable id, where they are now. A
+    /// pencil and an indirect pointer are the recognizers'.
+    private func fingers(_ touches: Set<UITouch>) -> [Int: CGPoint] {
+        guard Self.usesTouchGestures else { return [:] }
+        var fingers: [Int: CGPoint] = [:]
+        for touch in touches where touch.type == .direct {
+            fingers[ObjectIdentifier(touch).hashValue] = touch.location(in: self)
+        }
+        return fingers
+    }
+
+    private func now(_ event: UIEvent?) -> TimeInterval {
+        event?.timestamp ?? ProcessInfo.processInfo.systemUptime
+    }
+
+    public override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let fingers = fingers(touches)
+        guard !fingers.isEmpty else { return super.touchesBegan(touches, with: event) }
+        takeKeyFocus()
+        perform(gestures.began(fingers, at: now(event)))
+    }
+
+    public override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let fingers = fingers(touches)
+        guard !fingers.isEmpty else { return super.touchesMoved(touches, with: event) }
+        perform(gestures.moved(fingers, at: now(event)))
+    }
+
+    public override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let fingers = fingers(touches)
+        guard !fingers.isEmpty else { return super.touchesEnded(touches, with: event) }
+        perform(gestures.ended(Array(fingers.keys), at: now(event)))
+    }
+
+    public override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        let fingers = fingers(touches)
+        guard !fingers.isEmpty else { return super.touchesCancelled(touches, with: event) }
+        perform(gestures.cancelled())
+    }
+
+    /// Carries out what the touch gestures asked for.
+    private func perform(_ actions: [RemoteDesktopTouchAction]) {
+        for action in actions {
+            switch action {
+            case let .movePointer(by: delta):
+                let rect = displayRect
+                guard rect.width > 0, rect.height > 0, framebufferSize.width > 0 else { continue }
+                lastNormalized = CGPoint(
+                    x: min(max(lastNormalized.x + delta.dx / rect.width, 0), 1),
+                    y: min(max(lastNormalized.y + delta.dy / rect.height, 0), 1)
+                )
+                session?.pointerMoved(normalizedX: lastNormalized.x, normalizedY: lastNormalized.y)
+                // Zoomed in, the picture follows the pointer.
+                if viewport.zoom > 1 {
+                    viewport.reveal(lastNormalized, margin: 48, base: imageRect, bounds: bounds)
+                    setNeedsLayout()
+                }
+            case let .placePointer(at: location):
+                // The finger may be on the letterbox: the nearest edge.
+                let rect = displayRect
+                guard rect.width > 0, rect.height > 0, framebufferSize.width > 0 else { continue }
+                lastNormalized = CGPoint(
+                    x: min(max((location.x - rect.minX) / rect.width, 0), 1),
+                    y: min(max((location.y - rect.minY) / rect.height, 0), 1)
+                )
+                session?.pointerMoved(normalizedX: lastNormalized.x, normalizedY: lastNormalized.y)
+            case let .button(button, isDown):
+                #if os(iOS) && !targetEnvironment(macCatalyst)
+                    if isDown { dragFeedback.impactOccurred() }
+                #endif
+                session?.pointerButton(button, isDown: isDown, normalizedX: lastNormalized.x, normalizedY: lastNormalized.y)
+            case let .click(button):
+                session?.pointerButton(button, isDown: true, normalizedX: lastNormalized.x, normalizedY: lastNormalized.y)
+                session?.pointerButton(button, isDown: false, normalizedX: lastNormalized.x, normalizedY: lastNormalized.y)
+            case let .scroll(by: delta):
+                scroll(by: delta, at: lastNormalized)
+            case let .zoom(scale, anchor, pan):
+                viewport.zoom(by: scale, anchor: anchor, pan: pan, base: imageRect, bounds: bounds)
+                setNeedsLayout()
+            case .toggleKeyboard:
+                toggleKeyboard()
+            }
+        }
+    }
+
     // MARK: - Keyboard input
 
     public override var canBecomeFirstResponder: Bool { true }
 
-    public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        var handled = false
-        for press in presses {
-            guard let key = press.key else { continue }
-            handled = true
-            forwardKey(key, isDown: true)
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+        /// Three fingers are the desktop's: no undo or copy and paste bar.
+        public override var editingInteractionConfiguration: UIEditingInteractionConfiguration { .none }
+
+        /// Shown, the canvas takes hardware keys at once; it is no text
+        /// input, so no software keyboard comes with it.
+        public override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil else { return }
+            DispatchQueue.main.async { [weak self] in self?.takeKeyFocus() }
         }
-        if !handled { super.pressesBegan(presses, with: event) }
+    #endif
+
+    /// Takes hardware keys, unless the software keyboard is up: its proxy
+    /// has them then.
+    private func takeKeyFocus() {
+        guard !isFirstResponder, !keyboardProxy.isFirstResponder else { return }
+        _ = becomeFirstResponder()
+    }
+
+    public override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if !forwardPresses(presses, isDown: true) { super.pressesBegan(presses, with: event) }
     }
 
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if !forwardPresses(presses, isDown: false) { super.pressesEnded(presses, with: event) }
+    }
+
+    /// Sends the keys among `presses`; false when there were none.
+    func forwardPresses(_ presses: Set<UIPress>, isDown: Bool) -> Bool {
         var handled = false
         for press in presses {
             guard let key = press.key else { continue }
             handled = true
-            forwardKey(key, isDown: false)
+            forwardKey(key, isDown: isDown)
         }
-        if !handled { super.pressesEnded(presses, with: event) }
+        return handled
     }
 
     /// Turns a `UIKey` into either typed text (printable keys without
@@ -289,25 +468,33 @@ public final class RemoteDesktopCanvasView: UIView {
         session.keyPressed(keyCode: keyCode, keySym: keySym, characters: characters, isDown: isDown)
     }
 
-    // MARK: - Software keyboard (UIKeyInput)
+    // MARK: - Software keyboard
 
     /// Toggles the software keyboard when the request counter changes.
     func applyKeyboardRequest(_ requests: Int) {
         guard requests != appliedKeyboardRequests else { return }
         appliedKeyboardRequests = requests
-        if isFirstResponder {
-            resignFirstResponder()
-        } else {
+        toggleKeyboard()
+    }
+
+    /// Takes `requests` as answered, without touching the keyboard.
+    func syncKeyboardRequests(_ requests: Int) {
+        appliedKeyboardRequests = requests
+    }
+
+    /// Brings the software keyboard up (its proxy takes focus), or puts it
+    /// away and takes hardware keys again.
+    func toggleKeyboard() {
+        if keyboardProxy.isFirstResponder {
+            _ = keyboardProxy.resignFirstResponder()
             _ = becomeFirstResponder()
+        } else {
+            _ = keyboardProxy.becomeFirstResponder()
         }
     }
 
-    public override var inputAccessoryView: UIView? {
-        get { keyboardAccessory }
-        set {}
-    }
-
-    private var keyboardAccessory: UIView {
+    /// Esc, Tab, the arrows and Done over the software keyboard.
+    fileprivate lazy var keyboardAccessory: UIView = {
         let bar = UIToolbar()
         bar.sizeToFit()
         let space = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
@@ -325,7 +512,7 @@ public final class RemoteDesktopCanvasView: UIView {
             item("Done", #selector(accessoryDone)),
         ]
         return bar
-    }
+    }()
 
     @objc private func accessoryEscape() {
         session?.keyPressed(keyCode: 53, keySym: 0xFF1B, characters: "\u{1B}", isDown: true)
@@ -348,14 +535,11 @@ public final class RemoteDesktopCanvasView: UIView {
     }
 
     @objc private func accessoryDone() {
-        resignFirstResponder()
+        if keyboardProxy.isFirstResponder { toggleKeyboard() }
     }
-}
 
-extension RemoteDesktopCanvasView: UIKeyInput {
-    public var hasText: Bool { true }
-
-    public func insertText(_ text: String) {
+    /// Text from the software keyboard.
+    fileprivate func insertTyped(_ text: String) {
         if text == "\n" || text == "\r" {
             session?.keyPressed(keyCode: 36, keySym: 0xFF0D, characters: "\r", isDown: true)
             session?.keyPressed(keyCode: 36, keySym: 0xFF0D, characters: "\r", isDown: false)
@@ -364,39 +548,82 @@ extension RemoteDesktopCanvasView: UIKeyInput {
         session?.typeText(text)
     }
 
-    public func deleteBackward() {
+    fileprivate func deleteTypedBackward() {
         session?.keyPressed(keyCode: 51, keySym: 0xFF08, characters: "\u{7F}", isDown: true)
         session?.keyPressed(keyCode: 51, keySym: 0xFF08, characters: "\u{7F}", isDown: false)
     }
 }
 
-extension RemoteDesktopCanvasView: UITextInputTraits {
-    public var keyboardType: UIKeyboardType {
+#if os(iOS) && !targetEnvironment(macCatalyst)
+    extension RemoteDesktopCanvasView: UIPointerInteractionDelegate {
+        /// The host's pointer is drawn over the picture: the iPad's own would
+        /// be a second one.
+        public func pointerInteraction(_: UIPointerInteraction, styleFor _: UIPointerRegion) -> UIPointerStyle? {
+            cursorView.isHidden ? nil : .hidden()
+        }
+    }
+#endif
+
+/// The text input the software keyboard comes up for, a point in the
+/// canvas's corner. It hands what is typed (and hardware keys, while it has
+/// focus) to the canvas.
+private final class RemoteDesktopKeyboardProxy: UIView, UIKeyInput, UITextInputTraits {
+    weak var canvas: RemoteDesktopCanvasView?
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override var inputAccessoryView: UIView? {
+        canvas?.keyboardAccessory
+    }
+
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+        override var editingInteractionConfiguration: UIEditingInteractionConfiguration { .none }
+    #endif
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if canvas?.forwardPresses(presses, isDown: true) != true { super.pressesBegan(presses, with: event) }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if canvas?.forwardPresses(presses, isDown: false) != true { super.pressesEnded(presses, with: event) }
+    }
+
+    var hasText: Bool { true }
+
+    func insertText(_ text: String) {
+        canvas?.insertTyped(text)
+    }
+
+    func deleteBackward() {
+        canvas?.deleteTypedBackward()
+    }
+
+    var keyboardType: UIKeyboardType {
         get { .default }
         set {}
     }
 
-    public var autocorrectionType: UITextAutocorrectionType {
+    var autocorrectionType: UITextAutocorrectionType {
         get { .no }
         set {}
     }
 
-    public var autocapitalizationType: UITextAutocapitalizationType {
+    var autocapitalizationType: UITextAutocapitalizationType {
         get { .none }
         set {}
     }
 
-    public var spellCheckingType: UITextSpellCheckingType {
+    var spellCheckingType: UITextSpellCheckingType {
         get { .no }
         set {}
     }
 
-    public var smartQuotesType: UITextSmartQuotesType {
+    var smartQuotesType: UITextSmartQuotesType {
         get { .no }
         set {}
     }
 
-    public var smartDashesType: UITextSmartDashesType {
+    var smartDashesType: UITextSmartDashesType {
         get { .no }
         set {}
     }
@@ -409,10 +636,13 @@ import AppKit
 public struct RemoteDesktopCanvas: NSViewRepresentable {
     @ObservedObject public var session: RemoteDesktopSession
     public var keyboardRequests: Int
+    /// A Mac has no touch screen: kept for the shared stage only.
+    public var touchMode: RemoteDesktopTouchMode
 
-    public init(session: RemoteDesktopSession, keyboardRequests: Int = 0) {
+    public init(session: RemoteDesktopSession, keyboardRequests: Int = 0, touchMode: RemoteDesktopTouchMode = .trackpad) {
         self.session = session
         self.keyboardRequests = keyboardRequests
+        self.touchMode = touchMode
     }
 
     public func makeNSView(context _: Context) -> RemoteDesktopCanvasNSView {
