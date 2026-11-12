@@ -82,13 +82,16 @@ final class CloudKeyValueTransport: SyncTransport {
             return SecTaskCopyValueForEntitlement(task, entitlement as CFString, nil) != nil
         #else
             // iOS does not; there the provisioning profile is asked, which the
-            // scripts that sign the app follow.
-            return profileGrants(entitlement)
+            // scripts that sign the app follow. TestFlight and the App Store
+            // sign the app again without one, with the entitlements it was
+            // uploaded with, which have the store.
+            let profile = Bundle.main.bundleURL.appendingPathComponent("embedded.mobileprovision")
+            guard FileManager.default.fileExists(atPath: profile.path) else { return true }
+            return profileGrants(entitlement, in: profile)
         #endif
     }()
 
-    private static func profileGrants(_ entitlement: String) -> Bool {
-        let profile = Bundle.main.bundleURL.appendingPathComponent("embedded.mobileprovision")
+    private static func profileGrants(_ entitlement: String, in profile: URL) -> Bool {
         // A signed (CMS) file with a property list inside.
         guard let data = try? Data(contentsOf: profile),
               let start = data.range(of: Data("<?xml".utf8)),
