@@ -27,4 +27,13 @@ final class UURemoteAPIClientTests: XCTestCase {
         numeric["controllable"] = 1
         XCTAssertTrue(try XCTUnwrap(UURemoteAPIClient.device(from: numeric)).controllable)
     }
+
+    /// The service refuses "+86" (code 1001, country_code must match
+    /// `^(1\-(\d{3})|44\-\d{4}|\d{1,3})$`), which is how SMS sign-in never
+    /// sent a code.
+    func testPhoneNumbersGoOutAsTheServiceTakesThem() {
+        XCTAssertEqual(UURemoteAPIClient.countryCode("+86"), "86")
+        XCTAssertEqual(UURemoteAPIClient.countryCode(" +1-264 "), "1-264")
+        XCTAssertEqual(UURemoteAPIClient.mobile("138 0013-8000"), "13800138000")
+    }
 }

@@ -288,19 +288,36 @@ public actor UURemoteAPIClient {
 
     /// Sends an SMS verification code for passwordless login.
     public func mobileCode(countryCode: String, mobile: String) async throws {
-        let body: [String: Any] = ["country_code": countryCode, "mobile": mobile, "type": "login"]
+        let body: [String: Any] = [
+            "country_code": Self.countryCode(countryCode), "mobile": Self.mobile(mobile), "type": "login",
+        ]
         let _: UUAPIEnvelope<[String: Any]> = try await send(UUAPIRequest(method: "POST", path: "/api/v1/security/mobile/code", body: body, requiresAuth: false))
     }
 
     /// Completes SMS login.
     public func loginByMobile(countryCode: String, mobile: String, code: String) async throws -> (userID: String, nickname: String, token: String) {
-        let body: [String: Any] = ["country_code": countryCode, "mobile": mobile, "code": code]
+        let body: [String: Any] = [
+            "country_code": Self.countryCode(countryCode), "mobile": Self.mobile(mobile),
+            "code": code.trimmingCharacters(in: .whitespaces),
+        ]
         let envelope: UUAPIEnvelope<[String: Any]> = try await send(UUAPIRequest(method: "POST", path: "/api/v1/login/by_mobile", body: body, requiresAuth: false))
         guard let data = envelope.data,
               let userID = data["user_id"] as? String,
               let token = data["token"] as? String
         else { throw UUAPIError.missingField("user_id/token") }
         return (userID, data["nickname"] as? String ?? "", token)
+    }
+
+    /// A country code as the service takes it: digits, without the "+" people
+    /// type ("+86" is "86"); "1-xxx" and "44-xxxx" keep their dash.
+    static func countryCode(_ text: String) -> String {
+        String(text.filter { $0.isASCII && ($0.isNumber || $0 == "-") })
+    }
+
+    /// A phone number as the service takes it: digits only, without the
+    /// spaces and dashes it is often written with.
+    static func mobile(_ text: String) -> String {
+        String(text.filter { $0.isASCII && $0.isNumber })
     }
 
     // MARK: - Devices
