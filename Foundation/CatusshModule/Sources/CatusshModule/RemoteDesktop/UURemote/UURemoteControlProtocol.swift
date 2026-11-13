@@ -178,9 +178,12 @@ public enum UUControlProtocol {
         return envelope(sequence: requestID, timestamp: UInt64(Date().timeIntervalSince1970 * 1000), fieldNumber: UUControlField.rpcRequest, body: request)
     }
 
-    /// Asks the host for an immediate IDR / keyframe.
-    public static func sendVideoTrackRequest(requestID: UInt64) -> Data {
-        rpcRequest(requestID: requestID, bodyField: 15, body: Data())
+    /// RpcRequest case 15 `SendVideoTrack {1: repeated video_track_index}`:
+    /// the tracks the viewer has, which the host may stream screens on.
+    public static func sendVideoTrackRequest(requestID: UInt64, tracks: [Int] = []) -> Data {
+        var body = Data()
+        for track in tracks { UUProtobufWriter.pushInt32Field(1, Int32(clamping: track), into: &body) }
+        return rpcRequest(requestID: requestID, bodyField: 15, body: body)
     }
 
     /// CaptureSettingRequest field 7 = chroma (3 = 4:4:4 true color).
@@ -273,12 +276,18 @@ public enum UUControlProtocol {
         case forward = 16
     }
 
-    public static func mouseMoveAbsolute(x: Double, y: Double) -> Data {
+    /// `screenID` is the screen the position is on: without it the host
+    /// puts the pointer on whichever screen it captured last, which on a
+    /// host with several is not always the one in view.
+    public static func mouseMoveAbsolute(x: Double, y: Double, screenID: Int? = nil) -> Data {
         // Mac hosts take normalized 0...1 axes (clamped, like upstream's
         // `normalizeAbsolutePointerAxis`). What is no number becomes 0
         // rather than a bare `nan` the host's JSON cannot read.
         let cx = x.isFinite ? min(1, max(0, x)) : 0
         let cy = y.isFinite ? min(1, max(0, y)) : 0
+        if let screenID {
+            return #"{"action":"mouse_move_absolute","screen_id":\#(screenID),"abs_x":\#(cx),"abs_y":\#(cy)}"#.data(using: .utf8)!
+        }
         return #"{"action":"mouse_move_absolute","abs_x":\#(cx),"abs_y":\#(cy)}"#.data(using: .utf8)!
     }
 
@@ -364,51 +373,89 @@ public enum UUControlProtocol {
         return (action, args, flags)
     }
 
-    /// Decodes ScreenSources (field 7) into display descriptors.
-    public static func decodeScreenSources(_ data: Data) -> [RemoteDisplayInfo] {
-        guard let fields = try? UUWire.decode(data) else { return [] }
+    /// Decodes ScreenSources (field 7): `{1: repeated Screen, 2:
+    /// current_screen_id}`, where Screen is `{1: id, 2: fps, 3: repeated
+    /// WinRect resolutions, 4: WinRect current_resolution, 5: screen_type
+    /// (1 = UU virtual screen), 7: is_primary, 10: display_name, 12:
+    /// video_track_index}` and WinRect `{1: left, 2: top, 3: width, 4:
+    /// height, 5: pixel_width, 6: pixel_height}`.
+    ///
+    /// Zero is never on the wire: an absent current id or track index is 0
+    /// once the host says any other screen's, and unknown (nil) otherwise.
+    public static func decodeScreenSources(_ data: Data) -> (displays: [RemoteDisplayInfo], currentID: Int?) {
+        guard let fields = try? UUWire.decode(data) else { return ([], nil) }
         var displays: [RemoteDisplayInfo] = []
-        for field in fields where field.number == 1 {
-            guard case let .bytes(b) = field.value,
+        var currentID: Int?
+        var anyTrackSaid = false
+        for field in fields {
+            if field.number == 2, case let .varint(v) = field.value { currentID = v.int32Value }
+            guard field.number == 1, case let .bytes(b) = field.value,
                   let sub = try? UUWire.decode(b) else { continue }
-            var id = 0
-            var fps = 0
-            var isPrimary = false
+            var display = RemoteDisplayInfo(id: 0)
             var name = ""
-            var width = 0
-            var height = 0
+            var current: (width: Int, height: Int)?
+            var listed: (width: Int, height: Int)?
             for item in sub {
                 switch (item.number, item.value) {
-                case (1, let .varint(v)): id = v.int32Value
-                case (2, let .varint(v)): fps = v.int32Value
-                case (4, let .varint(v)): isPrimary = v != 0
-                case (7, let .varint(v)): isPrimary = v != 0
-                case (8, let .fixed64(b)):
-                    if b.count == 8 {
-                        let raw = b.withUnsafeBytes { $0.load(as: Double.self) }
-                        // a NaN or huge value would trap in Int(_:)
-                        if raw.isFinite, raw >= 0, raw < 1_000_000 { width = Int(raw) }
-                    }
+                case (1, let .varint(v)): display.id = v.int32Value
+                case (2, let .varint(v)): display.fps = v.int32Value
+                case (3, let .bytes(rect)): listed = listed ?? winRectSize(rect)
+                case (4, let .bytes(rect)): current = winRectSize(rect)
+                case (5, let .varint(v)): display.isVirtual = v == 1
+                case (7, let .varint(v)): display.isPrimary = v != 0
                 case (10, let .bytes(b)): name = String(data: b, encoding: .utf8) ?? ""
-                case (3, let .bytes(b)):
-                    // WinRect{l,t,w,h,pw,ph}
-                    if let rectFields = try? UUWire.decode(b) {
-                        for rect in rectFields {
-                            switch (rect.number, rect.value) {
-                            case (3, let .varint(v)): width = v.int32Value
-                            case (4, let .varint(v)): height = v.int32Value
-                            case (5, let .varint(v)): width = v.int32Value
-                            case (6, let .varint(v)): height = v.int32Value
-                            default: break
-                            }
-                        }
-                    }
+                case (12, let .varint(v)):
+                    display.videoTrackIndex = v.int32Value
+                    anyTrackSaid = true
                 default: break
                 }
             }
-            displays.append(RemoteDisplayInfo(id: id, name: name.isEmpty ? "Display \(id)" : name, width: width, height: height, fps: fps, isPrimary: isPrimary))
+            if let size = current ?? listed { (display.width, display.height) = size }
+            display.name = name.isEmpty ? "Display \(display.id)" : name
+            displays.append(display)
         }
-        return displays
+        if anyTrackSaid {
+            for index in displays.indices where displays[index].videoTrackIndex == nil {
+                displays[index].videoTrackIndex = 0
+            }
+        }
+        if currentID == nil, displays.contains(where: { $0.id == 0 }) { currentID = 0 }
+        return (displays, currentID)
+    }
+
+    /// A WinRect's size in pixels, or in points when it gives no pixels.
+    private static func winRectSize(_ data: Data) -> (width: Int, height: Int)? {
+        guard let fields = try? UUWire.decode(data) else { return nil }
+        var points = (width: 0, height: 0)
+        var pixels = (width: 0, height: 0)
+        for field in fields {
+            guard case let .varint(v) = field.value else { continue }
+            switch field.number {
+            case 3: points.width = v.int32Value
+            case 4: points.height = v.int32Value
+            case 5: pixels.width = v.int32Value
+            case 6: pixels.height = v.int32Value
+            default: break
+            }
+        }
+        if pixels.width > 0, pixels.height > 0 { return pixels }
+        if points.width > 0, points.height > 0 { return points }
+        return nil
+    }
+
+    /// SimpleAction `restart_capture` (8) or `stop_capture` (7) for one
+    /// screen: the official viewer starts a screen's stream with the first
+    /// and ends it with the second, as it opens and closes the screen's tab.
+    public static func captureScreen(_ screenID: Int, start: Bool, sequence: UInt64) -> Data {
+        envelope(
+            sequence: sequence,
+            timestamp: UInt64(Date().timeIntervalSince1970 * 1000),
+            fieldNumber: UUControlField.simpleAction,
+            body: simpleAction(
+                action: start ? UUSimpleActionType.restartCapture : UUSimpleActionType.stopCapture,
+                argsJSON: #"{"screen_id":\#(screenID)}"#
+            )
+        )
     }
 
     /// Decodes CaptureChange (field 8).

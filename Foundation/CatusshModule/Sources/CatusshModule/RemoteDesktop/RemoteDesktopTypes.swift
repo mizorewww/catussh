@@ -46,14 +46,21 @@ public struct RemoteDisplayInfo: Identifiable, Equatable, Sendable {
     /// The display's native refresh, when the host reports it.
     public var fps: Int
     public var isPrimary: Bool
+    /// A display the remote software made (a UU virtual screen), which can
+    /// be removed again; a physical one cannot.
+    public var isVirtual: Bool
+    /// The video track the host streams this display on, when it says.
+    public var videoTrackIndex: Int?
 
-    public init(id: Int, name: String = "", width: Int = 0, height: Int = 0, fps: Int = 60, isPrimary: Bool = false) {
+    public init(id: Int, name: String = "", width: Int = 0, height: Int = 0, fps: Int = 60, isPrimary: Bool = false, isVirtual: Bool = false, videoTrackIndex: Int? = nil) {
         self.id = id
         self.name = name
         self.width = width
         self.height = height
         self.fps = fps
         self.isPrimary = isPrimary
+        self.isVirtual = isVirtual
+        self.videoTrackIndex = videoTrackIndex
     }
 }
 
@@ -82,3 +89,4 @@ public struct RemoteCursorInfo: Equatable, Sendable {
             && lhs.image === rhs.image
     }
 }
+

@@ -90,6 +90,25 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     private var reportedTerminalPhase = false
     private var requestedDisplayApplied = false
 
+    // MARK: Screens and their tracks
+
+    /// The host's screens, as ScreenSources last listed them. Main thread.
+    private var screens: [RemoteDisplayInfo] = []
+    /// The screen in view: the one the pointer is on and whose track is
+    /// drawn. Main thread.
+    private var viewedScreenID: Int?
+    /// Each video track's transceiver mid, by the host's track index, from
+    /// the answer. Main thread.
+    private var midByTrackIndex: [Int: String] = [:]
+    /// The track whose frames are decoded; nil until one is known, when the
+    /// first track to send one is taken (other than `skippedMid`, the one
+    /// left behind). Under `viewLock`: frames are filtered on decodeQueue.
+    private var viewedMid: String?
+    private var skippedMid: String?
+    /// When the track in view last sent a frame, or was chosen.
+    private var viewedMidHeardAt = Date()
+    private let viewLock = NSLock()
+
     /// What the connection is for: a desktop streams the screen; a terminal
     /// connection carries terminals (and port mappings) and no video.
     public enum Purpose: Sendable { case desktop, terminal }
@@ -169,7 +188,9 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     private func movePointer(_ x: Double, _ y: Double) {
         guard x.isFinite, y.isFinite else { return }
         sentPointer = (x, y)
-        sendControlChannel(UUControlProtocol.mouseMoveAbsolute(x: x, y: y), kind: .pointerMove)
+        // Main thread, like the screens: on the screen in view.
+        let screenID = screens.isEmpty ? nil : viewedScreenID
+        sendControlChannel(UUControlProtocol.mouseMoveAbsolute(x: x, y: y, screenID: screenID), kind: .pointerMove)
         updateCursor(pointer: (x, y))
     }
 
@@ -275,19 +296,112 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         ))
     }
 
-    /// SimpleAction `restart_capture` (8) with `{"screen_id":N}` — the way
-    /// the official viewer switches the captured display.
+    /// Shows another of the host's screens: its capture starts, the one
+    /// in view stops (the host otherwise streams both, on two tracks), and
+    /// its track is the one drawn and the pointer goes to it. Main thread.
     public func selectDisplay(_ displayID: Int) {
-        guard controlChannelOpen else { return }
-        sendControlChannel(UUControlProtocol.envelope(
-            sequence: nextOutboundSequence(),
-            timestamp: UInt64(Date().timeIntervalSince1970 * 1000),
-            fieldNumber: UUControlField.simpleAction,
-            body: UUControlProtocol.simpleAction(
-                action: UUSimpleActionType.restartCapture,
-                argsJSON: #"{"screen_id":\#(displayID)}"#
-            )
-        ))
+        guard controlChannelOpen, displayID != viewedScreenID else { return }
+        let previous = viewedScreenID
+        sendControlChannel(UUControlProtocol.captureScreen(displayID, start: true, sequence: nextOutboundSequence()))
+        if let previous, screens.contains(where: { $0.id == previous }) {
+            sendControlChannel(UUControlProtocol.captureScreen(previous, start: false, sequence: nextOutboundSequence()))
+        }
+        Self.log.info("view screen \(displayID) instead of \(previous.map(String.init) ?? "none", privacy: .public)")
+        viewedScreenID = displayID
+        followViewedScreen(leaving: true)
+        session.reportDisplays(screens, selected: displayID)
+    }
+
+    /// The host listed its screens: the one in view stays in view while it
+    /// is there; otherwise it is the host's current one. A display the
+    /// user pinned is shown once it is listed. Main thread.
+    private func handleScreenSources(_ displays: [RemoteDisplayInfo], currentID: Int?) {
+        screens = displays
+        Self.log.info("screens: \(displays.map { "\($0.id) \($0.name) \($0.width)x\($0.height) track \($0.videoTrackIndex.map(String.init) ?? "?")\($0.isVirtual ? " virtual" : "")" }.joined(separator: ", "), privacy: .public); current \(currentID.map(String.init) ?? "?", privacy: .public)")
+        if let viewed = viewedScreenID, displays.contains(where: { $0.id == viewed }) {
+            // Still there.
+        } else {
+            viewedScreenID = currentID.flatMap { id in displays.first { $0.id == id }?.id }
+                ?? displays.first(where: \.isPrimary)?.id ?? displays.first?.id
+        }
+        let pinned = session.machine.uuDisplayID
+        if !requestedDisplayApplied, pinned != 0, displays.contains(where: { $0.id == pinned }) {
+            requestedDisplayApplied = true
+            if pinned != viewedScreenID {
+                selectDisplay(pinned)
+                return
+            }
+        }
+        followViewedScreen()
+        session.reportDisplays(displays, selected: viewedScreenID ?? -1)
+    }
+
+    /// Draws the track of the screen in view, once the host has said which
+    /// it is and the answer which transceiver carries it. Otherwise, when
+    /// `leaving`, the next track to send a frame other than the one drawn
+    /// now. Main thread.
+    private func followViewedScreen(leaving: Bool = false) {
+        let mid = screens.first { $0.id == viewedScreenID }?.videoTrackIndex.flatMap { midByTrackIndex[$0] }
+        let changed = viewLock.withLock { () -> Bool in
+            if let mid {
+                guard mid != viewedMid else { return false }
+                viewedMid = mid
+                skippedMid = nil
+                viewedMidHeardAt = Date()
+                return true
+            }
+            guard leaving else { return false }
+            skippedMid = viewedMid
+            viewedMid = nil
+            return true
+        }
+        guard changed else { return }
+        decodeQueue.async { [weak self] in
+            self?.encodedDecoder.reset()
+            self?.failedDecodes = 0
+        }
+        if let mid { requestKeyFrame(on: mid) }
+    }
+
+    /// A key frame on one track, over RTCP: what a decoder starting on it
+    /// waits for.
+    private func requestKeyFrame(on mid: String) {
+        Task { @MainActor [weak self] in
+            _ = try? await self?.peer?.evaluate("requestKeyFrame(\(Self.javascriptString(mid)))") as String?
+        }
+    }
+
+    /// Video tracks in an SDP answer, by the host's track index: from an
+    /// `a=msid:… video_N` line where there is one, by the video m-line's
+    /// place otherwise. The values are the m-lines' mids.
+    static func videoTrackMids(in sdp: String) -> [Int: String] {
+        var result: [Int: String] = [:]
+        var order = 0
+        var inVideo = false
+        var mid: String?
+        var named: Int?
+        func close() {
+            guard inVideo, let mid else { return }
+            result[named ?? order] = mid
+            order += 1
+        }
+        for raw in sdp.components(separatedBy: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("m=") {
+                close()
+                let port = line.split(separator: " ").dropFirst().first
+                inVideo = line.hasPrefix("m=video ") && port != "0"
+                mid = nil
+                named = nil
+            } else if inVideo, line.hasPrefix("a=mid:") {
+                mid = String(line.dropFirst("a=mid:".count))
+            } else if inVideo, line.hasPrefix("a=msid:") {
+                let words = line.split(separator: " ")
+                if words.count > 1, words[1].hasPrefix("video_") { named = Int(words[1].dropFirst("video_".count)) }
+            }
+        }
+        close()
+        return result
     }
 
     /// CaptureSettingRequest (RpcRequest case 2): field 1 fps *option
@@ -301,9 +415,15 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         ))
     }
 
+    /// A key frame on the track in view (all of them before one is known).
     public func requestKeyframeOrRefresh() {
         guard controlChannelOpen else { return }
-        sendControlChannel(UUControlProtocol.sendVideoTrackRequest(requestID: nextOutboundSequence()))
+        let mid = viewLock.withLock { viewedMid }
+        if let mid {
+            requestKeyFrame(on: mid)
+        } else {
+            for mid in midByTrackIndex.values { requestKeyFrame(on: mid) }
+        }
     }
 
     // MARK: - Connection flow
@@ -570,8 +690,11 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         await peer.setCodecHandler { [weak self] name in
             self?.decodeQueue.async { self?.encodedCodec = name.replacingOccurrences(of: "video/", with: "") }
         }
-        await peer.setEncodedFrameHandler { [weak self] bytes, timestamp in
-            self?.decodeQueue.async { self?.decodeEncodedFrame(bytes, timestamp: timestamp) }
+        await peer.setEncodedFrameHandler { [weak self] base64, timestamp, mid in
+            self?.decodeQueue.async {
+                guard let bytes = Data(base64Encoded: base64) else { return }
+                self?.decodeEncodedFrame(bytes, timestamp: timestamp, mid: mid)
+            }
         }
         await peer.setDataChannelStateHandler("CONTROL_DATA_CHANNEL") { [weak self] (state: String) in
             guard let self else { return }
@@ -786,6 +909,13 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             reportTerminal(.failed("UU Remote SDP answer rejected: \(error.localizedDescription)"))
             return
         }
+        // Which transceiver carries which of the host's tracks.
+        let mids = Self.videoTrackMids(in: sdp)
+        Self.log.info("video tracks by index: \(mids.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "), privacy: .public)")
+        await MainActor.run {
+            midByTrackIndex = mids
+            followViewedScreen()
+        }
         // Learn the negotiated video payload types for the RTP path.
         let h265 = Self.payloadTypes(forCodec: "H265", in: sdp)
         if !h265.isEmpty { videoAssembler.h265PayloadTypes = h265 }
@@ -957,12 +1087,12 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         case UUControlField.screenSources:
             if case let .bytes(body) = inbound.field.value {
                 let sources = UUControlProtocol.decodeScreenSources(body)
-                session.reportDisplays(sources, selected: session.machine.uuDisplayID)
+                handleScreenSources(sources.displays, currentID: sources.currentID)
             }
         case UUControlField.captureChange:
             if case let .bytes(body) = inbound.field.value,
                let change = UUControlProtocol.decodeCaptureChange(body) {
-                session.reportHint("Capture changed to screen \(change.captureID)")
+                Self.log.info("capture change: type \(change.captureType) screen \(change.captureID)")
             }
         case UUControlField.systemStateChange:
             if case let .bytes(body) = inbound.field.value,
@@ -1052,8 +1182,35 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         reportFrame(image, size: videoDecoder.outputSize)
     }
 
-    /// One encoded frame from the WebRTC receiver, Annex-B. On decodeQueue.
-    private func decodeEncodedFrame(_ bytes: Data, timestamp: UInt32) {
+    /// One encoded frame from the WebRTC receiver, Annex-B, and its track.
+    /// Only the track in view is decoded: two screens' frames in one decoder
+    /// break it. On decodeQueue.
+    private func decodeEncodedFrame(_ bytes: Data, timestamp: UInt32, mid: String?) {
+        var switched = false
+        let drawn = viewLock.withLock { () -> Bool in
+            guard let mid else { return true }
+            let now = Date()
+            if mid == viewedMid {
+                viewedMidHeardAt = now
+                return true
+            }
+            // None chosen yet, or the chosen one has been silent while this
+            // one sends (a track index the answer mapped wrongly): this one.
+            let silent = viewedMid != nil && now.timeIntervalSince(viewedMidHeardAt) > 2
+            guard (viewedMid == nil && mid != skippedMid) || silent else { return false }
+            Self.log.info("drawing video track \(mid, privacy: .public)\(silent ? " (the chosen one is silent)" : "", privacy: .public)")
+            viewedMid = mid
+            viewedMidHeardAt = now
+            switched = true
+            return true
+        }
+        guard drawn else { return }
+        // Another stream: the decoder starts over at its next key frame.
+        if switched {
+            encodedDecoder.reset()
+            failedDecodes = 0
+            if let mid { requestKeyFrame(on: mid) }
+        }
         let nalUnits = UUVideoAccessUnit.nalUnits(annexB: bytes)
         // The stream says its codec in a key frame's parameter sets, before
         // the receiver's stats do.
@@ -1066,7 +1223,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         failedDecodes = image == nil ? failedDecodes + 1 : 0
         if failedDecodes == 30 {
             encodedDecoder.reset()
-            requestKeyframeOrRefresh()
+            if let mid { requestKeyFrame(on: mid) }
         }
         if encodedCount <= 3 || (image == nil && encodedCount.isMultiple(of: 200)) {
             let types = unit.nalUnits.prefix(8).map { nal in nal.isEmpty ? -1 : Int((nal[nal.startIndex] >> 1) & 0x3F) }
@@ -1224,12 +1381,6 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         session.reportPhase(.connected)
         session.reportHint("Control channel open")
 
-        // A `uuDisplayID` the user pinned applies as soon as control is up.
-        if !requestedDisplayApplied, session.machine.uuDisplayID != 0 {
-            requestedDisplayApplied = true
-            selectDisplay(session.machine.uuDisplayID)
-        }
-
         heartbeatTask?.cancel()
         heartbeatTask = Task { [weak self] in
             var tick = 0
@@ -1258,7 +1409,10 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             // One sendVideoTrack RPC once the channel is up (like the
             // official iPhone viewer); 4:4:4 true colour rides a separate
             // CaptureSettingRequest when the quality tier asks for it.
-            self.sendControlChannel(UUControlProtocol.sendVideoTrackRequest(requestID: self.nextOutboundSequence()))
+            self.sendControlChannel(UUControlProtocol.sendVideoTrackRequest(
+                requestID: self.nextOutboundSequence(),
+                tracks: await MainActor.run { self.midByTrackIndex.keys.sorted() }
+            ))
             if self.session.machine.uuQuality >= 4 {
                 self.sendControlChannel(UUControlProtocol.captureSettingRequest(
                     requestID: self.nextOutboundSequence(),
@@ -1313,7 +1467,7 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     private var dataChannelStateHandlers: [String: (String) -> Void] = [:]
     private var trackHandler: ((String, Data) -> Void)?
     private var videoFrameHandler: ((CGImage, CGSize) -> Void)?
-    private var encodedFrameHandler: ((Data, UInt32) -> Void)?
+    private var encodedFrameHandler: ((String, UInt32, String?) -> Void)?
     private var codecHandler: ((String) -> Void)?
     private var iceStateHandler: ((String) -> Void)?
 
@@ -1378,12 +1532,21 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         function post(name, data) { window.webkit.messageHandlers.rtc.postMessage({name: name, data: data}); }
         // Encoded frames straight off the receiver, decoded natively: the page
         // is in no window, so WebKit never plays a <video> here.
-        const transformSource = `onrtctransform = (event) => {
+        // Each frame says its track (the transceiver's mid): the host streams
+        // every screen it captures on a track of its own.
+        const transformSource = `const transformers = {};
+        onmessage = (m) => {
+            const t = m.data && transformers[m.data.keyframe];
+            if (t && t.sendKeyFrameRequest) t.sendKeyFrameRequest().catch(() => {});
+        };
+        onrtctransform = (event) => {
             const t = event.transformer;
+            const mid = t.options && t.options.mid;
+            if (mid != null) transformers[mid] = t;
             t.readable.pipeThrough(new TransformStream({ transform(frame, out) {
                 if (frame.data && frame.data.byteLength) {
                     const copy = frame.data.slice(0);
-                    self.postMessage({key: frame.type === 'key', ts: frame.timestamp, data: copy}, [copy]);
+                    self.postMessage({mid: mid, key: frame.type === 'key', ts: frame.timestamp, data: copy}, [copy]);
                 }
                 out.enqueue(frame);
             } })).pipeTo(t.writable);
@@ -1394,15 +1557,17 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
             for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
             return btoa(text);
         }
-        function transformReceiver(receiver) {
+        function transformReceiver(receiver, mid) {
             if (!window.RTCRtpScriptTransform) return false;
             if (!transformWorker) {
                 transformWorker = new Worker(URL.createObjectURL(new Blob([transformSource], {type: 'text/javascript'})));
-                transformWorker.onmessage = m => post('encoded', {data: base64(new Uint8Array(m.data.data)), ts: m.data.ts, key: m.data.key});
+                transformWorker.onmessage = m => post('encoded', {data: base64(new Uint8Array(m.data.data)), ts: m.data.ts, key: m.data.key, mid: m.data.mid});
             }
-            receiver.transform = new RTCRtpScriptTransform(transformWorker, {});
+            receiver.transform = new RTCRtpScriptTransform(transformWorker, {mid: mid});
             return true;
         }
+        // A key frame on one track, asked of the host over RTCP.
+        function requestKeyFrame(mid) { if (transformWorker) transformWorker.postMessage({keyframe: mid}); return 'ok'; }
         function makePeer(iceServers, forceRelay) {
             pc = new RTCPeerConnection({ iceServers: iceServers || [], iceTransportPolicy: forceRelay ? 'relay' : 'all' });
             pc.onicecandidate = e => post('icecandidate', e.candidate ? {sdpMid: e.candidate.sdpMid, sdpMLineIndex: e.candidate.sdpMLineIndex, candidate: e.candidate.candidate} : {done: true});
@@ -1417,9 +1582,10 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
             };
             pc.ontrack = e => {
                 if (e.track.kind === 'video') {
-                    const transformed = transformReceiver(e.receiver);
+                    const mid = e.transceiver ? e.transceiver.mid : null;
+                    const transformed = transformReceiver(e.receiver, mid);
                     if (!transformed) attachVideo(e.streams && e.streams[0] ? e.streams[0] : new MediaStream([e.track]));
-                    post('track', {kind: 'video', id: e.track.id, transformed: transformed});
+                    post('track', {kind: 'video', id: e.track.id, mid: mid, transformed: transformed});
                 }
             };
             setInterval(async () => {
@@ -1567,8 +1733,9 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
         case "track":
             trackHandler?(data["kind"] as? String ?? "", Data())
         case "encoded":
-            if let text = data["data"] as? String, let bytes = Data(base64Encoded: text) {
-                encodedFrameHandler?(bytes, (data["ts"] as? NSNumber)?.uint32Value ?? 0)
+            // Decoded from base64 where the frame is, not here on the main thread.
+            if let text = data["data"] as? String {
+                encodedFrameHandler?(text, (data["ts"] as? NSNumber)?.uint32Value ?? 0, data["mid"] as? String)
             }
         case "codec":
             codecHandler?(data["name"] as? String ?? "")
@@ -1657,7 +1824,7 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     func setDataChannelStateHandler(_ label: String, handler: @escaping (String) -> Void) { dataChannelStateHandlers[label] = handler }
     func setTrackHandler(_ handler: @escaping (String, Data) -> Void) { trackHandler = handler }
     func setVideoFrameHandler(_ handler: @escaping (CGImage, CGSize) -> Void) { videoFrameHandler = handler }
-    func setEncodedFrameHandler(_ handler: @escaping (Data, UInt32) -> Void) { encodedFrameHandler = handler }
+    func setEncodedFrameHandler(_ handler: @escaping (String, UInt32, String?) -> Void) { encodedFrameHandler = handler }
     func setCodecHandler(_ handler: @escaping (String) -> Void) { codecHandler = handler }
     func setICEStateHandler(_ handler: @escaping (String) -> Void) { iceStateHandler = handler }
 }
