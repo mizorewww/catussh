@@ -132,17 +132,28 @@ public struct RemoteDesktopStageView: View {
             }
         #endif
         .overlay(alignment: .bottom) {
+            // The stage is black in both appearances: white on a dark
+            // capsule, never a material that follows Light mode.
             if let toast {
                 Text(toast)
                     .font(.rxCaption)
-                    .foregroundStyle(Color.rxInk)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .foregroundStyle(Color.white)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.black.opacity(0.78), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.18)))
+                    .padding(.horizontal, 16)
                     .padding(.bottom, 16)
                     .transition(.opacity)
+                    .allowsHitTesting(false)
             }
         }
+        #if os(iOS)
+            .onChange(of: session.phase == .connected) { connected in
+                if connected { showGestureHint() }
+            }
+        #endif
     }
 
     // MARK: - Canvas + status overlays
@@ -227,10 +238,11 @@ public struct RemoteDesktopStageView: View {
     // MARK: - Control bar
 
     /// On a touch screen the bar is taller, every control is a finger-sized
-    /// target, and what does not fit scrolls sideways; Connect and Close
-    /// stay at the end either way.
+    /// target named under its symbol, and what does not fit scrolls
+    /// sideways; More and Close stay at the end. On the Mac Connect and
+    /// Close do.
     #if os(iOS) && !targetEnvironment(macCatalyst)
-        static let barHeight: CGFloat = 48
+        static let barHeight: CGFloat = 56
         static let controlFont = Font.system(size: 17)
     #else
         static let barHeight: CGFloat = 34
@@ -240,17 +252,31 @@ public struct RemoteDesktopStageView: View {
     private var controlBar: some View {
         HStack(spacing: 4) {
             #if os(iOS) && !targetEnvironment(macCatalyst)
+                touchStatus
+                Divider().frame(height: 28)
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) { controls }
+                    HStack(spacing: 2) { touchControls }
+                        .padding(.trailing, 12)
                 }
+                // Controls past the edge fade out rather than end cut off:
+                // the row scrolls.
+                .mask(
+                    HStack(spacing: 0) {
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                            .frame(width: 16)
+                    }
+                )
+                Divider().frame(height: 28)
+                moreMenu
             #else
                 controls
                 Spacer(minLength: 8)
+                connectButton
             #endif
-            connectButton
             if let onClose {
                 Button { onClose() } label: {
-                    Label("Close Session", systemImage: "xmark.circle").stageControl()
+                    Label("Close", systemImage: "xmark.circle").stageControl()
                 }
                 .help("Close this session")
             }
@@ -264,6 +290,99 @@ public struct RemoteDesktopStageView: View {
         .background(Color.rxSurface)
         .overlay(alignment: .bottom) { Color.rxHairline.frame(height: 1) }
     }
+
+    #if os(iOS) && !targetEnvironment(macCatalyst)
+        /// What the bar's state is, in two short lines: the phase (or the
+        /// desktop's name) and the frame rate and round trip.
+        private var touchStatus: some View {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 5) {
+                    StatusDot(status)
+                    Text(phaseTitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.rxInk)
+                        .lineLimit(1)
+                }
+                if !metricsText.isEmpty {
+                    Text(metricsText)
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(Color.rxInkSecondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: 104, alignment: .leading)
+            .accessibilityElement(children: .combine)
+        }
+
+        /// The controls a finger needs at hand, each named under its symbol.
+        @ViewBuilder private var touchControls: some View {
+            Button { keyboardRequests += 1 } label: {
+                Label("Keyboard", systemImage: "keyboard").stageControl()
+            }
+            specialKeysMenu
+            touchModeMenu
+            Button { showsTextInput = true } label: {
+                Label("Type", systemImage: "textformat").stageControl()
+            }
+            .popover(isPresented: $showsTextInput) { textInputPopover }
+            clipboardMenu
+        }
+
+        /// Everything used now and then, by name.
+        private var moreMenu: some View {
+            Menu {
+                if session.phase.isTerminal || session.phase == .idle {
+                    Button { session.connect() } label: { Label("Connect", systemImage: "play.circle") }
+                } else {
+                    Button { session.disconnect() } label: { Label("Disconnect", systemImage: "stop.circle") }
+                }
+                Button { session.refresh() } label: { Label("Refresh Screen", systemImage: "arrow.clockwise") }
+                Toggle(isOn: $session.viewOnly) {
+                    Label("View Only", systemImage: "eye")
+                }
+                if session.displays.count > 1 {
+                    Menu {
+                        displayChoices
+                    } label: {
+                        Label("Display", systemImage: "rectangle.on.rectangle")
+                    }
+                }
+                if session.protocolType == .uuRemote {
+                    Menu {
+                        qualityChoices
+                    } label: {
+                        Label("Quality", systemImage: "slider.horizontal.3")
+                    }
+                    Menu {
+                        officialAppChoices
+                    } label: {
+                        Label("UU Remote App", systemImage: "pip")
+                    }
+                }
+                Section {
+                    Button { showGestureHint(force: true) } label: { Label("Touch Gestures", systemImage: "hand.tap") }
+                }
+            } label: {
+                Label("More", systemImage: "ellipsis.circle").stageControl()
+            }
+        }
+
+        static let gestureHintsShownKey = "me.mizorewww.rayon.remoteDesktop.gestureHintsShown"
+
+        /// How fingers work, the first few times a desktop connects, or
+        /// when asked for.
+        private func showGestureHint(force: Bool = false) {
+            let defaults = UserDefaults.standard
+            let shown = defaults.integer(forKey: Self.gestureHintsShownKey)
+            guard force || shown < 3 else { return }
+            if !force { defaults.set(shown + 1, forKey: Self.gestureHintsShownKey) }
+            let hint = switch touchMode {
+            case .trackpad: "Drag to move the pointer · tap to click · two fingers to scroll or right-click · three fingers for the keyboard"
+            case .direct: "Tap to click there · hold to right-click · two fingers to scroll · three fingers for the keyboard"
+            }
+            flash(hint, for: 5)
+        }
+    #endif
 
     @ViewBuilder private var controls: some View {
         statusPill
@@ -343,6 +462,14 @@ public struct RemoteDesktopStageView: View {
 
     private var displayMenu: some View {
         Menu {
+            displayChoices
+        } label: {
+            Label("Display", systemImage: "rectangle.on.rectangle").stageControl()
+        }
+        .help("Switch display")
+    }
+
+    @ViewBuilder private var displayChoices: some View {
             ForEach(session.displays) { display in
                 Button {
                     session.switchDisplay(display.id)
@@ -355,14 +482,18 @@ public struct RemoteDesktopStageView: View {
                     }
                 }
             }
-        } label: {
-            Label("Display", systemImage: "rectangle.on.rectangle").stageControl()
-        }
-        .help("Switch display")
     }
 
     private var qualityMenu: some View {
         Menu {
+            qualityChoices
+        } label: {
+            Label("Quality", systemImage: "slider.horizontal.3").stageControl()
+        }
+        .help("Frame rate and image quality")
+    }
+
+    @ViewBuilder private var qualityChoices: some View {
             Section("Frame rate") {
                 ForEach([30, 60, 90, 144], id: \.self) { fps in
                     Button {
@@ -389,10 +520,6 @@ public struct RemoteDesktopStageView: View {
                     }
                 }
             }
-        } label: {
-            Label("Quality", systemImage: "slider.horizontal.3").stageControl()
-        }
-        .help("Frame rate and image quality")
     }
 
     private static let qualityPresets: [(title: String, value: Int)] = [
@@ -445,7 +572,7 @@ public struct RemoteDesktopStageView: View {
                 Button("Backspace") { send(RemoteDesktopSpecialKeys.click(RemoteDesktopSpecialKeys.backspace)) }
             }
         } label: {
-            Label("Send Keys", systemImage: "command").stageControl()
+            Label("Keys", systemImage: "command").stageControl()
         }
         .help("Send a special key the local keyboard can not reach")
     }
@@ -530,6 +657,14 @@ public struct RemoteDesktopStageView: View {
 
     private var officialAppMenu: some View {
         Menu {
+            officialAppChoices
+        } label: {
+            Label("Official App", systemImage: "pip").stageControl()
+        }
+        .help("Hand off to the official UU Remote app")
+    }
+
+    @ViewBuilder private var officialAppChoices: some View {
             #if os(macOS)
             // Mac Catalyst cannot exec uuyc-cli; the official app is opened
             // through its URL scheme or the CLI when it exists.
@@ -557,10 +692,6 @@ public struct RemoteDesktopStageView: View {
                 Text("UURemote app is not installed")
             }
             #endif
-        } label: {
-            Label("Official App", systemImage: "pip").stageControl()
-        }
-        .help("Hand off to the official UU Remote app")
     }
 
     private var connectButton: some View {
@@ -603,9 +734,9 @@ public struct RemoteDesktopStageView: View {
         showsTextInput = false
     }
 
-    private func flash(_ message: String) {
+    private func flash(_ message: String, for seconds: Double = 2) {
         withAnimation { toast = message }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
             withAnimation {
                 if toast == message { toast = nil }
             }
@@ -614,18 +745,36 @@ public struct RemoteDesktopStageView: View {
 }
 
 private extension Label {
-    /// An icon-only control of the stage's bar; on a touch screen it takes a
-    /// 44-point square, however small the symbol.
+    /// A control of the stage's bar. On the Mac only its symbol, named by its
+    /// tooltip; a touch screen has no tooltips, so there its name is written
+    /// under the symbol, in a target at least 44 points high.
     func stageControl() -> some View {
         #if os(iOS) && !targetEnvironment(macCatalyst)
-            labelStyle(.iconOnly)
-                .frame(minWidth: 44, minHeight: 44)
-                .contentShape(Rectangle())
+            labelStyle(StageControlLabelStyle())
         #else
             labelStyle(.iconOnly)
         #endif
     }
 }
+
+#if os(iOS) && !targetEnvironment(macCatalyst)
+    /// Symbol over its name.
+    private struct StageControlLabelStyle: LabelStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            VStack(spacing: 3) {
+                configuration.icon
+                    .font(.system(size: 18))
+                    .frame(height: 22)
+                configuration.title
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .frame(minWidth: 52, minHeight: 44)
+            .contentShape(Rectangle())
+        }
+    }
+#endif
 
 /// Pasteboard read/write shared by the stage's clipboard actions.
 enum RemoteDesktopPasteboard {
