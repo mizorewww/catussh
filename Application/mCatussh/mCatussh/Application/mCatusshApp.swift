@@ -48,6 +48,10 @@ struct mCatusshApp: App {
                     AppearancePreference.applyStored()
                     CatusshTerminalView.setCopyOnSelect(store.terminalCopyOnSelect)
                     checkAgreement()
+                    #if DEBUG
+                        seedPreviewServers()
+                        openPreviewTool()
+                    #endif
                 }
                 .onChange(of: store.licenseAgreed) { _ in
                     checkAgreement()
@@ -60,6 +64,40 @@ struct mCatusshApp: App {
                 }
         }
     }
+
+    #if DEBUG
+        /// `CATUSSH_PREVIEW_SEED=1` adds sample UU Remote devices, enough
+        /// servers for lists that scroll under the bars.
+        func seedPreviewServers() {
+            guard ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_SEED"] != nil else { return }
+            let folder = store.folderGroup.folders.first { $0.isLinked }
+                ?? store.createFolder(named: "UU Remote", source: .uuRemote(userID: "preview"))
+            let devices = (1 ... 16).map { index -> UUDeviceInfo in
+                var device = UUDeviceInfo()
+                device.deviceID = "preview-\(index)"
+                device.alias = index.isMultiple(of: 2) ? "Studio PC \(index)" : "MacBook Pro \(index)"
+                device.platform = index.isMultiple(of: 2) ? 1 : 4
+                return device
+            }
+            var group = store.machineGroup
+            UURemoteFolderSync.apply(devices: devices, folder: folder.name, to: &group)
+            store.machineGroup = group
+        }
+
+        /// `CATUSSH_PREVIEW_TOOL=terminal|files|monitor|desktop` opens the
+        /// first server's page on that tool (for a desktop, the first server
+        /// with one), for screenshots without input.
+        func openPreviewTool() {
+            guard let name = ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_TOOL"],
+                  let tool = ServerTool.allCases.first(where: { $0.title.lowercased() == name }),
+                  let machine = store.machineGroup.machines.first(where: { tool != .desktop || $0.hasRemoteDesktop })
+            else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                tool.open(machine.id)
+                SessionNavigation.shared.reveal(.server(machine.id), tool: tool)
+            }
+        }
+    #endif
 
     func checkAgreement() {
         guard !store.licenseAgreed else {
@@ -75,3 +113,4 @@ struct mCatusshApp: App {
         PresentationQueue.present(next: host)
     }
 }
+

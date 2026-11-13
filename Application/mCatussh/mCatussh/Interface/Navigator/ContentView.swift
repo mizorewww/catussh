@@ -41,7 +41,7 @@ enum AppTab: Hashable {
 
 /// The iPhone tab bar.
 struct TabsView: View {
-    @State private var selection: AppTab = .home
+    @State private var selection: AppTab = Self.initialTab
     @ObservedObject var terminals = TerminalManager.shared
     @ObservedObject var monitors = MonitorCenter.shared
     @ObservedObject var transfers = FileTransferManager.shared
@@ -50,6 +50,22 @@ struct TabsView: View {
 
     /// Servers with something open.
     var sessionCount: Int { SessionDirectory.owners.count }
+
+    /// Home; in Debug, `CATUSSH_PREVIEW_TAB=servers|sessions|snippets|more`
+    /// opens that tab, for screenshots without input.
+    static var initialTab: AppTab {
+        #if DEBUG
+            switch ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_TAB"] {
+            case "servers": return .servers
+            case "sessions": return .sessions
+            case "snippets": return .snippets
+            case "more": return .more
+            default: return .home
+            }
+        #else
+            return .home
+        #endif
+    }
 
     var body: some View {
         TabView(selection: $selection) {
