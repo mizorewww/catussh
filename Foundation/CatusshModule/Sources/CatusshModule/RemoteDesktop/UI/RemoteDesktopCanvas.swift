@@ -37,16 +37,13 @@ public struct RemoteDesktopCanvas: UIViewRepresentable {
         // A canvas made again (the page came back) does not bring up the
         // keyboard for requests an earlier one already answered.
         view.syncKeyboardRequests(keyboardRequests)
-        view.applyFrame(session.frameImage, framebufferSize: session.framebufferSize)
-        view.applyCursor(session.remoteCursor)
+        view.follow(session)
         return view
     }
 
     public func updateUIView(_ view: RemoteDesktopCanvasView, context _: Context) {
-        view.session = session
         view.touchMode = touchMode
-        view.applyFrame(session.frameImage, framebufferSize: session.framebufferSize)
-        view.applyCursor(session.remoteCursor)
+        if view.session !== session { view.follow(session) }
         view.applyKeyboardRequest(keyboardRequests)
     }
 }
@@ -185,11 +182,23 @@ public final class RemoteDesktopCanvasView: UIView {
 
     // MARK: - Frames
 
+    /// Draws `session`'s frames and cursor as they come, straight from it:
+    /// SwiftUI is not asked to draw anything for a frame.
+    func follow(_ session: RemoteDesktopSession) {
+        self.session = session
+        session.onFrame = { [weak self] image, size in self?.applyFrame(image, framebufferSize: size) }
+        session.onCursor = { [weak self] cursor in self?.applyCursor(cursor) }
+        applyFrame(session.frameImage, framebufferSize: session.framebufferSize)
+        applyCursor(session.remoteCursor)
+    }
+
     func applyFrame(_ image: CGImage?, framebufferSize: CGSize) {
-        self.framebufferSize = framebufferSize
-        if let image {
+        if let image, image !== frameView.image?.cgImage {
             frameView.image = UIImage(cgImage: image)
         }
+        // A frame of the same size draws where the last one was.
+        guard framebufferSize != self.framebufferSize || frameView.frame.isEmpty else { return }
+        self.framebufferSize = framebufferSize
         setNeedsLayout()
     }
 
@@ -710,16 +719,12 @@ public struct RemoteDesktopCanvas: NSViewRepresentable {
 
     public func makeNSView(context _: Context) -> RemoteDesktopCanvasNSView {
         let view = RemoteDesktopCanvasNSView()
-        view.session = session
-        view.applyFrame(session.frameImage, framebufferSize: session.framebufferSize)
-        view.applyCursor(session.remoteCursor)
+        view.follow(session)
         return view
     }
 
     public func updateNSView(_ view: RemoteDesktopCanvasNSView, context _: Context) {
-        view.session = session
-        view.applyFrame(session.frameImage, framebufferSize: session.framebufferSize)
-        view.applyCursor(session.remoteCursor)
+        if view.session !== session { view.follow(session) }
     }
 }
 
@@ -762,11 +767,21 @@ public final class RemoteDesktopCanvasNSView: NSView {
     public override var acceptsFirstResponder: Bool { true }
     public override var isFlipped: Bool { true }
 
+    /// Draws `session`'s frames and cursor as they come, straight from it.
+    func follow(_ session: RemoteDesktopSession) {
+        self.session = session
+        session.onFrame = { [weak self] image, size in self?.applyFrame(image, framebufferSize: size) }
+        session.onCursor = { [weak self] cursor in self?.applyCursor(cursor) }
+        applyFrame(session.frameImage, framebufferSize: session.framebufferSize)
+        applyCursor(session.remoteCursor)
+    }
+
     func applyFrame(_ image: CGImage?, framebufferSize: CGSize) {
-        self.framebufferSize = framebufferSize
         if let image {
             frameView.image = NSImage(cgImage: image, size: .zero)
         }
+        guard framebufferSize != self.framebufferSize else { return }
+        self.framebufferSize = framebufferSize
         needsLayout = true
     }
 

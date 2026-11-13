@@ -998,7 +998,8 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
                 clipboardEnabled: true
             ))
         case UUSimpleActionType.echoResponse:
-            session.reportHint("UU Remote echo \(action.argsJSON ?? "")")
+            // Ten a second: published, each would draw the stage again.
+            break
         default:
             Self.log.info("simple action \(action.action) not handled: \(action.argsJSON ?? "", privacy: .public)")
         }

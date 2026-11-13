@@ -21,13 +21,20 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
 
     @Published public private(set) var phase: RemoteDesktopPhase = .idle
     /// The latest decoded frame, already scaled to the remote framebuffer.
-    @Published public private(set) var frameImage: CGImage?
+    /// Not published: a frame redraws the canvas (`onFrame`), not the
+    /// controls around it, which are drawn again on every publish.
+    public private(set) var frameImage: CGImage?
     @Published public private(set) var framebufferSize: CGSize = .zero
     @Published public private(set) var desktopName: String = ""
     /// Every display the host reports; empty until a multi-monitor host answers.
     @Published public private(set) var displays: [RemoteDisplayInfo] = []
     @Published public private(set) var selectedDisplayID: Int = 0
-    @Published public private(set) var remoteCursor: RemoteCursorInfo?
+    /// The host's pointer; not published, it moves with every pointer
+    /// move (`onCursor`).
+    public private(set) var remoteCursor: RemoteCursorInfo?
+    /// The canvas: each frame and cursor change, on the main actor.
+    public var onFrame: ((CGImage?, CGSize) -> Void)?
+    public var onCursor: ((RemoteCursorInfo?) -> Void)?
     /// Measured update rate of the rendered stream.
     @Published public private(set) var fps: Int = 0
     /// Round trip time when the backend measures it.
@@ -63,8 +70,11 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
     private var heldKeys: [UInt16: (keySym: UInt32?, characters: String)] = [:]
 
     private var driver: RemoteDesktopDriver?
-    private var frameCounter = 0
     private var fpsWindowStart = Date()
+    /// Frames and cursors from the driver's threads wait here, the latest
+    /// of each, for one trip to the main actor at a time: a main thread
+    /// that falls behind skips frames instead of queueing them.
+    private nonisolated let mailbox = RemoteDesktopMailbox()
     /// Where the pointer was last sent, normalized.
     private var lastPointer = (x: 0.5, y: 0.5)
     /// Input is dropped while the session is not fully up, or while it is
@@ -184,50 +194,62 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
             guard let self else { return }
             if self.phase != phase {
                 Self.log.info("\(self.machine.name, privacy: .public): \(String(describing: phase), privacy: .public) \(hint ?? "", privacy: .public)")
+                self.phase = phase
             }
-            self.phase = phase
-            if let hint { self.statusHint = hint }
+            if let hint, hint != self.statusHint { self.statusHint = hint }
         }
     }
 
     /// Reports a new or updated frame. `frame` may be nil for a metadata-only
     /// update (resize, cursor move).
     nonisolated public func reportFrame(_ frame: CGImage?, size: CGSize, desktopName: String? = nil) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            if let frame { self.frameImage = frame }
-            self.framebufferSize = size
-            if let desktopName { self.desktopName = desktopName }
-            self.frameCounter += 1
-            let now = Date()
-            if now.timeIntervalSince(self.fpsWindowStart) >= 1 {
-                self.fps = self.frameCounter
-                self.frameCounter = 0
-                self.fpsWindowStart = now
-            }
-        }
+        if mailbox.post(frame: frame, size: size, desktopName: desktopName) { scheduleDelivery() }
     }
 
     /// Reports the displays the host exposes and which is in view.
     nonisolated public func reportDisplays(_ displays: [RemoteDisplayInfo], selected: Int) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            self.displays = displays
-            self.selectedDisplayID = selected
+            if self.displays != displays { self.displays = displays }
+            if self.selectedDisplayID != selected { self.selectedDisplayID = selected }
         }
     }
 
     /// Reports a remote-drawn cursor (nil hides the overlay).
     nonisolated public func reportCursor(_ cursor: RemoteCursorInfo?) {
-        Task { @MainActor [weak self] in
-            self?.remoteCursor = cursor
+        if mailbox.post(cursor: cursor) { scheduleDelivery() }
+    }
+
+    nonisolated private func scheduleDelivery() {
+        Task { @MainActor [weak self] in self?.deliver() }
+    }
+
+    /// What the mailbox holds, to the canvas; the frame rate once a second.
+    private func deliver() {
+        let mail = mailbox.take()
+        if let cursor = mail.cursor {
+            remoteCursor = cursor
+            onCursor?(cursor)
+        }
+        guard let frame = mail.frame else { return }
+        if let image = frame.image { frameImage = image }
+        if framebufferSize != frame.size { framebufferSize = frame.size }
+        if let name = frame.desktopName, name != desktopName { desktopName = name }
+        onFrame?(frameImage, frame.size)
+        let now = Date()
+        if now.timeIntervalSince(fpsWindowStart) >= 1 {
+            let counted = mailbox.takeFrameCount()
+            let rate = Int((Double(counted) / now.timeIntervalSince(fpsWindowStart)).rounded())
+            if rate != fps { fps = rate }
+            fpsWindowStart = now
         }
     }
 
     /// Reports a measured round trip.
     nonisolated public func reportRTT(_ ms: Int?) {
         Task { @MainActor [weak self] in
-            self?.rttMs = ms
+            guard let self, self.rttMs != ms else { return }
+            self.rttMs = ms
         }
     }
 
@@ -241,7 +263,70 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
     /// Reports a single line the backend wants surfaced (progress detail).
     nonisolated public func reportHint(_ text: String) {
         Task { @MainActor [weak self] in
-            self?.statusHint = text
+            guard let self, self.statusHint != text else { return }
+            self.statusHint = text
+        }
+    }
+}
+
+/// The latest frame and cursor a driver reported, until the main actor
+/// takes them; `post` says when a trip there is to be made.
+final class RemoteDesktopMailbox: @unchecked Sendable {
+    struct Frame {
+        var image: CGImage?
+        var size: CGSize
+        var desktopName: String?
+    }
+
+    private let lock = NSLock()
+    private var frame: Frame?
+    private var cursor: RemoteCursorInfo??
+    private var scheduled = false
+    private var frameCount = 0
+
+    /// A frame replacing any not yet taken; one without a picture keeps the
+    /// waiting one's picture. True when the main actor is to be asked over.
+    func post(frame image: CGImage?, size: CGSize, desktopName: String?) -> Bool {
+        lock.withLock {
+            frameCount += image == nil ? 0 : 1
+            frame = Frame(
+                image: image ?? frame?.image,
+                size: size,
+                desktopName: desktopName ?? frame?.desktopName
+            )
+            return schedule()
+        }
+    }
+
+    func post(cursor new: RemoteCursorInfo?) -> Bool {
+        lock.withLock {
+            cursor = .some(new)
+            return schedule()
+        }
+    }
+
+    private func schedule() -> Bool {
+        guard !scheduled else { return false }
+        scheduled = true
+        return true
+    }
+
+    func take() -> (frame: Frame?, cursor: RemoteCursorInfo??) {
+        lock.withLock {
+            defer {
+                frame = nil
+                cursor = nil
+                scheduled = false
+            }
+            return (frame, cursor)
+        }
+    }
+
+    /// Frames posted since the last call, taken or skipped.
+    func takeFrameCount() -> Int {
+        lock.withLock {
+            defer { frameCount = 0 }
+            return frameCount
         }
     }
 }
