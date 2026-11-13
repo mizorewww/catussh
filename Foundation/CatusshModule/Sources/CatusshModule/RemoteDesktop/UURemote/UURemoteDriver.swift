@@ -341,6 +341,14 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         do {
             // Room bootstrap, once the saved account is in the client.
             await UURemoteAccountStore.shared.ready()
+            // Signed out, the service only answers with its missing headers.
+            // A share code joins without an account.
+            let signedIn = await MainActor.run { UURemoteAccountStore.shared.isLoggedIn }
+            guard signedIn || !session.machine.uuAssistID.isEmpty else {
+                reportTerminal(.failed("Sign in to UU Remote to connect to \(session.machine.name)."), hint: "Remote Desktop › UU Remote Account")
+                stop()
+                return
+            }
             session.reportPhase(.connecting("Joining room"), hint: "Joining UU Remote room…")
             // The room and its signal channel, joined and opened once per
             // device: a second join would take the room from the device's
