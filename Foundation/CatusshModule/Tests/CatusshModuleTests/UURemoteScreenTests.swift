@@ -100,6 +100,19 @@ final class UURemoteScreenTests: XCTestCase {
         return try UUWire.decode(body)
     }
 
+    func testVirtualDisplaysAreAskedForAndRemoved() throws {
+        let create = try rpcBody(UUControlProtocol.createVirtualDisplay(requestID: 4, width: 2732, height: 2048), field: 12)
+        guard case let .bytes(resolution)? = create.first(where: { $0.number == 1 })?.value else { return XCTFail("no resolution") }
+        let size = try UUWire.decode(resolution)
+        XCTAssertEqual(size.compactMap { if case let .varint(v) = $0.value { v.int32Value } else { nil } }, [2732, 2048])
+        guard case let .varint(count)? = create.first(where: { $0.number == 2 })?.value else { return XCTFail("no count") }
+        XCTAssertEqual(count, 1)
+
+        let remove = try rpcBody(UUControlProtocol.removeVirtualDisplay(requestID: 5, screenID: 3), field: 13)
+        guard case let .varint(id)? = remove.first?.value else { return XCTFail("no id") }
+        XCTAssertEqual(id, 3)
+    }
+
     func testVideoTracksRegisterEveryIndex() throws {
         let tracks = try rpcBody(UUControlProtocol.sendVideoTrackRequest(requestID: 6, tracks: [0, 1, 2]), field: 15)
         XCTAssertEqual(tracks.compactMap { if case let .varint(v) = $0.value { v.int32Value } else { nil } }, [0, 1, 2])

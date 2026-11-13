@@ -39,6 +39,8 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
     @Published public private(set) var fps: Int = 0
     /// Round trip time when the backend measures it.
     @Published public private(set) var rttMs: Int?
+    /// Bit rate, loss and route, when the backend measures them.
+    @Published public private(set) var network: RemoteDesktopNetwork?
     /// What the backend wants shown as a subtitle or progress line.
     @Published public private(set) var statusHint: String = ""
     /// The last clipboard contents the host pushed.
@@ -177,6 +179,25 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
         driver?.selectDisplay(displayID)
     }
 
+    /// The display after the one in view, round to the first.
+    public func nextDisplay() {
+        guard displays.count > 1 else { return }
+        let index = displays.firstIndex { $0.id == selectedDisplayID } ?? -1
+        switchDisplay(displays[(index + 1) % displays.count].id)
+    }
+
+    /// Whether the host can be given a display of our own (UU virtual screens).
+    public var canAddDisplays: Bool { protocolType == .uuRemote && phase == .connected }
+
+    public func addVirtualDisplay(width: Int, height: Int) {
+        guard canAddDisplays else { return }
+        driver?.addVirtualDisplay(width: width, height: height)
+    }
+
+    public func removeVirtualDisplay(_ displayID: Int) {
+        driver?.removeVirtualDisplay(displayID)
+    }
+
     public func applyQuality(fps: Int, quality: Int) {
         driver?.updateQuality(fps: fps, quality: quality)
     }
@@ -250,6 +271,14 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
         Task { @MainActor [weak self] in
             guard let self, self.rttMs != ms else { return }
             self.rttMs = ms
+        }
+    }
+
+    /// Reports the connection's bit rate, loss and route.
+    nonisolated public func reportNetwork(_ network: RemoteDesktopNetwork?) {
+        Task { @MainActor [weak self] in
+            guard let self, self.network != network else { return }
+            self.network = network
         }
     }
 

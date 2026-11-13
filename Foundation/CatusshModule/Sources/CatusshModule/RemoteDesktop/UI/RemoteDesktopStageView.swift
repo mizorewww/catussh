@@ -109,6 +109,9 @@ public struct RemoteDesktopStageView: View {
     @State private var officialAppInstalled = false
     /// How fingers drive the pointer, kept on this device for every desktop.
     @AppStorage(RemoteDesktopTouchMode.defaultsKey) private var touchModeName = RemoteDesktopTouchMode.trackpad.rawValue
+    /// The screen's size in pixels: what a virtual display is made at.
+    @State private var stagePixels = CGSize(width: 1920, height: 1080)
+    @Environment(\.displayScale) private var displayScale
 
     private var touchMode: RemoteDesktopTouchMode {
         RemoteDesktopTouchMode(rawValue: touchModeName) ?? .trackpad
@@ -126,6 +129,12 @@ public struct RemoteDesktopStageView: View {
             ZStack { canvasLayer }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.onAppear { measure(proxy.size) }
+                            .onChange(of: proxy.size) { measure($0) }
+                    }
+                }
         }
         .background(Color.black.ignoresSafeArea())
         #if os(iOS)
@@ -352,7 +361,7 @@ public struct RemoteDesktopStageView: View {
                 Toggle(isOn: $session.viewOnly) {
                     Label("View Only", systemImage: "eye")
                 }
-                if session.displays.count > 1 {
+                if session.displays.count > 1 || session.canAddDisplays {
                     Menu {
                         displayChoices
                     } label: {
@@ -404,7 +413,7 @@ public struct RemoteDesktopStageView: View {
             .foregroundStyle(Color.rxInkSecondary)
             .lineLimit(1)
         Divider().frame(height: 16)
-        if session.displays.count > 1 { displayMenu }
+        if session.displays.count > 1 || session.canAddDisplays { displayMenu }
         if session.protocolType == .uuRemote { qualityMenu }
         viewOnlyButton
         specialKeysMenu
@@ -466,6 +475,11 @@ public struct RemoteDesktopStageView: View {
         var parts: [String] = []
         if session.fps > 0 { parts.append("\(session.fps) fps") }
         if let rtt = session.rttMs { parts.append("\(rtt) ms") }
+        if let network = session.network, session.phase == .connected {
+            if let bits = network.bitsPerSecond { parts.append(Self.rate(bits)) }
+            if let loss = network.lossPercent, loss >= 0.5 { parts.append(String(format: "%.0f%% loss", loss)) }
+            if network.relayed { parts.append("relay") }
+        }
         if !session.statusHint.isEmpty, session.phase != .connected {
             parts.append(session.statusHint)
         }
@@ -482,18 +496,59 @@ public struct RemoteDesktopStageView: View {
     }
 
     @ViewBuilder private var displayChoices: some View {
-            ForEach(session.displays) { display in
-                Button {
-                    session.switchDisplay(display.id)
-                } label: {
-                    let title = display.name.isEmpty ? "Display \(display.id)" : display.name
-                    if display.id == session.selectedDisplayID {
-                        Label(title, systemImage: "checkmark")
-                    } else {
-                        Text(title)
+            Section {
+                ForEach(session.displays) { display in
+                    Button {
+                        session.switchDisplay(display.id)
+                    } label: {
+                        let title = display.name.isEmpty ? "Display \(display.id)" : display.name
+                        if display.id == session.selectedDisplayID {
+                            Label(title, systemImage: "checkmark")
+                        } else {
+                            Text(title)
+                        }
                     }
                 }
             }
+            if session.displays.count > 1 {
+                Button { session.nextDisplay() } label: {
+                    Label("Next Display", systemImage: "arrow.right.square")
+                }
+                .keyboardShortcut("n", modifiers: [.command, .option])
+            }
+            if session.canAddDisplays {
+                Section {
+                    Button {
+                        session.addVirtualDisplay(width: Int(stagePixels.width), height: Int(stagePixels.height))
+                    } label: {
+                        Label("Add Virtual Display", systemImage: "plus.rectangle.on.rectangle")
+                    }
+                    ForEach(session.displays.filter(\.isVirtual)) { display in
+                        Button(role: .destructive) {
+                            session.removeVirtualDisplay(display.id)
+                        } label: {
+                            Label("Remove \(display.name)", systemImage: "minus.rectangle")
+                        }
+                        .disabled(session.displays.count < 2)
+                    }
+                }
+            }
+    }
+
+    /// A virtual display is made the size of the stage, in even pixels.
+    private func measure(_ size: CGSize) {
+        let scale = max(displayScale, 1)
+        let width = (Int(size.width * scale) / 2) * 2
+        let height = (Int(size.height * scale) / 2) * 2
+        guard width >= 640, height >= 480 else { return }
+        stagePixels = CGSize(width: width, height: height)
+    }
+
+    /// "850 Kbps", "11.9 Mbps".
+    private static func rate(_ bits: Int) -> String {
+        bits >= 1_000_000
+            ? String(format: "%.1f Mbps", Double(bits) / 1_000_000)
+            : "\(max(bits / 1000, 0)) Kbps"
     }
 
     private var qualityMenu: some View {

@@ -90,3 +90,19 @@ public struct RemoteCursorInfo: Equatable, Sendable {
     }
 }
 
+/// How the connection carrying a desktop is doing, when the backend
+/// measures it.
+public struct RemoteDesktopNetwork: Equatable, Sendable {
+    /// The video's bit rate over the last second.
+    public var bitsPerSecond: Int?
+    /// Packets lost over the last second, in percent.
+    public var lossPercent: Double?
+    /// Through a relay server rather than peer to peer.
+    public var relayed: Bool
+
+    public init(bitsPerSecond: Int? = nil, lossPercent: Double? = nil, relayed: Bool = false) {
+        self.bitsPerSecond = bitsPerSecond
+        self.lossPercent = lossPercent
+        self.relayed = relayed
+    }
+}

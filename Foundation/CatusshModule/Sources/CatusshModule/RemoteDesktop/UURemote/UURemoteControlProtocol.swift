@@ -458,6 +458,26 @@ public enum UUControlProtocol {
         )
     }
 
+    /// RpcRequest case 12 `CreateVirtualDisplay {1: repeated
+    /// ScreenResolution{1: width, 2: height} local_resolution, 2: count}`:
+    /// the host adds a UU virtual screen of that size.
+    public static func createVirtualDisplay(requestID: UInt64, width: Int, height: Int) -> Data {
+        var resolution = Data()
+        UUProtobufWriter.pushInt32Field(1, Int32(clamping: width), into: &resolution)
+        UUProtobufWriter.pushInt32Field(2, Int32(clamping: height), into: &resolution)
+        var body = Data()
+        UUProtobufWriter.pushMessageField(1, resolution, into: &body)
+        UUProtobufWriter.pushInt32Field(2, 1, into: &body)
+        return rpcRequest(requestID: requestID, bodyField: 12, body: body)
+    }
+
+    /// RpcRequest case 13 `RemoveVirtualDisplay {1: repeated screen_id}`.
+    public static func removeVirtualDisplay(requestID: UInt64, screenID: Int) -> Data {
+        var body = Data()
+        UUProtobufWriter.pushInt32Field(1, Int32(clamping: screenID), into: &body)
+        return rpcRequest(requestID: requestID, bodyField: 13, body: body)
+    }
+
     /// Decodes CaptureChange (field 8).
     public static func decodeCaptureChange(_ data: Data) -> (captureType: UInt64, captureID: UInt64, description: String)? {
         guard let fields = try? UUWire.decode(data) else { return nil }

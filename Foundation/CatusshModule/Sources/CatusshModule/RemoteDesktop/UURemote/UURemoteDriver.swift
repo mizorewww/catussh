@@ -97,6 +97,9 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     /// The screen in view: the one the pointer is on and whose track is
     /// drawn. Main thread.
     private var viewedScreenID: Int?
+    /// A virtual screen asked for and not yet listed: the view goes to it
+    /// once it is.
+    private var awaitingVirtualScreen = false
     /// Each video track's transceiver mid, by the host's track index, from
     /// the answer. Main thread.
     private var midByTrackIndex: [Int: String] = [:]
@@ -312,12 +315,39 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         session.reportDisplays(screens, selected: displayID)
     }
 
+    /// A new UU virtual screen of `width` × `height` pixels; the view goes
+    /// to it once the host lists it.
+    public func addVirtualDisplay(width: Int, height: Int) {
+        guard controlChannelOpen, width > 0, height > 0 else { return }
+        awaitingVirtualScreen = true
+        sendControlChannel(UUControlProtocol.createVirtualDisplay(requestID: nextOutboundSequence(), width: width, height: height))
+    }
+
+    /// Removes a UU virtual screen; the view first goes to another screen
+    /// when it is the one in view. The last screen stays.
+    public func removeVirtualDisplay(_ displayID: Int) {
+        guard controlChannelOpen, screens.count > 1,
+              screens.contains(where: { $0.id == displayID && $0.isVirtual }) else { return }
+        if displayID == viewedScreenID,
+           let other = screens.first(where: { $0.id != displayID && $0.isPrimary }) ?? screens.first(where: { $0.id != displayID }) {
+            selectDisplay(other.id)
+        }
+        sendControlChannel(UUControlProtocol.removeVirtualDisplay(requestID: nextOutboundSequence(), screenID: displayID))
+    }
+
     /// The host listed its screens: the one in view stays in view while it
     /// is there; otherwise it is the host's current one. A display the
     /// user pinned is shown once it is listed. Main thread.
     private func handleScreenSources(_ displays: [RemoteDisplayInfo], currentID: Int?) {
+        let known = Set(screens.map(\.id))
         screens = displays
         Self.log.info("screens: \(displays.map { "\($0.id) \($0.name) \($0.width)x\($0.height) track \($0.videoTrackIndex.map(String.init) ?? "?")\($0.isVirtual ? " virtual" : "")" }.joined(separator: ", "), privacy: .public); current \(currentID.map(String.init) ?? "?", privacy: .public)")
+        if awaitingVirtualScreen, !known.isEmpty,
+           let added = displays.first(where: { $0.isVirtual && !known.contains($0.id) }) {
+            awaitingVirtualScreen = false
+            selectDisplay(added.id)
+            return
+        }
         if let viewed = viewedScreenID, displays.contains(where: { $0.id == viewed }) {
             // Still there.
         } else {
@@ -696,6 +726,9 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
                 self?.decodeEncodedFrame(bytes, timestamp: timestamp, mid: mid)
             }
         }
+        await peer.setStatsHandler { [weak self] stats in
+            self?.handleStats(stats)
+        }
         await peer.setDataChannelStateHandler("CONTROL_DATA_CHANNEL") { [weak self] (state: String) in
             guard let self else { return }
             if state != "open", self.controlChannelOpen {
@@ -987,6 +1020,34 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
 
     private var iceState = ""
 
+    /// The last second's totals of the track in view, to tell what came since.
+    private var lastStats: (at: Date, bytes: Double, lost: Double, packets: Double)?
+
+    /// The page's stats, once a second: the round trip of the selected
+    /// candidate pair, and the bit rate and loss of the track in view (of
+    /// every track, where WebKit names none). Main thread.
+    private func handleStats(_ stats: [String: Any]) {
+        let video = stats["video"] as? [[String: Any]] ?? []
+        let mid = viewLock.withLock { viewedMid }
+        let entries = video.filter { ($0["mid"] as? String) == mid }.nilIfEmpty ?? video
+        func total(_ key: String) -> Double { entries.reduce(0) { $0 + (($1[key] as? NSNumber)?.doubleValue ?? 0) } }
+        let now = Date()
+        let current = (at: now, bytes: total("bytes"), lost: total("lost"), packets: total("packets"))
+        var network = RemoteDesktopNetwork(relayed: (stats["local"] as? String) == "relay")
+        if let last = lastStats, current.bytes >= last.bytes {
+            let seconds = max(now.timeIntervalSince(last.at), 0.1)
+            network.bitsPerSecond = Int((current.bytes - last.bytes) * 8 / seconds)
+            let lost = max(current.lost - last.lost, 0)
+            let arrived = max(current.packets - last.packets, 0)
+            if lost + arrived > 0 { network.lossPercent = lost * 100 / (lost + arrived) }
+        }
+        lastStats = current
+        session.reportNetwork(network)
+        if let rtt = (stats["rtt"] as? NSNumber)?.doubleValue, rtt >= 0 {
+            session.reportRTT(Int((rtt * 1000).rounded()))
+        }
+    }
+
     /// The connection is gone for good: it reads as closed, so what runs on
     /// it (terminals, port mappings) ends and can reconnect on a new one.
     private func lose(_ reason: String) {
@@ -1128,7 +1189,8 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
                 clipboardEnabled: true
             ))
         case UUSimpleActionType.echoResponse:
-            // Ten a second: published, each would draw the stage again.
+            // Ten a second: published, each would draw the stage again. The
+            // round trip comes from the connection's stats.
             break
         default:
             Self.log.info("simple action \(action.action) not handled: \(action.argsJSON ?? "", privacy: .public)")
@@ -1468,6 +1530,7 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     private var trackHandler: ((String, Data) -> Void)?
     private var videoFrameHandler: ((CGImage, CGSize) -> Void)?
     private var encodedFrameHandler: ((String, UInt32, String?) -> Void)?
+    private var statsHandler: (([String: Any]) -> Void)?
     private var codecHandler: ((String) -> Void)?
     private var iceStateHandler: ((String) -> Void)?
 
@@ -1552,6 +1615,7 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
             } })).pipeTo(t.writable);
         };`;
         let transformWorker = null;
+        let statsTimer = null;
         function base64(bytes) {
             let text = '';
             for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
@@ -1588,15 +1652,25 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
                     post('track', {kind: 'video', id: e.track.id, mid: mid, transformed: transformed});
                 }
             };
-            setInterval(async () => {
+            // Once a second: each video track's totals and the selected
+            // candidate pair, for the bar's network figures.
+            statsTimer = setInterval(async () => {
                 if (!pc) return;
                 const report = await pc.getStats();
-                const codecs = {}; const inbound = [];
-                report.forEach(r => { if (r.type === 'codec') codecs[r.id] = r.mimeType; });
-                report.forEach(r => { if (r.type === 'inbound-rtp' && r.kind === 'video' && r.bytesReceived > 0) inbound.push({codec: codecs[r.codecId] || '', bytes: r.bytesReceived, decoded: r.framesDecoded || 0, w: r.frameWidth || 0, h: r.frameHeight || 0}); });
-                post('stats', {video: inbound, ready: videoEls.map(v => v.readyState)});
+                const codecs = {}; const inbound = []; const candidates = {};
+                let pair = null; let selectedPairId = null;
+                report.forEach(r => {
+                    if (r.type === 'codec') codecs[r.id] = r.mimeType;
+                    if (r.type === 'local-candidate') candidates[r.id] = r.candidateType;
+                    if (r.type === 'transport' && r.selectedCandidatePairId) selectedPairId = r.selectedCandidatePairId;
+                });
+                report.forEach(r => {
+                    if (r.type === 'inbound-rtp' && r.kind === 'video' && r.bytesReceived > 0) inbound.push({mid: r.mid || null, codec: codecs[r.codecId] || '', bytes: r.bytesReceived, lost: r.packetsLost || 0, packets: r.packetsReceived || 0, decoded: r.framesDecoded || 0, w: r.frameWidth || 0, h: r.frameHeight || 0});
+                    if (r.type === 'candidate-pair' && (r.id === selectedPairId || (!selectedPairId && r.nominated && r.state === 'succeeded'))) pair = r;
+                });
+                post('stats', {video: inbound, rtt: pair && pair.currentRoundTripTime != null ? pair.currentRoundTripTime : -1, local: pair ? (candidates[pair.localCandidateId] || '') : ''});
                 if (inbound.length) post('codec', {name: inbound[0].codec});
-            }, 3000);
+            }, 1000);
             return 'ok';
         }
         // The offer asks for five video tracks and the host fills one: each
@@ -1672,7 +1746,7 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
             return failed.length ? failed.join('; ') : 'ok';
         }
         function dcClose(label) { channels[label] && channels[label].close(); }
-        function closeAll() { if (frameTimer) { clearInterval(frameTimer); frameTimer = null; } for (const k in channels) { try { channels[k].close(); } catch (e) {} } if (pc) { try { pc.close(); } catch (e) {} } return 'ok'; }
+        function closeAll() { if (frameTimer) { clearInterval(frameTimer); frameTimer = null; } if (statsTimer) { clearInterval(statsTimer); statsTimer = null; } for (const k in channels) { try { channels[k].close(); } catch (e) {} } if (pc) { try { pc.close(); } catch (e) {} } return 'ok'; }
         </script></body></html>
         """
         // An origin of its own, so the page may start a worker from a blob.
@@ -1707,7 +1781,7 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
             let count = messageCounts[name, default: 0] + 1
             messageCounts[name] = count
             if count <= 2 || count.isMultiple(of: 300) { Self.log.info("\(name, privacy: .public) \(count)") }
-        case "icecandidate", "codec":
+        case "icecandidate", "codec", "stats":
             break
         default:
             Self.log.info("\(name, privacy: .public) \(String(describing: data), privacy: .public)")
@@ -1737,6 +1811,8 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
             if let text = data["data"] as? String {
                 encodedFrameHandler?(text, (data["ts"] as? NSNumber)?.uint32Value ?? 0, data["mid"] as? String)
             }
+        case "stats":
+            statsHandler?(data)
         case "codec":
             codecHandler?(data["name"] as? String ?? "")
         case "video_frame":
@@ -1825,6 +1901,11 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     func setTrackHandler(_ handler: @escaping (String, Data) -> Void) { trackHandler = handler }
     func setVideoFrameHandler(_ handler: @escaping (CGImage, CGSize) -> Void) { videoFrameHandler = handler }
     func setEncodedFrameHandler(_ handler: @escaping (String, UInt32, String?) -> Void) { encodedFrameHandler = handler }
+    func setStatsHandler(_ handler: @escaping ([String: Any]) -> Void) { statsHandler = handler }
     func setCodecHandler(_ handler: @escaping (String) -> Void) { codecHandler = handler }
     func setICEStateHandler(_ handler: @escaping (String) -> Void) { iceStateHandler = handler }
+}
+
+private extension Array {
+    var nilIfEmpty: [Element]? { isEmpty ? nil : self }
 }

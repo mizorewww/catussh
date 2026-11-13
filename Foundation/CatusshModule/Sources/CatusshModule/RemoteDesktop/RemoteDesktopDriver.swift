@@ -42,6 +42,16 @@ public protocol RemoteDesktopDriver: AnyObject, Sendable {
     func updateQuality(fps: Int, quality: Int)
     /// Asks the host for a full refresh / keyframe.
     func requestKeyframeOrRefresh()
+    /// Adds a display of the given pixel size on the host, where it can
+    /// make one (a UU virtual screen), and switches to it.
+    func addVirtualDisplay(width: Int, height: Int)
+    /// Removes a display `addVirtualDisplay` (or another viewer) made.
+    func removeVirtualDisplay(_ displayID: Int)
+}
+
+public extension RemoteDesktopDriver {
+    func addVirtualDisplay(width _: Int, height _: Int) {}
+    func removeVirtualDisplay(_: Int) {}
 }
 
 /// Picks the backend for a machine. `.vnc` and `.uuRemote` are built in.
