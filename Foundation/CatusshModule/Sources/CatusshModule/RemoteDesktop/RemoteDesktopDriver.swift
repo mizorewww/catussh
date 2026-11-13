@@ -46,10 +46,11 @@ public protocol RemoteDesktopDriver: AnyObject, Sendable {
 
 /// Picks the backend for a machine. `.vnc` and `.uuRemote` are built in.
 public enum RemoteDesktopDriverFactory {
-    /// Creates a driver for the machine's protocol; nil for `.none`.
+    /// Creates a driver for the session's protocol (the machine's, unless
+    /// the session was opened with another); nil for `.none`.
     @MainActor
     static func make(for machine: RDMachine, session: RemoteDesktopSession) -> RemoteDesktopDriver? {
-        switch machine.remoteDesktopProtocol {
+        switch session.protocolType {
         case .none:
             return nil
         case .vnc:
