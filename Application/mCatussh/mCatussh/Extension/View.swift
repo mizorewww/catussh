@@ -31,6 +31,7 @@ struct DefaultModalPresenter<Content: View>: View {
                 }
         }
         .tint(.rxAccent)
+        .rxSolidBars()
     }
 }
 

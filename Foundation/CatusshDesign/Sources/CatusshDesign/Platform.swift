@@ -42,12 +42,37 @@ public extension View {
         buttonStyle(.plain).foregroundStyle(Color.rxAccent)
     }
 
-    /// Lets the window toolbar float over the page instead of drawing its own background.
+    /// Lets the window toolbar float over the page instead of drawing its own
+    /// background. Mac only: on iOS a bar without a background is Liquid
+    /// Glass over the page, which loses its text in Light mode.
+    @ViewBuilder
     func rxClearToolbar() -> some View {
         #if os(macOS)
             toolbarBackground(.hidden, for: .windowToolbar)
         #else
-            toolbarBackground(.hidden, for: .navigationBar)
+            self
+        #endif
+    }
+}
+
+public extension View {
+    /// Bars that keep their text readable. Since iOS 26 the navigation bar,
+    /// toolbar and tab bar are Liquid Glass with the page scrolling on under
+    /// them, and the glass takes its tint from whatever passes behind: in
+    /// Light mode rows show through the tab bar and bar titles and labels
+    /// sink into them. A hard scroll edge gives every bar an opaque backing
+    /// of the page's own color, so nothing shows through and the glass has
+    /// nothing to follow. Set once at the root; scroll views inherit it.
+    @ViewBuilder
+    func rxSolidBars() -> some View {
+        #if os(iOS)
+            if #available(iOS 26.0, *) {
+                scrollEdgeEffectStyle(.hard, for: .all)
+            } else {
+                self
+            }
+        #else
+            self
         #endif
     }
 }

@@ -26,6 +26,7 @@ struct ContentView: View {
             }
         }
         .tint(.rxAccent)
+        .rxSolidBars()
         .onAppear { SessionNavigation.shared.isSidebarShown = horizontalSizeClass != .compact }
         .onChange(of: horizontalSizeClass) { SessionNavigation.shared.isSidebarShown = $0 != .compact }
     }

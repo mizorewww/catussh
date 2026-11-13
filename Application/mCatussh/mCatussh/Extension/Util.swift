@@ -52,7 +52,7 @@ enum CatusshUtil {
     /// out — the present waits in PresentationQueue and `completion` hears
     /// whether it went up.
     static func presentModalSheet<Content: View>(rootView: Content, completion: ((Bool) -> Void)? = nil) {
-        let controller = UIHostingController(rootView: rootView)
+        let controller = UIHostingController(rootView: rootView.rxSolidBars())
         controller.isModalInPresentation = true
         controller.modalTransitionStyle = .coverVertical
         controller.modalPresentationStyle = .formSheet
