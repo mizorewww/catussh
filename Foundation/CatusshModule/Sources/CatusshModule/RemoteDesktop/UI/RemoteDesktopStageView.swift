@@ -102,6 +102,8 @@ public struct RemoteDesktopStageView: View {
     @State private var showsTextInput = false
     @State private var textDraft = ""
     @State private var toast: String?
+    /// The touch gestures were explained for this session.
+    @State private var gestureHintShown = false
     /// Asked once: the bar is drawn again for every frame, and each ask is
     /// a trip to the system.
     @State private var officialAppInstalled = false
@@ -149,9 +151,13 @@ public struct RemoteDesktopStageView: View {
                     .allowsHitTesting(false)
             }
         }
-        #if os(iOS)
+        #if os(iOS) && !targetEnvironment(macCatalyst)
+            // Once a session: a UU host going locked and back is no new
+            // connection.
             .onChange(of: session.phase == .connected) { connected in
-                if connected { showGestureHint() }
+                guard connected, !gestureHintShown else { return }
+                gestureHintShown = true
+                showGestureHint()
             }
         #endif
     }
@@ -303,7 +309,13 @@ public struct RemoteDesktopStageView: View {
                         .foregroundStyle(Color.rxInk)
                         .lineLimit(1)
                 }
-                if !metricsText.isEmpty {
+                // View only must show: input going nowhere looks broken.
+                if session.viewOnly {
+                    Label("View only", systemImage: "eye")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.rxAccent)
+                        .lineLimit(1)
+                } else if !metricsText.isEmpty {
                     Text(metricsText)
                         .font(.system(size: 10).monospacedDigit())
                         .foregroundStyle(Color.rxInkSecondary)
