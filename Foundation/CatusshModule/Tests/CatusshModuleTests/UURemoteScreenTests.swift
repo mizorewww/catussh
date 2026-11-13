@@ -57,6 +57,16 @@ final class UURemoteScreenTests: XCTestCase {
         XCTAssertEqual(virtual.name, "UU远程 1")
     }
 
+    func testAScreenOnNoTrackHasNone() {
+        var body = Data()
+        UUProtobufWriter.pushMessageField(1, screen(id: 1, name: "A", current: rect(width: 1920, height: 1080)), into: &body)
+        UUProtobufWriter.pushMessageField(1, screen(id: 2, name: "B", current: rect(width: 1920, height: 1080), track: -1), into: &body)
+        UUProtobufWriter.pushInt32Field(2, 1, into: &body)
+        let sources = UUControlProtocol.decodeScreenSources(body)
+        // The current one says no track, which is 0; the other is on none.
+        XCTAssertEqual(sources.displays.map(\.videoTrackIndex), [0, nil])
+    }
+
     func testScreenSourcesWithoutTracksOrCurrentLeaveThemUnknown() {
         var body = Data()
         UUProtobufWriter.pushMessageField(1, screen(id: 1, name: "", current: rect(width: 1920, height: 1080)), into: &body)
@@ -134,9 +144,15 @@ final class UURemoteScreenTests: XCTestCase {
         m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r
         a=mid:6\r
         """
-        XCTAssertEqual(UURemoteDriver.videoTrackMids(in: named), [1: "1", 0: "0"])
+        XCTAssertEqual(UURemoteDriver.videoTrackMids(in: named).mids, [1: "1", 0: "0"])
+        XCTAssertTrue(UURemoteDriver.videoTrackMids(in: named).named)
 
         let unnamed = "m=video 9 RTP 96\na=mid:a\nm=video 9 RTP 96\na=mid:b\n"
-        XCTAssertEqual(UURemoteDriver.videoTrackMids(in: unnamed), [0: "a", 1: "b"])
+        XCTAssertEqual(UURemoteDriver.videoTrackMids(in: unnamed).mids, [0: "a", 1: "b"])
+        XCTAssertFalse(UURemoteDriver.videoTrackMids(in: unnamed).named)
+
+        // An unnamed line takes the lowest index no line names.
+        let mixed = "m=video 9 RTP 96\na=mid:a\nm=video 9 RTP 96\na=mid:b\na=msid:s video_0\n"
+        XCTAssertEqual(UURemoteDriver.videoTrackMids(in: mixed).mids, [0: "b", 1: "a"])
     }
 }

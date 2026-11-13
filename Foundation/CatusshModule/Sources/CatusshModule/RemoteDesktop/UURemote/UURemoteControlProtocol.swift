@@ -384,7 +384,7 @@ public enum UUControlProtocol {
     /// once the host says any other screen's, and unknown (nil) otherwise.
     public static func decodeScreenSources(_ data: Data) -> (displays: [RemoteDisplayInfo], currentID: Int?) {
         guard let fields = try? UUWire.decode(data) else { return ([], nil) }
-        var displays: [RemoteDisplayInfo] = []
+        var displays: [(display: RemoteDisplayInfo, trackSaid: Bool)] = []
         var currentID: Int?
         var anyTrackSaid = false
         for field in fields {
@@ -392,6 +392,7 @@ public enum UUControlProtocol {
             guard field.number == 1, case let .bytes(b) = field.value,
                   let sub = try? UUWire.decode(b) else { continue }
             var display = RemoteDisplayInfo(id: 0)
+            var trackSaid = false
             var name = ""
             var current: (width: Int, height: Int)?
             var listed: (width: Int, height: Int)?
@@ -405,22 +406,25 @@ public enum UUControlProtocol {
                 case (7, let .varint(v)): display.isPrimary = v != 0
                 case (10, let .bytes(b)): name = String(data: b, encoding: .utf8) ?? ""
                 case (12, let .varint(v)):
-                    display.videoTrackIndex = v.int32Value
+                    // -1: the host streams this screen on no track now.
+                    let index = v.int32Value
+                    display.videoTrackIndex = index >= 0 ? index : nil
+                    trackSaid = true
                     anyTrackSaid = true
                 default: break
                 }
             }
             if let size = current ?? listed { (display.width, display.height) = size }
             display.name = name.isEmpty ? "Display \(display.id)" : name
-            displays.append(display)
+            displays.append((display, trackSaid))
         }
         if anyTrackSaid {
-            for index in displays.indices where displays[index].videoTrackIndex == nil {
-                displays[index].videoTrackIndex = 0
+            for index in displays.indices where !displays[index].trackSaid {
+                displays[index].display.videoTrackIndex = 0
             }
         }
-        if currentID == nil, displays.contains(where: { $0.id == 0 }) { currentID = 0 }
-        return (displays, currentID)
+        if currentID == nil, displays.contains(where: { $0.display.id == 0 }) { currentID = 0 }
+        return (displays.map(\.display), currentID)
     }
 
     /// A WinRect's size in pixels, or in points when it gives no pixels.

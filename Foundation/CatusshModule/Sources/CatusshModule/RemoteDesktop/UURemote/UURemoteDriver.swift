@@ -97,19 +97,27 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     /// The screen in view: the one the pointer is on and whose track is
     /// drawn. Main thread.
     private var viewedScreenID: Int?
-    /// A virtual screen asked for and not yet listed: the view goes to it
-    /// once it is.
-    private var awaitingVirtualScreen = false
+    /// When a virtual screen was asked for: the view goes to the next one
+    /// listed within ten seconds, and to none made later by someone else.
+    private var virtualScreenAskedAt: Date?
     /// Each video track's transceiver mid, by the host's track index, from
     /// the answer. Main thread.
     private var midByTrackIndex: [Int: String] = [:]
+    /// The answer named its tracks (`msid … video_N`), rather than their
+    /// order being taken for their indexes.
+    private var trackIndexesNamed = false
     /// The track whose frames are decoded; nil until one is known, when the
     /// first track to send one is taken (other than `skippedMid`, the one
-    /// left behind). Under `viewLock`: frames are filtered on decodeQueue.
+    /// left behind, for a moment). Under `viewLock`: frames are filtered on
+    /// decodeQueue.
     private var viewedMid: String?
     private var skippedMid: String?
-    /// When the track in view last sent a frame, or was chosen.
+    private var skippedAt = Date()
+    /// When the track in view last sent a frame, or was chosen; whether it
+    /// has sent one since; whether the answer named it for certain.
     private var viewedMidHeardAt = Date()
+    private var viewedMidHeard = false
+    private var viewedMidCertain = false
     private let viewLock = NSLock()
 
     /// What the connection is for: a desktop streams the screen; a terminal
@@ -319,7 +327,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     /// to it once the host lists it.
     public func addVirtualDisplay(width: Int, height: Int) {
         guard controlChannelOpen, width > 0, height > 0 else { return }
-        awaitingVirtualScreen = true
+        virtualScreenAskedAt = Date()
         sendControlChannel(UUControlProtocol.createVirtualDisplay(requestID: nextOutboundSequence(), width: width, height: height))
     }
 
@@ -342,9 +350,10 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         let known = Set(screens.map(\.id))
         screens = displays
         Self.log.info("screens: \(displays.map { "\($0.id) \($0.name) \($0.width)x\($0.height) track \($0.videoTrackIndex.map(String.init) ?? "?")\($0.isVirtual ? " virtual" : "")" }.joined(separator: ", "), privacy: .public); current \(currentID.map(String.init) ?? "?", privacy: .public)")
-        if awaitingVirtualScreen, !known.isEmpty,
+        if let asked = virtualScreenAskedAt, Date().timeIntervalSince(asked) > 10 { virtualScreenAskedAt = nil }
+        if virtualScreenAskedAt != nil, !known.isEmpty,
            let added = displays.first(where: { $0.isVirtual && !known.contains($0.id) }) {
-            awaitingVirtualScreen = false
+            virtualScreenAskedAt = nil
             selectDisplay(added.id)
             return
         }
@@ -372,16 +381,20 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     /// now. Main thread.
     private func followViewedScreen(leaving: Bool = false) {
         let mid = screens.first { $0.id == viewedScreenID }?.videoTrackIndex.flatMap { midByTrackIndex[$0] }
+        let certain = trackIndexesNamed
         let changed = viewLock.withLock { () -> Bool in
             if let mid {
+                viewedMidCertain = certain
                 guard mid != viewedMid else { return false }
                 viewedMid = mid
                 skippedMid = nil
                 viewedMidHeardAt = Date()
+                viewedMidHeard = false
                 return true
             }
             guard leaving else { return false }
             skippedMid = viewedMid
+            skippedAt = Date()
             viewedMid = nil
             return true
         }
@@ -402,18 +415,17 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     }
 
     /// Video tracks in an SDP answer, by the host's track index: from an
-    /// `a=msid:… video_N` line where there is one, by the video m-line's
-    /// place otherwise. The values are the m-lines' mids.
-    static func videoTrackMids(in sdp: String) -> [Int: String] {
-        var result: [Int: String] = [:]
-        var order = 0
+    /// `a=msid:… video_N` line where there is one, otherwise the lowest
+    /// index no line names, in the video m-lines' order. The values are the
+    /// m-lines' mids; `named` says whether any line named its index.
+    static func videoTrackMids(in sdp: String) -> (mids: [Int: String], named: Bool) {
+        var lines: [(mid: String, index: Int?)] = []
         var inVideo = false
         var mid: String?
         var named: Int?
         func close() {
             guard inVideo, let mid else { return }
-            result[named ?? order] = mid
-            order += 1
+            lines.append((mid, named))
         }
         for raw in sdp.components(separatedBy: "\n") {
             let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -431,7 +443,14 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             }
         }
         close()
-        return result
+        var result: [Int: String] = [:]
+        for line in lines { if let index = line.index, result[index] == nil { result[index] = line.mid } }
+        var next = 0
+        for line in lines where line.index == nil || result[line.index!] != line.mid {
+            while result[next] != nil { next += 1 }
+            result[next] = line.mid
+        }
+        return (result, lines.contains { $0.index != nil })
     }
 
     /// CaptureSettingRequest (RpcRequest case 2): field 1 fps *option
@@ -943,10 +962,11 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             return
         }
         // Which transceiver carries which of the host's tracks.
-        let mids = Self.videoTrackMids(in: sdp)
-        Self.log.info("video tracks by index: \(mids.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "), privacy: .public)")
+        let tracks = Self.videoTrackMids(in: sdp)
+        Self.log.info("video tracks by index (\(tracks.named ? "named" : "in order", privacy: .public)): \(tracks.mids.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "), privacy: .public)")
         await MainActor.run {
-            midByTrackIndex = mids
+            midByTrackIndex = tracks.mids
+            trackIndexesNamed = tracks.named
             followViewedScreen()
         }
         // Learn the negotiated video payload types for the RTP path.
@@ -1021,7 +1041,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     private var iceState = ""
 
     /// The last second's totals of the track in view, to tell what came since.
-    private var lastStats: (at: Date, bytes: Double, lost: Double, packets: Double)?
+    private var lastStats: (at: Date, mid: String?, bytes: Double, lost: Double, packets: Double)?
 
     /// The page's stats, once a second: the round trip of the selected
     /// candidate pair, and the bit rate and loss of the track in view (of
@@ -1029,12 +1049,15 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     private func handleStats(_ stats: [String: Any]) {
         let video = stats["video"] as? [[String: Any]] ?? []
         let mid = viewLock.withLock { viewedMid }
-        let entries = video.filter { ($0["mid"] as? String) == mid }.nilIfEmpty ?? video
+        let own = video.filter { ($0["mid"] as? String) == mid }
+        // Every track only where WebKit names none; the one in view otherwise.
+        let entries = video.contains { $0["mid"] is String } ? own : video
         func total(_ key: String) -> Double { entries.reduce(0) { $0 + (($1[key] as? NSNumber)?.doubleValue ?? 0) } }
         let now = Date()
-        let current = (at: now, bytes: total("bytes"), lost: total("lost"), packets: total("packets"))
+        let current = (at: now, mid: mid, bytes: total("bytes"), lost: total("lost"), packets: total("packets"))
         var network = RemoteDesktopNetwork(relayed: (stats["local"] as? String) == "relay")
-        if let last = lastStats, current.bytes >= last.bytes {
+        // Another track's totals are no baseline: a second goes unmeasured.
+        if let last = lastStats, last.mid == current.mid, current.bytes >= last.bytes {
             let seconds = max(now.timeIntervalSince(last.at), 0.1)
             network.bitsPerSecond = Int((current.bytes - last.bytes) * 8 / seconds)
             let lost = max(current.lost - last.lost, 0)
@@ -1254,15 +1277,25 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             let now = Date()
             if mid == viewedMid {
                 viewedMidHeardAt = now
+                viewedMidHeard = true
                 return true
             }
-            // None chosen yet, or the chosen one has been silent while this
-            // one sends (a track index the answer mapped wrongly): this one.
+            // None chosen yet: this one, unless it is the one just left (a
+            // host capturing one screen at a time keeps using it, so only
+            // for a moment). A chosen one that never sent, or that the
+            // answer did not name, giving way after 2 s of silence while
+            // this one sends: the track index was mapped wrongly. A screen
+            // standing still sends nothing, so a named track that has sent
+            // keeps the view.
+            let open = viewedMid == nil && (mid != skippedMid || now.timeIntervalSince(skippedAt) > 1.5)
             let silent = viewedMid != nil && now.timeIntervalSince(viewedMidHeardAt) > 2
-            guard (viewedMid == nil && mid != skippedMid) || silent else { return false }
+                && (!viewedMidHeard || !viewedMidCertain)
+            guard open || silent else { return false }
             Self.log.info("drawing video track \(mid, privacy: .public)\(silent ? " (the chosen one is silent)" : "", privacy: .public)")
             viewedMid = mid
             viewedMidHeardAt = now
+            viewedMidHeard = true
+            viewedMidCertain = false
             switched = true
             return true
         }
@@ -1904,8 +1937,4 @@ private final class UURTCPeerConnection: NSObject, WKScriptMessageHandler, WKNav
     func setStatsHandler(_ handler: @escaping ([String: Any]) -> Void) { statsHandler = handler }
     func setCodecHandler(_ handler: @escaping (String) -> Void) { codecHandler = handler }
     func setICEStateHandler(_ handler: @escaping (String) -> Void) { iceStateHandler = handler }
-}
-
-private extension Array {
-    var nilIfEmpty: [Element]? { isEmpty ? nil : self }
 }
