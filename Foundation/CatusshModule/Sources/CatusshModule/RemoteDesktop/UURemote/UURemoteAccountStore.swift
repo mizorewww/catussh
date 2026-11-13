@@ -15,7 +15,6 @@ import Foundation
     import UIKit
 #elseif canImport(AppKit)
     import AppKit
-    import IOKit
 #endif
 
 @MainActor
@@ -454,87 +453,5 @@ public final class UURemoteAccountStore: ObservableObject {
 
     /// Exposes the API client for the driver.
     public nonisolated var apiClient: UURemoteAPIClient { client }
-
-    #if os(macOS)
-        /// Imports the signed-in session from the official NetEase UU Remote Mac client
-        /// (`com.netease.uuremote.plist`, encrypted with AES-GCM under HKDF of `IOPlatformUUID`).
-        public func importFromInstalledMacClient(from url: URL? = nil) async throws {
-            let platformExpert = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"))
-            var machineUUID = ""
-            if platformExpert > 0 {
-                defer { IOObjectRelease(platformExpert) }
-                if let prop = IORegistryEntryCreateCFProperty(platformExpert, "IOPlatformUUID" as CFString, kCFAllocatorDefault, 0),
-                   let str = prop.takeRetainedValue() as? String
-                {
-                    machineUUID = str
-                }
-            }
-            guard !machineUUID.isEmpty else {
-                throw UUAPIError.missingField("IOPlatformUUID")
-            }
-
-            let candidatePaths = [
-                url?.path,
-                "/Users/\(NSUserName())/Library/Preferences/com.netease.uuremote.plist",
-                (NSHomeDirectory() as NSString).appendingPathComponent("Library/Preferences/com.netease.uuremote.plist"),
-            ].compactMap { $0 }
-
-            var plistDict: NSDictionary?
-            for path in candidatePaths {
-                if let loaded = NSDictionary(contentsOfFile: path), loaded["NTES_NRD__MACtoken"] != nil {
-                    plistDict = loaded
-                    break
-                }
-            }
-            guard let dict = plistDict else {
-                throw UUAPIError.missingField("com.netease.uuremote.plist (choose ~/Library/Preferences/com.netease.uuremote.plist)")
-            }
-
-            let uuKey = HKDF<SHA256>.deriveKey(
-                inputKeyMaterial: SymmetricKey(data: Data((machineUUID + "com.netease.uuremote").utf8)),
-                salt: Data("f7Kx2mQpL9vRnT4wYjBc8eAsDhWuZ3Ng".utf8),
-                info: Data("Vc5tXqP0mJbRkHyE2sLwN6oAiGzFdU8T".utf8),
-                outputByteCount: 32
-            )
-
-            func decryptField(_ keyName: String) -> String? {
-                guard let raw = dict[keyName] as? String, raw.hasPrefix("__nrd__"),
-                      let jsonData = Data(base64Encoded: String(raw.dropFirst(7))),
-                      let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: String],
-                      let nonceB64 = json["nonce"], let ctB64 = json["ct"],
-                      let nonceData = Data(base64Encoded: nonceB64),
-                      let ctAndTag = Data(base64Encoded: ctB64),
-                      ctAndTag.count >= 16,
-                      let nonce = try? CryptoKit.AES.GCM.Nonce(data: nonceData),
-                      let box = try? CryptoKit.AES.GCM.SealedBox(nonce: nonce, ciphertext: ctAndTag.dropLast(16), tag: ctAndTag.suffix(16)),
-                      let plain = try? CryptoKit.AES.GCM.open(box, using: uuKey),
-                      let str = try? JSONDecoder().decode(String.self, from: plain)
-                else { return nil }
-                return str
-            }
-
-            guard let token = decryptField("NTES_NRD__MACtoken"), !token.isEmpty else {
-                throw UUAPIError.missingField("logged-in token in UU Remote app")
-            }
-            let uid = decryptField("NTES_NRD__MACuserID") ?? (UURequestSigner.userID(from: token) ?? "")
-            let nick = decryptField("NTES_NRD__MACnickName") ?? ""
-            let devID = decryptField("NTES_NRD__MACdeviceID") ?? ""
-
-            var creds = credentials
-            creds.token = token
-            creds.userID = uid
-            creds.csrf = UURequestSigner.csrf(from: token) ?? ""
-            if !devID.isEmpty { creds.deviceID = devID }
-            if creds.clientID.isEmpty { creds.clientID = machineUUID }
-            if creds.systemID.isEmpty { creds.systemID = machineUUID }
-            credentials = creds
-            userID = uid
-            if !nick.isEmpty { nickname = nick }
-            persist()
-            await client.updateCredentials(creds)
-            await ensureLocalDeviceIdentity()
-            isLoggedIn = credentials.isComplete
-            try await refreshDevices()
-        }
-    #endif
 }
+

@@ -182,29 +182,6 @@ public struct UURemoteAccountView: View {
                     .font(.rxBody)
                     .foregroundStyle(Color.rxInkSecondary)
                 Spacer()
-                #if os(macOS)
-                    Button("Import from UU Remote.app") {
-                        run("import-mac") {
-                            do {
-                                try await account.importFromInstalledMacClient()
-                            } catch {
-                                let panel = NSOpenPanel()
-                                panel.title = "Select com.netease.uuremote.plist"
-                                panel.directoryURL = URL(fileURLWithPath: "/Users/\(NSUserName())/Library/Preferences")
-                                panel.canChooseFiles = true
-                                panel.canChooseDirectories = false
-                                panel.allowsMultipleSelection = false
-                                if panel.runModal() == .OK, let url = panel.url {
-                                    try await account.importFromInstalledMacClient(from: url)
-                                } else {
-                                    throw error
-                                }
-                            }
-                        }
-                    }
-                    .buttonStyle(.rx(size: .small))
-                    .help("Import the active login session from the official NetEase UU Remote Mac app")
-                #endif
             }
             RXSegmented(
                 selection: $loginMode,
