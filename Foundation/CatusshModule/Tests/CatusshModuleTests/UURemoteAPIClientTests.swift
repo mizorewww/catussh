@@ -39,11 +39,18 @@ final class UURemoteAPIClientTests: XCTestCase {
 
     // MARK: - Borrowed sign-in
 
-    private func device(_ id: String, platform: Int) -> UUDeviceInfo {
+    private func device(_ id: String, platform: Int, alias: String = "") -> UUDeviceInfo {
         var device = UUDeviceInfo()
         device.deviceID = id
         device.platform = platform
+        device.alias = alias
         return device
+    }
+
+    func testCatusshsOwnDeviceWithoutAPlatformOrNamedSoIsNotBorrowed() {
+        let devices = [device("no-platform", platform: 0), device("named", platform: 4, alias: "catussh · mac")]
+        XCTAssertNil(UURemoteAccountStore.borrowedHost(deviceID: "no-platform", in: devices))
+        XCTAssertNil(UURemoteAccountStore.borrowedHost(deviceID: "named", in: devices))
     }
 
     func testASignInUsingAMacHostsDeviceIsBorrowed() {

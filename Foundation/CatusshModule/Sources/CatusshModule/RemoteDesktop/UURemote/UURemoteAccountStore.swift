@@ -296,12 +296,21 @@ public final class UURemoteAccountStore: ObservableObject {
     /// Signs out and clears the account. The device catussh registered as is
     /// kept, so signing in again does not add another one to the service.
     public func logout() {
+        let kept = clearAccount(keepingDevice: true)
+        Task { await client.updateCredentials(kept) }
+    }
+
+    /// Forgets the account, and the device identity too unless it is kept;
+    /// returns what is left for the client.
+    private func clearAccount(keepingDevice: Bool) -> UUCredentials {
         qrPollingTask?.cancel()
         qrSession = nil
         var kept = UUCredentials()
-        kept.clientID = credentials.clientID
-        kept.systemID = credentials.systemID
-        kept.deviceID = credentials.deviceID
+        if keepingDevice {
+            kept.clientID = credentials.clientID
+            kept.systemID = credentials.systemID
+            kept.deviceID = credentials.deviceID
+        }
         credentials = kept
         userID = ""
         nickname = ""
@@ -311,7 +320,7 @@ public final class UURemoteAccountStore: ObservableObject {
         qrImageData = nil
         qrStatusHint = ""
         persist()
-        Task { await client.updateCredentials(kept) }
+        return kept
     }
 
     // MARK: - Devices
@@ -340,43 +349,38 @@ public final class UURemoteAccountStore: ObservableObject {
             refreshError = error.localizedDescription
             throw error
         }
-        if dropBorrowedIdentity() { return }
+        if await dropBorrowedIdentity() { return }
         syncFolder()
     }
 
     /// Whether the saved sign-in is another app's: catussh registers itself
     /// as a device of its own (platform 1, named "catussh…"), so a device id
-    /// that is a host on the account came from the official app (catussh
+    /// that is a Mac host on the account came from the official app (catussh
     /// once imported its sign-in). Signed in as the host, every request was
     /// the host's own, and UU Remote dropped the host's connections; the
     /// sign-in is let go of, device and all, for catussh to sign in as itself.
-    @discardableResult
-    private func dropBorrowedIdentity() -> Bool {
+    private func dropBorrowedIdentity() async -> Bool {
         guard let device = Self.borrowedHost(deviceID: credentials.deviceID, in: devices) else { return false }
         Self.log.error("signed in as the account's host \(device.alias, privacy: .public); signing out")
-        logout()
-        var fresh = credentials
-        fresh.clientID = ""
-        fresh.systemID = ""
-        fresh.deviceID = ""
-        credentials = fresh
-        persist()
-        Task { await client.updateCredentials(fresh) }
+        await client.updateCredentials(clearAccount(keepingDevice: false))
         loginError = "catussh was signed in as \(device.alias.isEmpty ? "this computer" : device.alias)'s UU Remote app, which made UU Remote drop that computer's connections. Sign in again: catussh now signs in as itself."
         return true
     }
 
-    /// The platform catussh registers its own device as.
-    nonisolated static let ownDevicePlatform = 1
-
     /// The account's host whose device id the sign-in uses, if it is one.
+    /// Only a Mac host: the import took no other, and a device the list
+    /// gives no platform (0) or names "catussh…" is catussh's own.
     nonisolated static func borrowedHost(deviceID: String, in devices: [UUDeviceInfo]) -> UUDeviceInfo? {
         guard !deviceID.isEmpty,
               let device = devices.first(where: { $0.deviceID == deviceID }),
-              device.platform != ownDevicePlatform
+              device.platform == macHostPlatform,
+              !device.alias.lowercased().hasPrefix("catussh")
         else { return nil }
         return device
     }
+
+    /// A Mac running the official UU Remote host.
+    nonisolated static let macHostPlatform = 4
 
     /// The folder this account's devices are in, if it was made.
     public func folder(store: CatusshStore = .shared) -> RDFolder? {
