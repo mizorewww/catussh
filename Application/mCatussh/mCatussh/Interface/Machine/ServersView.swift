@@ -350,7 +350,7 @@ enum ServerActions {
         let name = CatusshStore.shared.machineGroup[machine].name
         UIBridge.requiresConfirmation(
             message: "Delete \(name)?",
-            informative: "Port forwards through it stop working.",
+            informative: "This cannot be undone.",
             confirmTitle: "Delete"
         ) { confirmed in
             guard confirmed else { return }

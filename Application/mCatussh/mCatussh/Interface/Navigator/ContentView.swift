@@ -80,7 +80,6 @@ struct SidebarView: View {
         case servers
         case identities
         case snippets
-        case portForward
         /// Every server with a remote desktop, and the UU Remote account.
         case desktops
         case settings
@@ -104,7 +103,6 @@ struct SidebarView: View {
                     row("Servers", "server.rack", .servers, badge: store.machineGroup.count)
                     row("Identities", "person", .identities, badge: store.identityGroup.count)
                     row("Snippets", "chevron.left.forwardslash.chevron.right", .snippets, badge: store.snippetGroup.count)
-                    row("Port Forward", "arrow.right", .portForward, badge: store.portForwardGroup.count)
                     row("Remote Desktop", "display", .desktops, badge: store.machineGroup.machines.filter(\.hasRemoteDesktop).count)
                 }
                 let owners = SessionDirectory.owners
@@ -149,7 +147,6 @@ struct SidebarView: View {
         case .servers: ServersView()
         case .identities: IdentityView()
         case .snippets: SnippetView()
-        case .portForward: PortForwardView()
         case .desktops: RemoteDesktopsView()
         case .settings: SettingView()
         case let .session(owner):
@@ -236,7 +233,7 @@ struct SessionRow: View {
     }
 }
 
-/// Identities, Port Forward, Remote Desktop, Settings, About, Logs, License.
+/// Identities, Remote Desktop, Settings, About, Logs, License.
 struct MoreView: View {
     @EnvironmentObject var store: CatusshStore
     @State private var openUUAccount = false
@@ -246,10 +243,6 @@ struct MoreView: View {
             Section {
                 NavigationLink { IdentityView() } label: {
                     moreRow("Identities", "person", count: store.identityGroup.count)
-                }
-                .rxListRow()
-                NavigationLink { PortForwardView() } label: {
-                    moreRow("Port Forward", "arrow.right", count: store.portForwardGroup.count)
                 }
                 .rxListRow()
                 NavigationLink { RemoteDesktopsView() } label: {

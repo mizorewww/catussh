@@ -87,11 +87,15 @@ public struct CloudSyncSettings: View {
                     isOn: $sync.syncsIdentities
                 )
                 SwitchRow("Snippets", description: "Commands, their names and groups.", isOn: $sync.syncsSnippets)
-                SwitchRow(
-                    "Port forwards",
-                    description: "Local, remote and SOCKS forwards.",
-                    isOn: $sync.syncsPortForwards
-                )
+                #if os(macOS)
+                    // Port forwarding is a Mac feature; iPhone and iPad
+                    // carry the Mac's forwards along untouched.
+                    SwitchRow(
+                        "Port forwards",
+                        description: "Local, remote and SOCKS forwards.",
+                        isOn: $sync.syncsPortForwards
+                    )
+                #endif
                 SwitchRow(
                     "Settings",
                     description: "Appearance, sessions, recent servers, SSH, monitor and terminal settings.",
