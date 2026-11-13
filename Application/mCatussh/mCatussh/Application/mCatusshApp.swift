@@ -70,8 +70,11 @@ struct mCatusshApp: App {
         /// servers for lists that scroll under the bars.
         func seedPreviewServers() {
             guard ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_SEED"] != nil else { return }
-            let folder = store.folderGroup.folders.first { $0.isLinked }
-                ?? store.createFolder(named: "UU Remote", source: .uuRemote(userID: "preview"))
+            // A folder of its own: syncing devices into a signed-in
+            // account's folder would drop that account's real devices.
+            let preview = RDFolder.Source.uuRemote(userID: "preview")
+            let folder = store.folderGroup.folders.first { $0.source == preview }
+                ?? store.createFolder(named: "UU Remote Preview", source: preview)
             let devices = (1 ... 16).map { index -> UUDeviceInfo in
                 var device = UUDeviceInfo()
                 device.deviceID = "preview-\(index)"
@@ -103,7 +106,7 @@ struct mCatusshApp: App {
         guard !store.licenseAgreed else {
             return
         }
-        let host = UIHostingController(rootView: AgreementView())
+        let host = UIHostingController(rootView: AgreementView().rxSolidBars())
         host.preferredContentSize = preferredPopOverSize
         host.isModalInPresentation = true
         host.modalTransitionStyle = .coverVertical
