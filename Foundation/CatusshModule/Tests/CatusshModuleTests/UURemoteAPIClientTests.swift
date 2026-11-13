@@ -36,4 +36,29 @@ final class UURemoteAPIClientTests: XCTestCase {
         XCTAssertEqual(UURemoteAPIClient.countryCode(" +1-264 "), "1-264")
         XCTAssertEqual(UURemoteAPIClient.mobile("138 0013-8000"), "13800138000")
     }
+
+    // MARK: - Borrowed sign-in
+
+    private func device(_ id: String, platform: Int) -> UUDeviceInfo {
+        var device = UUDeviceInfo()
+        device.deviceID = id
+        device.platform = platform
+        return device
+    }
+
+    func testASignInUsingAMacHostsDeviceIsBorrowed() {
+        let devices = [device("host-mac", platform: 4), device("catussh-own", platform: 1)]
+        XCTAssertEqual(UURemoteAccountStore.borrowedHost(deviceID: "host-mac", in: devices)?.deviceID, "host-mac")
+    }
+
+    func testCatusshsOwnDeviceIsNotBorrowed() {
+        let devices = [device("host-mac", platform: 4), device("catussh-own", platform: 1)]
+        XCTAssertNil(UURemoteAccountStore.borrowedHost(deviceID: "catussh-own", in: devices))
+    }
+
+    func testADeviceNotOnTheAccountOrNoDeviceIsNotBorrowed() {
+        let devices = [device("host-mac", platform: 4)]
+        XCTAssertNil(UURemoteAccountStore.borrowedHost(deviceID: "elsewhere", in: devices))
+        XCTAssertNil(UURemoteAccountStore.borrowedHost(deviceID: "", in: devices))
+    }
 }

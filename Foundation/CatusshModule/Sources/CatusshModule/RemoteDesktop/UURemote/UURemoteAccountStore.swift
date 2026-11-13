@@ -11,6 +11,7 @@ import Combine
 import CoreImage
 import CryptoKit
 import Foundation
+import os
 #if canImport(UIKit)
     import UIKit
 #elseif canImport(AppKit)
@@ -34,6 +35,7 @@ public final class UURemoteAccountStore: ObservableObject {
     @Published public private(set) var refreshError: String?
 
     private let client = UURemoteAPIClient()
+    private nonisolated static let log = Logger(subsystem: "me.mizorewww.rayon", category: "uu-account")
     private var qrPollingTask: Task<Void, Never>?
     private var qrSession: (token: String, jumpURL: String)?
 
@@ -338,7 +340,42 @@ public final class UURemoteAccountStore: ObservableObject {
             refreshError = error.localizedDescription
             throw error
         }
+        if dropBorrowedIdentity() { return }
         syncFolder()
+    }
+
+    /// Whether the saved sign-in is another app's: catussh registers itself
+    /// as a device of its own (platform 1, named "catussh…"), so a device id
+    /// that is a host on the account came from the official app (catussh
+    /// once imported its sign-in). Signed in as the host, every request was
+    /// the host's own, and UU Remote dropped the host's connections; the
+    /// sign-in is let go of, device and all, for catussh to sign in as itself.
+    @discardableResult
+    private func dropBorrowedIdentity() -> Bool {
+        guard let device = Self.borrowedHost(deviceID: credentials.deviceID, in: devices) else { return false }
+        Self.log.error("signed in as the account's host \(device.alias, privacy: .public); signing out")
+        logout()
+        var fresh = credentials
+        fresh.clientID = ""
+        fresh.systemID = ""
+        fresh.deviceID = ""
+        credentials = fresh
+        persist()
+        Task { await client.updateCredentials(fresh) }
+        loginError = "catussh was signed in as \(device.alias.isEmpty ? "this computer" : device.alias)'s UU Remote app, which made UU Remote drop that computer's connections. Sign in again: catussh now signs in as itself."
+        return true
+    }
+
+    /// The platform catussh registers its own device as.
+    nonisolated static let ownDevicePlatform = 1
+
+    /// The account's host whose device id the sign-in uses, if it is one.
+    nonisolated static func borrowedHost(deviceID: String, in devices: [UUDeviceInfo]) -> UUDeviceInfo? {
+        guard !deviceID.isEmpty,
+              let device = devices.first(where: { $0.deviceID == deviceID }),
+              device.platform != ownDevicePlatform
+        else { return nil }
+        return device
     }
 
     /// The folder this account's devices are in, if it was made.
