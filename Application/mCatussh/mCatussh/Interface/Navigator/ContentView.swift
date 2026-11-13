@@ -198,7 +198,7 @@ struct SessionsView: View {
                 EmptyStateView(
                     "No sessions",
                     systemImage: "terminal",
-                    message: ""
+                    message: "Terminals, files, monitors and desktops you open show here, one row per server."
                 )
                 .frame(maxHeight: .infinity)
                 .background(RXBackdrop().ignoresSafeArea())

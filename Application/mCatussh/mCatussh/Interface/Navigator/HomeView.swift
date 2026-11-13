@@ -138,8 +138,10 @@ struct QuickConnectCard: View {
                         .lineLimit(1)
                 }
             }
-            if store.identityGroupForAutoAuth.isEmpty {
-                Text("Needs an identity that authenticates automatically.")
+            // Said once a command is typed: before, it read as an error
+            // on a page with nothing wrong yet.
+            if store.identityGroupForAutoAuth.isEmpty, !command.isEmpty {
+                Text("Quick Connect needs an identity that authenticates automatically.")
                     .font(.footnote)
                     .foregroundStyle(.rxWarning)
             }
