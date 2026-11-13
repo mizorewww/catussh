@@ -32,9 +32,26 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
     /// The host's pointer; not published, it moves with every pointer
     /// move (`onCursor`).
     public private(set) var remoteCursor: RemoteCursorInfo?
-    /// The canvas: each frame and cursor change, on the main actor.
-    public var onFrame: ((CGImage?, CGSize) -> Void)?
-    public var onCursor: ((RemoteCursorInfo?) -> Void)?
+    /// Who draws the frames and cursor (canvases; more than one while a
+    /// page is shown twice), each held weakly, called on the main actor.
+    private var frameObservers: [FrameObserver] = []
+
+    private struct FrameObserver {
+        weak var owner: AnyObject?
+        let frame: (CGImage?, CGSize) -> Void
+        let cursor: (RemoteCursorInfo?) -> Void
+    }
+
+    /// `owner`'s calls for every frame and cursor change, until it goes
+    /// away or stops; a second call for the same owner replaces the first.
+    public func observeFrames(by owner: AnyObject, frame: @escaping (CGImage?, CGSize) -> Void, cursor: @escaping (RemoteCursorInfo?) -> Void) {
+        frameObservers.removeAll { $0.owner == nil || $0.owner === owner }
+        frameObservers.append(FrameObserver(owner: owner, frame: frame, cursor: cursor))
+    }
+
+    public func stopObservingFrames(by owner: AnyObject) {
+        frameObservers.removeAll { $0.owner == nil || $0.owner === owner }
+    }
     /// Measured update rate of the rendered stream.
     @Published public private(set) var fps: Int = 0
     /// Round trip time when the backend measures it.
@@ -250,13 +267,13 @@ public final class RemoteDesktopSession: ObservableObject, Identifiable {
         let mail = mailbox.take()
         if let cursor = mail.cursor {
             remoteCursor = cursor
-            onCursor?(cursor)
+            for observer in frameObservers where observer.owner != nil { observer.cursor(cursor) }
         }
         guard let frame = mail.frame else { return }
         if let image = frame.image { frameImage = image }
         if framebufferSize != frame.size { framebufferSize = frame.size }
         if let name = frame.desktopName, name != desktopName { desktopName = name }
-        onFrame?(frameImage, frame.size)
+        for observer in frameObservers where observer.owner != nil { observer.frame(frameImage, frame.size) }
         let now = Date()
         if now.timeIntervalSince(fpsWindowStart) >= 1 {
             let counted = mailbox.takeFrameCount()
