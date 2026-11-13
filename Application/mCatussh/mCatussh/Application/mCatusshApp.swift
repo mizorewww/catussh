@@ -50,6 +50,7 @@ struct mCatusshApp: App {
                     checkAgreement()
                     #if DEBUG
                         seedPreviewServers()
+                        seedPreviewVNC()
                         openPreviewTool()
                     #endif
                 }
@@ -87,13 +88,34 @@ struct mCatusshApp: App {
             store.machineGroup = group
         }
 
+        /// `CATUSSH_PREVIEW_VNC=<port>` adds a "Preview VNC" server, a VNC
+        /// screen at 127.0.0.1 on that port (the Mac, from the simulator).
+        static let previewVNCID = UUID(uuidString: "C0FFEE00-0000-4000-8000-00000000F00D")!
+
+        func seedPreviewVNC() {
+            guard let port = ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_VNC"] else { return }
+            var group = store.machineGroup
+            group.insert(RDMachine(
+                id: Self.previewVNCID,
+                remoteAddress: "127.0.0.1",
+                remotePort: "22",
+                name: "Preview VNC",
+                remoteDesktopProtocol: .vnc,
+                vncPort: port
+            ))
+            store.machineGroup = group
+        }
+
         /// `CATUSSH_PREVIEW_TOOL=terminal|files|monitor|desktop` opens the
-        /// first server's page on that tool (for a desktop, the first server
-        /// with one), for screenshots without input.
+        /// first server's page on that tool (for a desktop, Preview VNC or
+        /// the first server with one), for screenshots without input.
         func openPreviewTool() {
+            let machines = store.machineGroup.machines
             guard let name = ProcessInfo.processInfo.environment["CATUSSH_PREVIEW_TOOL"],
                   let tool = ServerTool.allCases.first(where: { $0.title.lowercased() == name }),
-                  let machine = store.machineGroup.machines.first(where: { tool != .desktop || $0.hasRemoteDesktop })
+                  let machine = tool == .desktop
+                  ? machines.first(where: { $0.id == Self.previewVNCID }) ?? machines.first(where: \.hasRemoteDesktop)
+                  : machines.first
             else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 tool.open(machine.id)
