@@ -81,6 +81,9 @@ public final class RemoteDesktopCanvasView: UIView {
 
     private let frameView = UIImageView()
     private let cursorView = UIImageView()
+    /// The pointer drawn here on a touch screen when the host draws none:
+    /// a finger moving it like a trackpad must see where it is.
+    private let localPointerView = UIImageView(image: RemoteDesktopCanvasView.arrow)
     private var framebufferSize: CGSize = .zero
     private var cursorPosition = CGPoint.zero
     private var cursorPixelSize = CGSize.zero
@@ -89,7 +92,9 @@ public final class RemoteDesktopCanvasView: UIView {
     private var scrollAccumY: CGFloat = 0
     /// Where the pointer is, normalized: where a pencil, mouse or finger put
     /// it, and where a trackpad finger moves it from.
-    private var lastNormalized = CGPoint(x: 0.5, y: 0.5)
+    private var lastNormalized = CGPoint(x: 0.5, y: 0.5) {
+        didSet { if Self.usesTouchGestures, lastNormalized != oldValue { setNeedsLayout() } }
+    }
     private var primaryPress: UILongPressGestureRecognizer!
     private var secondaryPress: UITapGestureRecognizer!
     private var tertiaryPress: UITapGestureRecognizer!
@@ -123,8 +128,11 @@ public final class RemoteDesktopCanvasView: UIView {
         frameView.isUserInteractionEnabled = false
         cursorView.isUserInteractionEnabled = false
         cursorView.isHidden = true
+        localPointerView.isUserInteractionEnabled = false
+        localPointerView.isHidden = true
         addSubview(frameView)
         addSubview(cursorView)
+        addSubview(localPointerView)
         keyboardProxy.canvas = self
         keyboardProxy.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
         keyboardProxy.isUserInteractionEnabled = false
@@ -201,6 +209,40 @@ public final class RemoteDesktopCanvasView: UIView {
         setNeedsLayout()
     }
 
+    /// The local pointer: an arrow whose tip, the hotspot, is at the
+    /// image's top-left, white with a dark edge to show on any picture.
+    static let arrow: UIImage = {
+        let points: [CGPoint] = [
+            .init(x: 0, y: 0), .init(x: 0, y: 17), .init(x: 4.2, y: 13.2), .init(x: 7, y: 19.5),
+            .init(x: 9.6, y: 18.4), .init(x: 6.9, y: 12.3), .init(x: 12.5, y: 12.3),
+        ]
+        let inset: CGFloat = 1.5
+        let format = UIGraphicsImageRendererFormat.preferred()
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: CGSize(width: 12.5 + inset * 2, height: 19.5 + inset * 2), format: format).image { context in
+            let path = UIBezierPath()
+            path.move(to: points[0].applying(.init(translationX: inset, y: inset)))
+            for point in points.dropFirst() { path.addLine(to: point.applying(.init(translationX: inset, y: inset))) }
+            path.close()
+            path.lineJoinStyle = .round
+            path.lineWidth = 1.5
+            context.cgContext.setShadow(offset: CGSize(width: 0, height: 1), blur: 2, color: UIColor.black.withAlphaComponent(0.35).cgColor)
+            UIColor.black.setStroke()
+            path.stroke()
+            context.cgContext.setShadow(offset: .zero, blur: 0)
+            UIColor.white.setFill()
+            path.fill()
+        }
+    }()
+
+    /// The arrow's tip within its image.
+    private static let arrowTip = CGPoint(x: 1.5, y: 1.5)
+
+    /// Whether a pointer is drawn on the picture, the host's or ours.
+    private var drawsPointer: Bool {
+        !cursorView.isHidden || !localPointerView.isHidden
+    }
+
     /// The rect the framebuffer aspect-fits into, in view coordinates.
     var imageRect: CGRect {
         let fb = framebufferSize
@@ -226,6 +268,24 @@ public final class RemoteDesktopCanvasView: UIView {
         super.layoutSubviews()
         let rect = displayRect
         frameView.frame = rect
+        // Ours only on a touch screen, with a picture, and while the host
+        // draws no pointer of its own.
+        let showsLocal = Self.usesTouchGestures && cursorView.isHidden && framebufferSize.width > 0 && frameView.image != nil
+        if localPointerView.isHidden == showsLocal {
+            localPointerView.isHidden = !showsLocal
+            #if os(iOS) && !targetEnvironment(macCatalyst)
+                pointerInteraction?.invalidate()
+            #endif
+        }
+        if showsLocal {
+            let size = localPointerView.image?.size ?? .zero
+            localPointerView.frame = CGRect(
+                x: rect.minX + lastNormalized.x * rect.width - Self.arrowTip.x,
+                y: rect.minY + lastNormalized.y * rect.height - Self.arrowTip.y,
+                width: size.width,
+                height: size.height
+            )
+        }
         if !cursorView.isHidden {
             let fb = framebufferSize
             let w = fb.width > 0 ? cursorPixelSize.width * rect.width / fb.width : cursorPixelSize.width
@@ -556,11 +616,13 @@ public final class RemoteDesktopCanvasView: UIView {
 
 #if os(iOS) && !targetEnvironment(macCatalyst)
     extension RemoteDesktopCanvasView: UIPointerInteractionDelegate {
-        /// The host's pointer is drawn over the picture: the iPad's own would
-        /// be a second one. One drawn off the view shows nothing, so the
-        /// iPad's stays then.
+        /// A pointer is drawn over the picture (the host's, or ours): the
+        /// iPad's own would be a second one. The host's drawn off the view
+        /// shows nothing, so the iPad's stays then.
         public func pointerInteraction(_: UIPointerInteraction, styleFor _: UIPointerRegion) -> UIPointerStyle? {
-            cursorView.isHidden || !bounds.intersects(cursorView.frame) ? nil : .hidden()
+            guard drawsPointer else { return nil }
+            if !cursorView.isHidden, !bounds.intersects(cursorView.frame) { return nil }
+            return .hidden()
         }
     }
 #endif
