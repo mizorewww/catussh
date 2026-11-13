@@ -170,6 +170,53 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         guard x.isFinite, y.isFinite else { return }
         sentPointer = (x, y)
         sendControlChannel(UUControlProtocol.mouseMoveAbsolute(x: x, y: y), kind: .pointerMove)
+        updateCursor(pointer: (x, y))
+    }
+
+    // MARK: - Cursor
+
+    /// The host's pointer shape (x and y its hotspot, in the shape's
+    /// pixels), the screen's size, and where the pointer is: the shape is
+    /// drawn at pointer − hotspot, which the host never says itself.
+    private var cursorShape: RemoteCursorInfo?
+    private var screenSize: CGSize = .zero
+    private var cursorPointer = (x: 0.5, y: 0.5)
+    private let cursorLock = NSLock()
+
+    private func reportFrame(_ image: CGImage?, size: CGSize) {
+        let resized = cursorLock.withLock { () -> Bool in
+            defer { screenSize = size }
+            return screenSize != size
+        }
+        session.reportFrame(image, size: size)
+        // A shape that came before the first frame shows with it.
+        if resized { updateCursor() }
+    }
+
+    /// A new shape from the host, or the pointer moved: the cursor where it
+    /// now is.
+    private func updateCursor(shape: RemoteCursorInfo? = nil, pointer: (x: Double, y: Double)? = nil) {
+        let placed = cursorLock.withLock { () -> RemoteCursorInfo? in
+            if let shape { cursorShape = shape }
+            if let pointer { cursorPointer = pointer }
+            guard let cursorShape else { return nil }
+            return Self.placedCursor(cursorShape, at: cursorPointer, on: screenSize)
+        }
+        if let placed { session.reportCursor(placed) }
+    }
+
+    /// `shape` with its top-left at `pointer` − hotspot, normalized like the
+    /// pointer. A hotspot outside the shape is no hotspot: the tip is then
+    /// the top-left corner, as on an arrow. Nil until the screen's size is
+    /// known.
+    static func placedCursor(_ shape: RemoteCursorInfo, at pointer: (x: Double, y: Double), on screen: CGSize) -> RemoteCursorInfo? {
+        guard screen.width > 0, screen.height > 0 else { return nil }
+        let hotX = (0 ... Double(max(shape.width, 0))).contains(shape.x) ? shape.x : 0
+        let hotY = (0 ... Double(max(shape.height, 0))).contains(shape.y) ? shape.y : 0
+        var placed = shape
+        placed.x = pointer.x - hotX / screen.width
+        placed.y = pointer.y - hotY / screen.height
+        return placed
     }
 
     private func pointerAt(_ x: Double, _ y: Double) {
@@ -510,7 +557,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             self?.handleICEState(state)
         }
         await peer.setVideoFrameHandler { [weak self] image, size in
-            self?.session.reportFrame(image, size: size)
+            self?.reportFrame(image, size: size)
         }
         await peer.setCodecHandler { [weak self] name in
             self?.decodeQueue.async { self?.encodedCodec = name.replacingOccurrences(of: "video/", with: "") }
@@ -916,7 +963,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
                     Self.log.info("host says the screen is \(locked ? "locked" : "unlocked", privacy: .public)")
                     session.reportPhase(locked ? .authenticating : .connected)
                 }
-                if let cursor = change.cursor { session.reportCursor(cursor) }
+                if let cursor = change.cursor { updateCursor(shape: cursor) }
             }
         case UUControlField.portMappingFrame:
             if let frame = UUPortMappingEnvelope.unwrap(data) {
@@ -993,7 +1040,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         guard let packet = UURTPVideoAssembler.parsePacket(data),
               let accessUnit = videoAssembler.insert(packet),
               let image = videoDecoder.decode(accessUnit: accessUnit) else { return }
-        session.reportFrame(image, size: videoDecoder.outputSize)
+        reportFrame(image, size: videoDecoder.outputSize)
     }
 
     /// One encoded frame from the WebRTC receiver, Annex-B. On decodeQueue.
@@ -1017,7 +1064,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             Self.log.info("encoded frame \(self.encodedCount): \(bytes.count) bytes, \(self.encodedCodec, privacy: .public) NAL types \(types, privacy: .public), decoded \(image != nil)")
         }
         guard let image else { return }
-        session.reportFrame(image, size: encodedDecoder.outputSize)
+        reportFrame(image, size: encodedDecoder.outputSize)
     }
     private var encodedCount = 0
     private var failedDecodes = 0

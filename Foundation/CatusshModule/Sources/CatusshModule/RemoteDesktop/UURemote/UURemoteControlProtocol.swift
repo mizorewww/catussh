@@ -429,6 +429,8 @@ public enum UUControlProtocol {
     }
 
     /// Decodes SystemStateChange (field 15): lock state and cursor shape.
+    /// The cursor's x and y are its hotspot in the shape's pixels, not a
+    /// place on the screen: the driver places it where the pointer is.
     public static func decodeSystemStateChange(_ data: Data) -> (isLocked: Bool?, cursor: RemoteCursorInfo?)? {
         guard let fields = try? UUWire.decode(data) else { return nil }
         var isLocked: Bool?

@@ -86,4 +86,27 @@ final class UURemoteInputTests: XCTestCase {
         XCTAssertEqual(clamped?.x, 0)
         XCTAssertEqual(clamped?.y, 1)
     }
+
+    // MARK: - Cursor
+
+    func testTheCursorIsDrawnAtThePointerLessItsHotspot() throws {
+        let shape = RemoteCursorInfo(x: 4, y: 2, width: 32, height: 32, visible: true)
+        let placed = try XCTUnwrap(UURemoteDriver.placedCursor(shape, at: (0.5, 0.25), on: CGSize(width: 1000, height: 500)))
+        XCTAssertEqual(placed.x, 0.5 - 4.0 / 1000, accuracy: 1e-9)
+        XCTAssertEqual(placed.y, 0.25 - 2.0 / 500, accuracy: 1e-9)
+        XCTAssertEqual(placed.width, 32)
+        XCTAssertTrue(placed.visible)
+    }
+
+    func testAHotspotOutsideTheShapePutsTheTipAtThePointer() throws {
+        let shape = RemoteCursorInfo(x: 812, y: 460, width: 32, height: 32, visible: true)
+        let placed = try XCTUnwrap(UURemoteDriver.placedCursor(shape, at: (0.3, 0.6), on: CGSize(width: 1920, height: 1080)))
+        XCTAssertEqual(placed.x, 0.3, accuracy: 1e-9)
+        XCTAssertEqual(placed.y, 0.6, accuracy: 1e-9)
+    }
+
+    func testNoCursorBeforeTheScreenSizeIsKnown() {
+        let shape = RemoteCursorInfo(x: 0, y: 0, width: 32, height: 32, visible: true)
+        XCTAssertNil(UURemoteDriver.placedCursor(shape, at: (0.5, 0.5), on: .zero))
+    }
 }
