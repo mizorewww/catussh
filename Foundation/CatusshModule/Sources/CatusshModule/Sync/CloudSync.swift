@@ -177,7 +177,15 @@ public final class CloudSync: ObservableObject {
         syncsServers = defaults.bool(forKey: Key.servers)
         syncsIdentities = defaults.bool(forKey: Key.identities)
         syncsSnippets = defaults.bool(forKey: Key.snippets)
-        syncsPortForwards = defaults.bool(forKey: Key.portForwards)
+        #if os(macOS)
+            syncsPortForwards = defaults.bool(forKey: Key.portForwards)
+        #else
+            // iPhone and iPad have no switch for forwards (port forwarding is
+            // the Mac's), so they always carry the Mac's along, even where
+            // the switch was turned off before it went.
+            syncsPortForwards = true
+            defaults.set(true, forKey: Key.portForwards)
+        #endif
         syncsSettings = defaults.bool(forKey: Key.settings)
         #if DEBUG
             if ProcessInfo.processInfo.environment["CATUSSH_SYNC_LOCAL"] != nil {
