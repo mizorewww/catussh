@@ -5,9 +5,17 @@
 //  UU Remote as a way to reach a device, as Cloudflare Access is for SSH: one
 //  connection per device (room, signaling, control, WebRTC data channels)
 //  carries that device's terminals, shared by every terminal tab on it and
-//  closed a little after the last one. The desktop keeps a connection of its own,
-//  which streams the screen; both are sessions in the device's one room
-//  (`UURemoteRooms`), so neither takes the room from the other.
+//  closed a little after the last one.
+//
+//  The host keeps one control session per viewer: a second request for
+//  control (a terminal's, while the screen streams) ends the first, and the
+//  desktop went black the moment a terminal opened. So while a desktop is
+//  connected, the device's terminals and streams ride on the desktop's own
+//  connection and ask for nothing; a terminal connection is made only when
+//  no desktop is open. Closing the desktop ends its connection, and the
+//  terminals on it attach to their sessions again on a connection of their
+//  own. Every connection is a session in the device's one room
+//  (`UURemoteRooms`), so none takes the room from another.
 //
 
 import Foundation
@@ -18,13 +26,19 @@ public final class UURemoteConnections {
     public static let shared = UURemoteConnections()
 
     private struct Entry {
+        /// A terminal connection of its own, or the device's desktop's.
         let driver: UURemoteDriver
-        /// Not shown anywhere: it only collects the connection's phase.
-        let session: RemoteDesktopSession
         var users: Int
+        /// The connection's phase. A terminal connection's session is shown
+        /// nowhere; it only collects it.
+        var session: RemoteDesktopSession { driver.session }
+        /// A desktop's connection is the desktop's to close.
+        var isBorrowed: Bool { driver.purpose == .desktop }
     }
 
     private var entries: [String: Entry] = [:]
+    /// The connection of each device's open desktop, by device id.
+    private var desktops: [String: UURemoteDriver] = [:]
     private nonisolated static let log = Logger(subsystem: "me.mizorewww.rayon", category: "uu-connections")
 
     private init() {}
@@ -44,10 +58,22 @@ public final class UURemoteConnections {
             }
             return entry.driver
         }
+        if let desktop = desktops[deviceID], !desktop.isClosed {
+            Self.log.info("terminals on \(machine.name, privacy: .public) ride on its desktop's connection")
+            let entry = Entry(driver: desktop, users: 1)
+            entries[deviceID] = entry
+            do {
+                try await waitUntilReady(entry, timeout: timeout)
+            } catch {
+                release(machine, driver: desktop)
+                throw error
+            }
+            return desktop
+        }
         let session = RemoteDesktopSession(machine: machine, protocolType: .uuRemote)
         let driver = UURemoteDriver(session: session)
         driver.purpose = .terminal
-        let entry = Entry(driver: driver, session: session, users: 1)
+        let entry = Entry(driver: driver, users: 1)
         entries[deviceID] = entry
         driver.start(session: session)
         do {
@@ -64,12 +90,12 @@ public final class UURemoteConnections {
     /// session) goes out first, and a terminal opened meanwhile (from the
     /// session list, or the tab replacing a closed one) takes it over. A
     /// driver the device's entry no longer holds (it dropped and was
-    /// replaced) leaves the new one alone.
+    /// replaced) leaves the new one alone. A desktop's connection is never
+    /// closed here: only the entry pointing at it goes.
     public func release(_ machine: RDMachine, driver: UURemoteDriver) {
         let deviceID = machine.uuDeviceID
-        guard var entry = entries[deviceID] else { return }
-        guard entry.driver === driver else {
-            driver.stop()
+        guard var entry = entries[deviceID], entry.driver === driver else {
+            if driver.purpose == .terminal { driver.stop() }
             return
         }
         entry.users -= 1
@@ -83,8 +109,19 @@ public final class UURemoteConnections {
             try? await Task.sleep(nanoseconds: UInt64(Self.linger * 1_000_000_000))
             guard let self, let current = self.entries[deviceID], current.driver === driver, current.users == 0 else { return }
             self.entries.removeValue(forKey: deviceID)
-            driver.stop()
+            if !current.isBorrowed { driver.stop() }
         }
+    }
+
+    /// A desktop is connecting to the device: terminals opened from now on
+    /// share its connection.
+    func desktopStarted(_ driver: UURemoteDriver, deviceID: String) {
+        desktops[deviceID] = driver
+    }
+
+    /// The desktop's connection is gone; terminals on it reconnect on their own.
+    func desktopStopped(_ driver: UURemoteDriver, deviceID: String) {
+        if desktops[deviceID] === driver { desktops.removeValue(forKey: deviceID) }
     }
 
     static let linger: TimeInterval = 3

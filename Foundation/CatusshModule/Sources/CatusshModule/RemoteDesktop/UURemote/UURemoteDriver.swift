@@ -35,7 +35,9 @@ private struct UUJsonBox: @unchecked Sendable {
 
 /// The RemoteDesktopDriver that speaks native UU Remote.
 public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
-    private let session: RemoteDesktopSession
+    /// Takes the connection's phase and hints: the desktop's own session,
+    /// or one nobody shows for a terminal connection.
+    let session: RemoteDesktopSession
     /// The device's room, shared with its other connections (see
     /// `UURemoteRooms`); nil before the join and once stopped.
     private var roomLease: UURemoteRoomLease?
@@ -127,6 +129,10 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         videoRequestTask?.cancel()
         portMapping.shutdown()
         UURemotePortMappingTunnelProvider.shared.unregister(portMapping, for: deviceID)
+        if purpose == .desktop {
+            let deviceID = deviceID
+            Task { @MainActor in UURemoteConnections.shared.desktopStopped(self, deviceID: deviceID) }
+        }
         // Leaves the room, not the socket: the device's other connections
         // (its terminals, a desktop) still ask for control over it.
         if let lease = roomLease {
@@ -278,6 +284,12 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         }
 
         UURemotePortMappingTunnelProvider.shared.register(portMapping, for: deviceID)
+        // The device's terminals ride on a desktop rather than ask for
+        // control a second time, which the host answers by ending the desktop.
+        if purpose == .desktop {
+            let deviceID = deviceID
+            await MainActor.run { UURemoteConnections.shared.desktopStarted(self, deviceID: deviceID) }
+        }
 
         do {
             // Room bootstrap, once the saved account is in the client.
