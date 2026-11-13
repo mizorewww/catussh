@@ -169,13 +169,17 @@ private final class UUTerminalLink {
         UURemoteConnections.shared.release(machine, driver: dropped)
         let now = Date()
         resumes = resumes.filter { now.timeIntervalSince($0) < Self.resumeWindow }
-        guard context.uuSessionID != nil, resumes.count < Self.resumeLimit else {
+        // A desktop's connection ends when the desktop is closed, which is
+        // no sign of a device that keeps dropping: it does not count, and
+        // the desktop only comes back when it is opened again.
+        let counts = dropped.purpose != .desktop
+        guard context.uuSessionID != nil, !counts || resumes.count < Self.resumeLimit else {
             context.putInformation("\r\n[!] The UU Remote connection dropped.")
             finished.signal()
             wake.signal()
             return
         }
-        resumes.append(now)
+        if counts { resumes.append(now) }
         context.putInformation("\r\n[*] The UU Remote connection dropped, reconnecting")
         Task { @MainActor [weak self, weak context] in
             try? await Task.sleep(nanoseconds: 1_000_000_000)
