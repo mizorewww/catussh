@@ -57,6 +57,12 @@ struct FileTransferView: View {
         .animation(.interactiveSpring(), value: context.processConnection)
         .navigationTitle(context.machine.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { actionsToolbar }
+        .sheet(isPresented: $openFilePicker, onDismiss: nil) {
+            FilePickerUIRepresentable(types: [.item], allowMultiple: true) { urls in
+                context.upload(urls: urls)
+            }
+        }
         .onReceive(context.$currentFileList) { sorted = FileTransferContext.sortedForDisplay($0) }
         // iPad: files dragged in from Files or another app are uploaded here.
         .onDrop(of: [.item], isTargeted: $dropTargeted, perform: handleDrop)
@@ -174,78 +180,101 @@ struct FileTransferView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Where the list is, and the way up or elsewhere. What can be done to
+    /// the folder is in the bar's Actions menu, by name.
     var bottomToolbar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack {
-                if !context.connected {
-                    makeFloatingButton("arrow.counterclockwise") {
-                        context.processBootstrap()
-                    }
+                Button { goUp() } label: {
+                    Label("Up", systemImage: "arrow.up")
                 }
-                makeFloatingButton("xmark") {
-                    if context.connected {
-                        context.processShutdown()
-                    } else {
-                        // On a server's page, the page stays for its other tools.
-                        FileTransferSessionActions.close(context) { if !inServerWorkspace { dismiss() } }
-                    }
-                }
-                // stays available while a connection attempt hangs
-                .environment(\.isEnabled, true)
-                Divider().frame(height: 20)
-                makeFloatingButton("doc.viewfinder") {
-                    UIBridge.openFileContainer()
-                }
-                makeFloatingButton("folder.badge.plus") {
-                    UIBridge.askForInputText(
-                        title: "New Folder",
-                        message: "",
-                        placeholder: "Folder Name",
-                        payload: "",
-                        canCancel: true
-                    ) { name in
-                        guard name.isValidAsFilename else {
-                            UIBridge.presentError(with: "Invalid Filename")
-                            return
-                        }
-                        context.createFolder(with: name)
-                    }
-                }
-                .disabled(!context.connected)
-                makeFloatingButton("arrow.up.doc") {
-                    openFilePicker = true
-                }
-                .sheet(isPresented: $openFilePicker, onDismiss: nil) {
-                    FilePickerUIRepresentable(types: [.item], allowMultiple: true) { urls in
-                        debugPrint(urls)
-                        context.upload(urls: urls)
-                    }
-                }
-                .disabled(!context.connected)
-                makeFloatingButton("arrow.clockwise") {
-                    context.loadCurrentFileList()
-                }
-                .disabled(!context.connected)
-                makeFloatingButton("square.and.pencil") {
-                    show(EditorCenter.shared.workspace(for: context))
-                }
-                .accessibilityLabel("Open Editor")
-                Divider().frame(height: 20)
-                makeFloatingButton("arrow.up") {
-                    goUp()
-                }
-                .accessibilityLabel("Enclosing Folder")
+                .buttonStyle(.rx(size: .small))
                 .disabled(!context.connected || context.currentUrl.pathComponents.count <= 1)
-                makeFloatingButton("arrow.right") {
-                    goToFolder()
+                Button { goToFolder() } label: {
+                    Label("Go to…", systemImage: "arrow.right")
                 }
-                .accessibilityLabel("Go to Folder")
+                .buttonStyle(.rx(size: .small))
                 .disabled(!context.connected)
+                Divider().frame(height: 20)
                 pathItems
                     .disabled(!context.connected)
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// The folder's actions, each by name; the one people reach for most,
+    /// Upload, beside them.
+    @ToolbarContentBuilder var actionsToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            if context.connected {
+                Button { openFilePicker = true } label: {
+                    Label("Upload", systemImage: "arrow.up.doc")
+                }
+                .disabled(busy)
+            }
+            Menu {
+                Button { newFolder() } label: {
+                    Label("New Folder…", systemImage: "folder.badge.plus")
+                }
+                .disabled(!context.connected || busy)
+                Button { openFilePicker = true } label: {
+                    Label("Upload Files…", systemImage: "arrow.up.doc")
+                }
+                .disabled(!context.connected || busy)
+                Button { context.loadCurrentFileList() } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(!context.connected || busy)
+                Button { show(EditorCenter.shared.workspace(for: context)) } label: {
+                    Label("Open Editor", systemImage: "square.and.pencil")
+                }
+                Section {
+                    Button { UIBridge.openFileContainer() } label: {
+                        Label("Show Downloads in Files", systemImage: "doc.viewfinder")
+                    }
+                }
+                Section {
+                    if !context.connected {
+                        Button { context.processBootstrap() } label: {
+                            Label("Reconnect", systemImage: "arrow.counterclockwise")
+                        }
+                        .disabled(context.processConnection)
+                    }
+                    // Stays available while a connection attempt hangs.
+                    Button(role: .destructive) { closeOrDisconnect() } label: {
+                        Label(context.connected ? "Disconnect" : "Close Files", systemImage: "xmark")
+                    }
+                }
+            } label: {
+                Label("Actions", systemImage: "ellipsis.circle")
+            }
+        }
+    }
+
+    func newFolder() {
+        UIBridge.askForInputText(
+            title: "New Folder",
+            message: "",
+            placeholder: "Folder Name",
+            payload: "",
+            canCancel: true
+        ) { name in
+            guard name.isValidAsFilename else {
+                UIBridge.presentError(with: "Invalid Filename")
+                return
+            }
+            context.createFolder(with: name)
+        }
+    }
+
+    func closeOrDisconnect() {
+        if context.connected {
+            context.processShutdown()
+        } else {
+            // On a server's page, the page stays for its other tools.
+            FileTransferSessionActions.close(context) { if !inServerWorkspace { dismiss() } }
+        }
     }
 
     var pathItems: some View {
@@ -334,17 +363,6 @@ struct FileTransferView: View {
         debugPrint(url.path)
         context.currentDir = url.path
         context.loadCurrentFileList()
-    }
-
-    func makeFloatingButton(_ image: String, block: @escaping () -> Void) -> some View {
-        Button {
-            block()
-        } label: {
-            Image(systemName: image)
-                .font(.system(size: 15))
-                .frame(width: 36, height: 32)
-        }
-        .buttonStyle(.rx(iconOnly: false))
     }
 
     struct RemoteFileElement: View {
