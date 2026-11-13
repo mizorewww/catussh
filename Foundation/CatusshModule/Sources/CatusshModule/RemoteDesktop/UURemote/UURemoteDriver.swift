@@ -103,9 +103,9 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     /// Each video track's transceiver mid, by the host's track index, from
     /// the answer. Main thread.
     private var midByTrackIndex: [Int: String] = [:]
-    /// The answer named its tracks (`msid … video_N`), rather than their
-    /// order being taken for their indexes.
-    private var trackIndexesNamed = false
+    /// The mids whose track index the answer named (`msid … video_N`)
+    /// rather than their order gave. Main thread.
+    private var namedMids: Set<String> = []
     /// The track whose frames are decoded; nil until one is known, when the
     /// first track to send one is taken (other than `skippedMid`, the one
     /// left behind, for a moment). Under `viewLock`: frames are filtered on
@@ -349,6 +349,9 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     private func handleScreenSources(_ displays: [RemoteDisplayInfo], currentID: Int?) {
         let known = Set(screens.map(\.id))
         screens = displays
+        // The list says which track each screen is on now: the one left is
+        // no longer to be skipped.
+        viewLock.withLock { skippedMid = nil }
         Self.log.info("screens: \(displays.map { "\($0.id) \($0.name) \($0.width)x\($0.height) track \($0.videoTrackIndex.map(String.init) ?? "?")\($0.isVirtual ? " virtual" : "")" }.joined(separator: ", "), privacy: .public); current \(currentID.map(String.init) ?? "?", privacy: .public)")
         if let asked = virtualScreenAskedAt, Date().timeIntervalSince(asked) > 10 { virtualScreenAskedAt = nil }
         if virtualScreenAskedAt != nil, !known.isEmpty,
@@ -381,7 +384,7 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     /// now. Main thread.
     private func followViewedScreen(leaving: Bool = false) {
         let mid = screens.first { $0.id == viewedScreenID }?.videoTrackIndex.flatMap { midByTrackIndex[$0] }
-        let certain = trackIndexesNamed
+        let certain = mid.map(namedMids.contains) ?? false
         let changed = viewLock.withLock { () -> Bool in
             if let mid {
                 viewedMidCertain = certain
@@ -417,8 +420,8 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
     /// Video tracks in an SDP answer, by the host's track index: from an
     /// `a=msid:… video_N` line where there is one, otherwise the lowest
     /// index no line names, in the video m-lines' order. The values are the
-    /// m-lines' mids; `named` says whether any line named its index.
-    static func videoTrackMids(in sdp: String) -> (mids: [Int: String], named: Bool) {
+    /// m-lines' mids; `named` are the mids whose line named their index.
+    static func videoTrackMids(in sdp: String) -> (mids: [Int: String], named: Set<String>) {
         var lines: [(mid: String, index: Int?)] = []
         var inVideo = false
         var mid: String?
@@ -450,7 +453,8 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
             while result[next] != nil { next += 1 }
             result[next] = line.mid
         }
-        return (result, lines.contains { $0.index != nil })
+        let certain = Set(result.compactMap { index, mid in lines.contains { $0.mid == mid && $0.index == index } ? mid : nil })
+        return (result, certain)
     }
 
     /// CaptureSettingRequest (RpcRequest case 2): field 1 fps *option
@@ -963,10 +967,10 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         }
         // Which transceiver carries which of the host's tracks.
         let tracks = Self.videoTrackMids(in: sdp)
-        Self.log.info("video tracks by index (\(tracks.named ? "named" : "in order", privacy: .public)): \(tracks.mids.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "), privacy: .public)")
+        Self.log.info("video tracks by index (\(tracks.named.count) named): \(tracks.mids.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "), privacy: .public)")
         await MainActor.run {
             midByTrackIndex = tracks.mids
-            trackIndexesNamed = tracks.named
+            namedMids = tracks.named
             followViewedScreen()
         }
         // Learn the negotiated video payload types for the RTP path.
@@ -1052,6 +1056,11 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
         let own = video.filter { ($0["mid"] as? String) == mid }
         // Every track only where WebKit names none; the one in view otherwise.
         let entries = video.contains { $0["mid"] is String } ? own : video
+        // No track in view yet: nothing to measure, and no baseline.
+        guard !entries.isEmpty else {
+            lastStats = nil
+            return
+        }
         func total(_ key: String) -> Double { entries.reduce(0) { $0 + (($1[key] as? NSNumber)?.doubleValue ?? 0) } }
         let now = Date()
         let current = (at: now, mid: mid, bytes: total("bytes"), lost: total("lost"), packets: total("packets"))
@@ -1280,14 +1289,14 @@ public final class UURemoteDriver: RemoteDesktopDriver, @unchecked Sendable {
                 viewedMidHeard = true
                 return true
             }
-            // None chosen yet: this one, unless it is the one just left (a
-            // host capturing one screen at a time keeps using it, so only
-            // for a moment). A chosen one that never sent, or that the
+            // None chosen yet: this one, unless it is the one just left, until
+            // the host lists its screens again (a host capturing one screen
+            // at a time keeps using that track) or 5 s have gone. A chosen one that never sent, or that the
             // answer did not name, giving way after 2 s of silence while
             // this one sends: the track index was mapped wrongly. A screen
             // standing still sends nothing, so a named track that has sent
             // keeps the view.
-            let open = viewedMid == nil && (mid != skippedMid || now.timeIntervalSince(skippedAt) > 1.5)
+            let open = viewedMid == nil && (mid != skippedMid || now.timeIntervalSince(skippedAt) > 5)
             let silent = viewedMid != nil && now.timeIntervalSince(viewedMidHeardAt) > 2
                 && (!viewedMidHeard || !viewedMidCertain)
             guard open || silent else { return false }

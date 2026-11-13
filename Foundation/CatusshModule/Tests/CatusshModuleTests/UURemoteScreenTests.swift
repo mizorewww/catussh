@@ -145,14 +145,15 @@ final class UURemoteScreenTests: XCTestCase {
         a=mid:6\r
         """
         XCTAssertEqual(UURemoteDriver.videoTrackMids(in: named).mids, [1: "1", 0: "0"])
-        XCTAssertTrue(UURemoteDriver.videoTrackMids(in: named).named)
+        XCTAssertEqual(UURemoteDriver.videoTrackMids(in: named).named, ["0", "1"])
 
         let unnamed = "m=video 9 RTP 96\na=mid:a\nm=video 9 RTP 96\na=mid:b\n"
         XCTAssertEqual(UURemoteDriver.videoTrackMids(in: unnamed).mids, [0: "a", 1: "b"])
-        XCTAssertFalse(UURemoteDriver.videoTrackMids(in: unnamed).named)
+        XCTAssertEqual(UURemoteDriver.videoTrackMids(in: unnamed).named, [])
 
         // An unnamed line takes the lowest index no line names.
         let mixed = "m=video 9 RTP 96\na=mid:a\nm=video 9 RTP 96\na=mid:b\na=msid:s video_0\n"
         XCTAssertEqual(UURemoteDriver.videoTrackMids(in: mixed).mids, [0: "b", 1: "a"])
+        XCTAssertEqual(UURemoteDriver.videoTrackMids(in: mixed).named, ["b"])
     }
 }
