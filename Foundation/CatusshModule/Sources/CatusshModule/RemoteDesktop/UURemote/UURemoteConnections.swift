@@ -116,6 +116,8 @@ public final class UURemoteConnections {
     /// A desktop is connecting to the device: terminals opened from now on
     /// share its connection.
     func desktopStarted(_ driver: UURemoteDriver, deviceID: String) {
+        // Stopped while it was on its way here: its desktopStopped came first.
+        guard !driver.isClosed else { return }
         desktops[deviceID] = driver
     }
 
